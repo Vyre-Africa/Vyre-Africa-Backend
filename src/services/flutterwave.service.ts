@@ -13,8 +13,8 @@ class FlutterwaveService {
 
     constructor() {
       this.flw = new Flutterwave(
-        config.flutterwave.FLW_PUBLIC_KEY,
-        config.flutterwave.FLW_SECRET_KEY
+        process.env.FLW_PUBLIC_KEY,
+        process.env.FLW_SECRET_KEY
       );
     }
 
