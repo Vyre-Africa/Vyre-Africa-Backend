@@ -9,14 +9,37 @@ import { generateRefCode } from "../utils";
 const Flutterwave = require('flutterwave-node-v3');
 
 class FlutterwaveService {
-    flw: any;
+    private flw: any | null = null;
 
-    constructor() {
-      this.flw = new Flutterwave(
-        process.env.FLW_PUBLIC_KEY,
-        process.env.FLW_SECRET_KEY
-      );
-    }
+     constructor() {
+        this.initialize();
+      }
+
+      private initialize() {
+        const publicKey = process.env.FLUTTERWAVE_PUBLIC_KEY;
+        const secretKey = process.env.FLUTTERWAVE_SECRET_KEY;
+        
+        if (!publicKey || !secretKey) {
+          console.warn('Flutterwave environment variables not found. Service disabled.');
+          return;
+        }
+
+        if (!publicKey.trim() || !secretKey.trim()) {
+          console.warn('Flutterwave keys are empty. Service disabled.');
+          return;
+        }
+
+        try {
+          this.flw = new Flutterwave(publicKey, secretKey);
+          console.log('Flutterwave service initialized successfully');
+        } catch (error) {
+          console.error('Failed to initialize Flutterwave:', error);
+        }
+      }
+
+      isInitialized(): boolean {
+        return this.flw !== null;
+      }
 
     async getBanks(){
        try {
