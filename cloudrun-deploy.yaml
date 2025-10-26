@@ -1,0 +1,183 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: vyre-africa-backend
+  namespace: thinking-glass-476205-m2
+spec:
+  template:
+    spec:
+      containers:
+      - image: africa-south1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-africa-backend:latest
+        ports:
+        - name: http1
+          containerPort: 4000
+        env:
+        # Application Config
+        - name: ADMIN_ID
+          value: "cm5coiqnk000050cqmbmjnkjj"
+        - name: NODE_ENV
+          value: "production"
+        - name: JWT_EXPIRY
+          value: "24h"
+        - name: ORDER_QUEUE_CONCURRENCY
+          value: "5"
+        - name: ORDER_QUEUE_RETRY_ATTEMPTS
+          value: "3"
+        
+        # API Base URLs
+        - name: TERMII_BASE_URL
+          value: "https://v3.api.termii.com"
+        - name: CLERK_JWT_PUBLICKEY
+          value: "https://deep-lamb-50.clerk.accounts.dev/.well-known/jwks.json"
+        
+        # Redis Configuration
+        - name: REDIS_HOST
+          value: "redis-18275.c257.us-east-1-3.ec2.redns.redis-cloud.com"
+        - name: REDIS_PORT
+          value: "18275"
+        - name: REDIS_PASSWORD
+          value: "KRSVC2naWdAIRAIKKbN4kXhvUugKNoRU"
+        
+        # IDs
+        - name: BRAND_ID
+          value: "11c27940-bb5d-4065-afc3-78cb6af74e4f"
+        - name: HMACSECRET
+          value: "77df5ca1-4878-4d94-a3ad-c71e596abcca"
+        
+        # Database
+        - name: DATABASE_URL
+          value: "postgresql://postgres.mavxwhwtwstuuobfiwzc:hnq4G*m@WRmW.Q!@aws-0-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=5"
+        - name: DIRECT_URL
+          value: "postgresql://postgres.mavxwhwtwstuuobfiwzc:hnq4G*m@WRmW.Q!@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
+        
+        # JWT & Security
+        - name: JWT_SECRET
+          value: "9e792444b920fe2ff8ec97f0bb04efee67a04661d2cf133dac211e24809f4557e919454e8a4993ca6c596bbc3f4c2c2b73dc9d170b58070eb4ac62d26f87d29cffe5d8d10d2e6403b76431197c90bd5b"
+        
+        # Payment Gateways
+        - name: FLW_PUBLIC_KEY
+          value: "FLWPUBK-f950140af7b394bf22d203c8748fc173-X"
+        - name: FLW_SECRET_KEY
+          value: "FLWSECK-7ff37a2f53ed0716a63bd5c10a67a95f-19780a65d9evt-X"
+        - name: PAYSTACK_SECRET
+          value: "sk_test_3425cf96b06b8ce98715964ed1255707871fc486"
+        
+        # External APIs
+        - name: TERMII_LIVE_KEY
+          value: "TLYnfZSxEmUgkZDHBRNosLsKyWLezfNJHkGJJcQAVxxJbWZCuuVOoELPsKIFSL"
+        - name: FERN_KEY
+          value: "675efeba889bf85b994c8cdb02f7773ae758d6fa6a03156304a6f60742b25975.0f085b60940641853cd2023aaaabc9361d21ea7d688e996e59a91e75e46d76e8"
+        - name: FERN_WEBHOOK_SECRET
+          value: "XP1KyiF7UeVfgY9z2-fco1JH7TrJdUQTDBQufjp-a3Nn8YniPyxSvrkKyN-ItqWde-TrdOs4iAppgzchH5M3tA"
+        
+        # Tatum
+        - name: TATUM_TEST_KEY
+          value: "t-653120cacb5810001c75c1d4-e31563bf4e0a412887104047"
+        - name: TATUM_LIVE_KEY
+          value: "t-653120cacb5810001c75c1d4-0f66a097d26742189de8bef5"
+        
+        # Crypto - Bitcoin
+        - name: BTC_MNEMONIC
+          value: "solid open hospital fiscal discover jealous slice pen salad spell cactus space age animal october fiber salon person must figure knock angry canoe medal"
+        - name: BTC_XPUB
+          value: "xpub6F9u9KPAwkJSaze1QvpujVaVBUvJ7242ZXg8HZsZeaMyUSN3mZ1KbPxTYZUS48ACmPAqBVMSjNUng1qb8g6ocjKhWQgk9nysuRV7BccqDCb"
+        - name: Test_BTC_MNEMONIC
+          value: "vivid alone escape remember odor main hip mixed autumn trophy click model summer typical knee angle journey lawsuit clerk long tortoise resist decide boat"
+        - name: Test_BTC_XPUB
+          value: "tpubDFeFBPuoAn8MsnbGjxfav3mX8ciESNv8Q9QM6JtPyESiHF1aZhU9BM6REBpCLkTt259787rLBpZevWwaYNLNrnrtN7XeomSKg3c47p3zAMw"
+        
+        # Crypto - Ethereum
+        - name: ETH_MNEMONIC
+          value: "save naive load inhale giraffe aisle husband pistol omit find holiday hat vessel eagle antique cabin wagon output reduce neutral october pen gentle stable"
+        - name: ETH_XPUB
+          value: "xpub6DcqUqsYmpiQ2TYaVot2dCGKApAhPbi6CKXqRseUA1TWrCDwUaSVe6GszsyY4BroD6eWJVdSNLGUhfVmGS42VRTQ7iQ581wwGETF3DdFVaE"
+        - name: Test_ETH_MNEMONIC
+          value: "segment caught seek super marble fox ensure observe trick diary other innocent hero draft trust ship hedgehog medal photo donor muscle grant machine vital"
+        - name: Test_ETH_XPUB
+          value: "xpub6F3SUxooueLcCFj6CMYPbyX6zJB3wXT9DSZtYR31HwvZ37vL9oYq1bBRywTfYcNKaHr16RWzqHykuJWchqT3ZTV9ds7S1V8a1wvt2BhDTLN"
+        
+        # Crypto - BNB
+        - name: BNB_ADDRESS
+          value: "bnb1ku9fch0qd764mfkh7qj0s3zpg8zjn6g0e8lqwj"
+        - name: BNB_KEY
+          value: "143feea31e8b89e706eb632fdf61512a0cda5f6bf16cc776205b724edf4cba1f"
+        - name: Test_BNB_ADDRESS
+          value: "tbnb1u9xnue49g96jxg5ysdekm682tswrwrzz2zmk0x"
+        - name: Test_BNB_KEY
+          value: "5297d0ae12ef9c035e4d25a72e29f0fa5413eae2677d9736dd25e77afdfa1a07"
+        
+        # Crypto - Solana
+        - name: SOL_ADDRESS
+          value: "3hgUZ7zDcMMRDzubHgfbxokg1mHB4u8thdZHRTbboxvv"
+        - name: SOL_KEY
+          value: "5gLpd5qzWwktmRQUUzHB6X3rjLX4Zj4pXq1C4Nmq3vvAkxBJzjFEKoX9pWMVwDTS5hxwpFgfKGrLMhUqwc3tt4ie"
+        - name: SOL_MNEMONIC
+          value: "split echo lab champion dice glue need veteran genius fabric ladder upgrade slender all owner loud vivid embark female damp nose point surge ticket"
+        - name: Test_SOL_ADDRESS
+          value: "EnhgqDEC2Ja1h33WcJ1K2hrXQk4HHSNLWLSPvSUKfTKu"
+        - name: Test_SOL_KEY
+          value: "YMXNSwAVeQyEMFjC3X26keDCVhrGRjibiSY6oX5VDtNnMMe12o7gvBiQ31PxzvZBJmEr9BQqFAWiSCcuxKXasaP"
+        - name: Test_SOL_MNEMONIC
+          value: "master cereal acoustic question reunion trick torch tiger cook select sleep roof admit basic trumpet symptom fuel degree dutch thumb bone mobile clock foam"
+        
+        # Crypto - Litecoin
+        - name: LTC_MNEMONIC
+          value: "arrive nuclear border offer master require lens photo dirt carry mango offer husband tornado faculty purse neutral kangaroo dolphin rich want faculty scare swear"
+        - name: LTC_XPUB
+          value: "Ltub2b9tKtQ7Y9TTS4P6g2rZEqJpa4pE89LfS7WGHxd97NckugXNGenJ8iFrRp3SVgLEXzGd8Q2j92LSJj9jkovEnPLYzbaLQrMuBSpi6396AVC"
+        - name: Test_LTC_MNEMONIC
+          value: "they family pencil toy lake update merge credit castle wide swing peanut disagree rival ceiling panda combine chef gate shrug swallow knife angle subject"
+        - name: Test_LTC_XPUB
+          value: "ttub4faMtjy5ZyMCBMV5d32QGQhdWatYhFfd2b5Zsj8nVdiY1vRPZhih8pRCUyYVhsAh4cKJBipz3Eat7YwTecg1mjc1zyEV8M9jZ1GpsMNNjXF"
+        
+        # Crypto - Tron
+        - name: TRON_MNEMONIC
+          value: "orange lab blanket canoe swamp wire tone accuse snake unaware cat evoke profit cement recall fringe forum reward abstract hotel outside announce bright impact"
+        - name: TRON_XPUB
+          value: "xpub6Dt8r59oaWEuksUucCAFhyaLLMJNJV1EhLqWjPY29Dy1wrjwLPwFS1aTfp9SvvZBfXErLPy7ZTPfEtDHwo1UsRPTCBSsgo9quk5N5oXx7v4"
+        - name: Test_TRON_MNEMONIC
+          value: "shiver before tomato pizza wise toss raven flavor reject opinion code catalog modify dress raccoon whisper protect half spoon raven jar agree awesome artist"
+        - name: Test_TRON_XPUB
+          value: "xpub6FQZmAS81jtddVQjG6XASCFi1G9sbn96whZ7KyJjzhWu5g7bxrrPpdrGVCvMhmGDUUW3QJLQWF8UWqufxCcraRPV6kgBVLZYx18FYQFYgZ5"
+        
+        # Stablecoins - USDC
+        - name: USDC_ETH_MNEMONIC
+          value: "merge wink shock decorate fly sock pulse purpose prize wine measure course false admit mixed hill spread holiday problem exclude flash flavor park rocket"
+        - name: USDC_ETH_XPUB
+          value: "xpub6F9YbDeDhqzoyohEid1j2nvgmg7aiUzdRhpDnyBBmW5CwphuN6SPW9t51fx5BVBb4cmcer4mLuc6YnQXWqf41biBigMRxtpWBE9UMsBedn2"
+        - name: Test_USDC_MNEMONIC
+          value: "stomach dose giggle water amused test silent refuse fold sail reflect rookie start abandon dream fatal piece access rebuild zero loud minute spatial head"
+        - name: Test_USDC_XPUB
+          value: "xpub6EKEGGGif2EedkLsVQWXxAKKYZk1bb5JJuNQxyAy5ZcnDxZQc9e8gbM14QfXMP58gjL5RFDYuFLUuoEgHBjAQRvpzXmr27FzwkB1kVvqBLf"
+        
+        # Stablecoins - USDT
+        - name: USDT_ETH_MNEMONIC
+          value: "try shiver basket deliver transfer reward inspire album proud security steel dolphin involve find reflect destroy double august method salute remove describe deposit connect"
+        - name: USDT_ETH_XPUB
+          value: "xpub6FC7aP1SDciLByxAyAprbFbHNcEQS2D7zZ7jMY7e3LAZ78158Uf9Vu7xcgteRkaSAcdSQgFRFjzGfyNLVxand5nSYx9h8x2ftaEd3y3LuaA"
+        - name: Test_USDT_ETH_MNEMONIC
+          value: "help off uncle margin moral guess ticket head dumb fun trim depart quiz grid impact coffee awkward awful depend voyage beyond remain talk accident"
+        - name: Test_USDT_ETH_XPUB
+          value: "xpub6F858FKTWwbwaiSHswk71fumzyFDM21hSVVLPN2sqjRB5MvKbDrZntnTFwod5ekepeWcadSMWqsPPqNqoH392Veu991uZVWRzcfAfWDchH1"
+        
+        # Bearer Tokens
+        - name: BEARER_TOKEN
+          value: "o307JvlgYAgqLqEufC0S1__mYFodnmrzfMyBtlZL8ZfiwslaGr8AjdXmLYqXsBr04TGQlMIQBNnyHGvgcSTtUA=="
+        - name: TEST_BEARER_TOKEN
+          value: "4NXZRFgZpn_05LpaV4AW8lps5wH7GBzJCt6YO-OO0CLCXZnNOn1ikclBH1r74mjDq34EmIiolMxrdHlBdvbq9w=="
+        
+        # Public Keys
+        - name: PUBLIC_KEY
+          value: "-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEArf/atJVokAlWPUNHfg09\nrQzPG/k1S1Zbvfbk2a3YlSzKZFvEkVFRccJipeg8JaJSWc+8JkcQ/fyLvIQEFiO5\nH7X23VQrHi3UBsvDogFgfGkzf8m1eXGs4eCWptbN77fcWsk6jtvMMmlSyj5Ew1Sj\nKwQlyPRXcZqd9Uxf9epoP2ZspsDzFkivTKD38uooW0zEIdfn/TwZiTNtl4X/nqkE\nK7DkHoPKJ3+PbLOC2IPECnAjdo0cH0IHS3Rmi8KmxxsrHiFm+WUth/cQnJJrn/4e\n6nHdp2+QEnxJiZGeBMqlIM2vUptkhBXpF47LW73Rk0shDLl/gtQtoYBSQm+jI1Jc\naNy0BCq3cVgCmW9Yv6GXZCn+VIQ5MUwJlWp3wv4W+Ez++xBcnLECv1YcJ6e985y4\nOdZXyFwcBRQWk+bSHFxf01DmdJgv21CHQPksWSYmaVmaaMTRIrZfW67cNsdqtDVO\noOdBqdC7KEVGBCuQ3h3IuxMft1Fk+QeGfSHBdtXZOrqFAgMBAAE=\n-----END PUBLIC KEY-----"
+        - name: PEM_PUBLICKEY
+          value: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArXhzFLYKuxdQfoJe69c6\nQTDhZWrkwt2lpJlS1yg5P0n0AvvuBNphp4GP5l3dOZMxwyepX0U7uzIaaeM7gAxZ\nSzNeTC0YMppEE9K6s5JPdyvuS+iHylWrRhFNcllsg4RrBCS3nm3NKPam/dzuh8b+\nuMGP7NFPj/rRg3VBkaatw/OHppah9xdcB5wXFlTf0Z3qjpYtAbtmJmlJe60vZlZd\n5Cj4tKXHhk6x/v52MWM4P+QLdHJ2H4yedMs9n/7sISdYUV/PP1KaAWPkQXwRjt0l\n5RFbkxcVPgKnO+BnbURkoYL6u3ZG0noGgrHwRE5Wc30m+qLnxrGr39c64X23ceQv\nswIDAQAB\n-----END PUBLIC KEY-----"
+        
+        # XRP
+        - name: XRP_ADDRESS
+          value: "rDZg6AcShYzVKdTAC3vPHPphQUSFUdPVRZ"
+        - name: XRP_SECRET
+          value: "sEdSu5ZVu4wxpGYJ7HcGuJfEjoF1Pgq"
+        - name: Test_XRP_ADDRESS
+          value: "rNJoAmwQdzcfHdYWKrzZeduF6MGzFG6Ws2"
+        - name: Test_XRP_SECRET
+          value: "sEd778fntY7rMvEyzdPkHfqrSp5QrUe"
