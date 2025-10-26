@@ -42,13 +42,13 @@ server.listen(env.port, async() => {
 	logger.info(`Server running on port ${env.port}`);
 
 	// if (process.env.NODE_ENV !== 'dev') {
-		// try {
-		//   await import('./workers/order.worker');
-		// //   await startWorker();
-		//   console.log('Order worker started successfully');
-		// } catch (err) {
-		//   console.error('Failed to start worker:', err);
-		//   // Don't crash the server if worker fails
-		// }
+		try {
+		  await import('./workers/order.worker');
+		//   await startWorker();
+		  console.log('Order worker started successfully');
+		} catch (err) {
+		  console.error('Failed to start worker:', err);
+		  // Don't crash the server if worker fails
+		}
 	//   }
 });
