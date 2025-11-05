@@ -99,7 +99,6 @@ class WalletService
     }
 
     
-
     async subscribe_address(payload:{
         address: string,
         chain: string

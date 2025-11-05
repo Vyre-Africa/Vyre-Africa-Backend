@@ -93,7 +93,7 @@ class stableCoinService
             mnemonic: config.USDC.ETH_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -138,7 +138,7 @@ class stableCoinService
             mnemonic: config.USDC.POLYGON_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -183,7 +183,7 @@ class stableCoinService
             mnemonic: config.USDC.BASE_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -228,7 +228,7 @@ class stableCoinService
             mnemonic: config.USDC.BSC_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -273,7 +273,7 @@ class stableCoinService
             mnemonic: config.USDC.OPTIMISM_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -318,7 +318,7 @@ class stableCoinService
             mnemonic: config.USDC.ARBITRUM_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -365,7 +365,7 @@ class stableCoinService
             mnemonic: config.USDT.ETH_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -410,7 +410,7 @@ class stableCoinService
             mnemonic: config.USDT.BASE_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -455,7 +455,7 @@ class stableCoinService
             mnemonic: config.USDT.BSC_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -500,7 +500,7 @@ class stableCoinService
             mnemonic: config.USDT.TRON_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -545,7 +545,7 @@ class stableCoinService
             mnemonic: config.USDT.OPTIMISM_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
@@ -590,7 +590,7 @@ class stableCoinService
             mnemonic: config.USDT.ARBITRUM_MNEMONIC,
             index: index || 1,
             address,
-            amount
+            amount: String(amount)
         };
 
         let transaction;
