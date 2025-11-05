@@ -5,6 +5,7 @@ import axios from "axios";
 // import {Currency,walletType} from '@prisma/client';
 // import { currency as baseCurrency } from '../globals';
 import { hasSufficientBalance } from '../utils';
+import walletService from './wallet.service';
 
     const tatumAxios = axios.create({
         baseURL: 'https://api.tatum.io/v3',
@@ -32,6 +33,198 @@ class stableCoinService
         console.log(result)
 
         return result
+    }
+
+    async offchain_Transfer(payload:{
+            userId: string,
+            receipientId: string,
+            currencyId: string, 
+            amount: number
+        })
+        {
+            const {userId,receipientId,currencyId,amount} = payload
+    
+            let receipient_Wallet: any;
+            let user_Wallet: any;
+    
+            const currency = await prisma.currency.findUnique({
+                where:{id:currencyId},
+                select:{
+                  id: true,
+                  type: true,
+                  name: true,
+                  ISO: true,
+                  chain: true 
+                }
+                  
+            })
+    
+            if(!currency){
+                const error = new Error('currency not found');
+                error.name = 'CurrencyNotFoundError';
+                throw error;
+            }
+    
+            console.log('transfer data passed',
+                userId,
+                receipientId,
+                currencyId, 
+                amount
+            )
+    
+            receipient_Wallet = await prisma.wallet.findFirst({
+                where:{
+                    userId: receipientId,
+                    currencyId
+                }
+            })
+    
+            //check if receipient has currency wallet created else we create it
+            if(!receipient_Wallet){
+                receipient_Wallet = await walletService.createWallet({userId:receipientId, currencyId: currencyId as string})
+            }
+    
+            user_Wallet = await prisma.wallet.findFirst({
+                where:{
+                    userId,
+                    currencyId
+                }
+            })
+    
+            // check if user balance is sufficient enough
+            if(!hasSufficientBalance(user_Wallet?.availableBalance,amount))return
+    
+            const data = {
+                senderAccountId: user_Wallet?.id!,
+                recipientAccountId: receipient_Wallet?.id!,
+                amount: `${amount}`,
+                anonymous: false,
+                compliant: false
+            };
+            console.log('transfer Data',data)
+            const response = await tatumAxios.post('/ledger/transaction', data)
+            const paymentData = response.data
+            console.log(paymentData)
+    
+            // create transactions for both parties
+            const transactions = await prisma.transaction.createMany({
+                data:[
+                    {
+                    userId: userId,
+                    currency: currency.ISO,
+                    amount: -amount,
+                    reference: paymentData.reference,
+                    status: 'SUCCESSFUL',
+                    walletId: user_Wallet?.id!,
+                    type:'DEBIT_PAYMENT',
+                    description:`${currency} transfer`
+                   },
+                   {
+                    userId: userId,
+                    currency: currency.ISO,
+                    amount: amount,
+                    reference: paymentData.reference,
+                    status: 'SUCCESSFUL',
+                    walletId: user_Wallet?.id!,
+                    type:'CREDIT_PAYMENT',
+                    description:`${currency} transfer`
+                   }
+                ]
+            })
+    
+            return  transactions
+        
+    }
+
+    private Transfer_USDC_BASECHAIN = async(payload:{
+        userId: string, 
+        account_ID: string,
+        address: string,
+        index: number,
+        amount: number,
+    })=>{
+
+        const { userId, account_ID, address, index, amount } = payload
+
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+        
+        
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDC.BASE_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(amount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDC.BASE_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(amount)
+            }; 
+        }
+
+        let transaction;
+
+        const response = await tatumAxios.post('/offchain/base/transfer', TransferData)
+        console.log(response)
+        const result = response.data
+
+        transaction = await prisma.transaction.create({
+            data:{
+                id: result.id,
+                userId: userId,
+                currency: 'USDC_BASE',
+                amount,
+                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+                walletId: account_ID,
+                type:'DEBIT_PAYMENT',
+                description:'USDC BASE transfer'
+            }
+        })
+
+        if(!result.completed){
+            transaction = await this.complete_Withdrawal(result.id, result.txId)
+        }
+
+        return transaction
+
+        
     }
 
     private subscribe_events = async(
@@ -1148,7 +1341,7 @@ class stableCoinService
                break;
    
                case 'BASE':
-               result = await this.Transfer_USDC_BASE(transferPayload)
+               result = await this.Transfer_USDC_BASECHAIN(transferPayload)
                return result
                break;
    
