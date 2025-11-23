@@ -316,20 +316,28 @@ class WalletController {
           });
       }
 
-      const result = await walletService.offchain_Transfer
-        ({
+        // const result = await walletService.offchain_Transfer
+        // ({
+        //   userId: user.id,
+        //   receipientId: receipient_id,
+        //   currencyId: currencyId,
+        //   amount
+        // })
+
+        await walletService.queue({
           userId: user.id,
           receipientId: receipient_id,
           currencyId: currencyId,
-          amount
+          amount,
+          type:'OFFCHAIN'
         })
 
         return res
         .status(200)
         .json({
           msg: 'Transfer Successful',
-          success: true,
-          wallet:result
+          success: true
+          // wallet:result
         });
 
     } catch (error) {
@@ -398,21 +406,30 @@ class WalletController {
         }
 
         // Handle crypto withdrawal logic here
-        const result = await walletService.blockchain_Transfer
-        ({
+        // const result = await walletService.blockchain_Transfer
+        // ({
+        //   userId: user.id, 
+        //   currencyId: currency.id,
+        //   amount: amount,
+        //   address: address,
+        //   destination_Tag: destinationTag
+        // })
+
+        await walletService.queue({
           userId: user.id, 
           currencyId: currency.id,
           amount: amount,
           address: address,
-          destination_Tag: destinationTag
+          destination_Tag: destinationTag,
+          type:'BLOCKCHAIN'
         })
 
         return res
         .status(200)
         .json({
           msg: 'Transfer Initiated',
-          success: true,
-          wallet:result
+          success: true
+          // wallet:result
         });
 
 
@@ -444,6 +461,14 @@ class WalletController {
           recipient_name: recipient_name,
           endpoint: endpoint_url
         })
+
+        // await walletService.queue({
+        //   account_number,
+        //   bank_code,
+        //   recipient_name: recipient_name,
+        //   endpoint: endpoint_url,
+        //   type:'BANK'
+        // })
 
         return res
         .status(200)
@@ -649,6 +674,9 @@ class WalletController {
         wallets = await prisma.wallet.findMany({
           where: {
             userId: user.id
+          },
+          include: {
+            currency: true  // Optionally include the full currency data in the response
           }
         });
       }

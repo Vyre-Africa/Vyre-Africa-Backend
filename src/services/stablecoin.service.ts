@@ -6,6 +6,10 @@ import axios from "axios";
 // import { currency as baseCurrency } from '../globals';
 import { hasSufficientBalance } from '../utils';
 import walletService from './wallet.service';
+import TransferfeeService from './transferfee.service';
+import transferfeeService from './transferfee.service';
+import notificationService from './notification.service';
+import { NotificationType } from '@prisma/client';
 
     const tatumAxios = axios.create({
         baseURL: 'https://api.tatum.io/v3',
@@ -136,97 +140,6 @@ class stableCoinService
         
     }
 
-    private Transfer_USDC_BASECHAIN = async(payload:{
-        userId: string, 
-        account_ID: string,
-        address: string,
-        index: number,
-        amount: number,
-    })=>{
-
-        const { userId, account_ID, address, index, amount } = payload
-
-        // First of all we transfer the asset to the Admin Account, which is the master account, 
-        // then from there we transfer to the desired address
-
-        let userWallet;
-        let adminWallet;
-        let TransferData;
-        
-        
-        if(config.Admin_Id !== userId){
-
-            userWallet = await prisma.wallet.findUnique({
-                where:{id: account_ID },
-                select:{ currencyId: true }
-            })
-
-            adminWallet = await prisma.wallet.findFirst({
-                where:{ 
-                    userId: config.Admin_Id, 
-                    currencyId: userWallet?.currencyId as string 
-                },
-                select:{ 
-                    id: true,
-                    derivationKey: true
-                }
-            })
-        
-            const AdminTransfer = await this.offchain_Transfer({
-                userId,
-                receipientId: config.Admin_Id,
-                currencyId: userWallet?.currencyId as string, 
-                amount
-            })
-            console.log('Admin Transfer', AdminTransfer)
-
-            TransferData = {
-                senderAccountId: adminWallet?.id as string,
-                mnemonic: config.USDC.BASE_MNEMONIC,
-                index: adminWallet?.derivationKey as number || 1,
-                address,
-                amount: String(amount)
-            }; 
-
-        }else{
-
-           TransferData = {
-                senderAccountId: account_ID,
-                mnemonic: config.USDC.BASE_MNEMONIC,
-                index: index || 1,
-                address,
-                amount: String(amount)
-            }; 
-        }
-
-        let transaction;
-
-        const response = await tatumAxios.post('/offchain/base/transfer', TransferData)
-        console.log(response)
-        const result = response.data
-
-        transaction = await prisma.transaction.create({
-            data:{
-                id: result.id,
-                userId: userId,
-                currency: 'USDC_BASE',
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                walletId: account_ID,
-                type:'DEBIT_PAYMENT',
-                description:'USDC BASE transfer'
-            }
-        })
-
-        if(!result.completed){
-            transaction = await this.complete_Withdrawal(result.id, result.txId)
-        }
-
-        return transaction
-
-        
-    }
-
     private subscribe_events = async(
         accountId: string
     )=>{
@@ -271,96 +184,6 @@ class stableCoinService
     }
 
     // USDC TRANSFERS
-    private Transfer_USDC_ETH = async(payload:{
-        userId: string, 
-        account_ID: string,
-        address: string,
-        index: number,
-        amount: number,
-    })=>{
-
-        const {userId, account_ID, address, index, amount } = payload
-
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDC.ETH_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
-
-        let transaction;
-
-        const response = await tatumAxios.post('/offchain/ethereum/erc20/transfer', data)
-        console.log(response)
-        const result = response.data
-
-        transaction = await prisma.transaction.create({
-            data:{
-                id: result.id,
-                userId: userId,
-                currency: 'USDC_ETH',
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                walletId: account_ID,
-                type:'DEBIT_PAYMENT',
-                description:'USDC ETHEREUM transfer'
-            }
-        })
-
-        if(!result.completed){
-            transaction = await this.complete_Withdrawal(result.id, result.txId)
-        }
-
-        return transaction
-
-        
-    }
-    private Transfer_USDC_MATIC = async(payload:{
-        userId: string, 
-        account_ID: string,
-        address: string,
-        index: number,
-        amount: number,
-    })=>{
-
-        const { userId, account_ID, address, index, amount } = payload
-
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDC.POLYGON_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
-
-        let transaction;
-
-        const response = await tatumAxios.post('/offchain/polygon/transfer', data)
-        console.log(response)
-        const result = response.data
-
-        transaction = await prisma.transaction.create({
-            data:{
-                id: result.id,
-                userId: userId,
-                currency: 'USDC_MATIC',
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                walletId: account_ID,
-                type:'DEBIT_PAYMENT',
-                description:'USDC MATIC transfer'
-            }
-        })
-
-        if(!result.completed){
-            transaction = await this.complete_Withdrawal(result.id, result.txId)
-        }
-
-        return transaction
-
-        
-    }
     private Transfer_USDC_BASE = async(payload:{
         userId: string, 
         account_ID: string,
@@ -371,17 +194,67 @@ class stableCoinService
 
         const { userId, account_ID, address, index, amount } = payload
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDC.BASE_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('BASE');
+            // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+        
+        
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDC.BASE_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDC.BASE_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
 
         let transaction;
 
-        const response = await tatumAxios.post('/offchain/base/transfer', data)
+        const response = await tatumAxios.post('/offchain/base/transfer', TransferData)
         console.log(response)
         const result = response.data
 
@@ -389,7 +262,7 @@ class stableCoinService
             data:{
                 id: result.id,
                 userId: userId,
-                currency: 'USDC_BASE',
+                currency: 'USDC BASE',
                 amount,
                 status: result.completed ? 'SUCCESSFUL' : 'PENDING',
                 walletId: account_ID,
@@ -402,100 +275,34 @@ class stableCoinService
             transaction = await this.complete_Withdrawal(result.id, result.txId)
         }
 
-        return transaction
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
 
-        
-    }
-    private Transfer_USDC_BSC = async(payload:{
-        userId: string, 
-        account_ID: string,
-        address: string,
-        index: number,
-        amount: number,
-    })=>{
+              content:`💰 **USDC Transfer Successful**
 
-        const { userId, account_ID, address, index, amount } = payload
+                We've successfully processed your USDC transfer on Base network.
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDC.BSC_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDC
+                • **Network Fee:** $${withdrawalFee} USDC  
+                • **Recipient Received:** $${netAmount} USDC
+                • **Recipient Address:** ${address}
+                • **Network:** Base
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
 
-        let transaction;
+                Your funds are on the way! Base network transactions are typically fast and cost-effective.
 
-        const response = await tatumAxios.post('/offchain/bsc/transfer', data)
-        console.log(response)
-        const result = response.data
-
-        transaction = await prisma.transaction.create({
-            data:{
-                id: result.id,
-                userId: userId,
-                currency: 'USDC_BSC',
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                walletId: account_ID,
-                type:'DEBIT_PAYMENT',
-                description:'USDC BSC transfer'
-            }
+                Need help? Contact our support team anytime.
+                    `,
+                       
         })
 
-        if(!result.completed){
-            transaction = await this.complete_Withdrawal(result.id, result.txId)
-        }
-
         return transaction
 
-        
     }
-    private Transfer_USDC_OP = async(payload:{
-        userId: string, 
-        account_ID: string,
-        address: string,
-        index: number,
-        amount: number
-    })=>{
 
-        const { userId, account_ID, address, index, amount } = payload
-
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDC.OPTIMISM_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
-
-        let transaction;
-
-        const response = await tatumAxios.post('/offchain/optimism/transfer', data)
-        console.log(response)
-        const result = response.data
-
-        transaction = await prisma.transaction.create({
-            data:{
-                id: result.id,
-                userId: userId,
-                currency: 'USDC_OP',
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                walletId: account_ID,
-                type:'DEBIT_PAYMENT',
-                description:'USDC OPTIMISM transfer'
-            }
-        })
-
-        if(!result.completed){
-            transaction = await this.complete_Withdrawal(result.id, result.txId)
-        }
-
-        return transaction
-
-        
-    }
     private Transfer_USDC_ARB = async(payload:{
         userId: string, 
         account_ID: string,
@@ -506,17 +313,66 @@ class stableCoinService
 
         const { userId, account_ID, address, index, amount } = payload
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDC.ARBITRUM_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('ARBITRUM');
+            // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDC.ARBITRUM_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDC.ARBITRUM_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
+
 
         let transaction;
 
-        const response = await tatumAxios.post('/offchain/arb/transfer', data)
+        const response = await tatumAxios.post('/offchain/arb/transfer', TransferData)
         console.log(response)
         const result = response.data
 
@@ -524,7 +380,7 @@ class stableCoinService
             data:{
                 id: result.id,
                 userId: userId,
-                currency: 'USDC_ARB',
+                currency: 'USDC ARBITRUM',
                 amount,
                 status: result.completed ? 'SUCCESSFUL' : 'PENDING',
                 walletId: account_ID,
@@ -537,10 +393,522 @@ class stableCoinService
             transaction = await this.complete_Withdrawal(result.id, result.txId)
         }
 
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDC Transfer Successful**
+
+                We've successfully processed your USDC transfer on Arbitrum network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDC
+                • **Network Fee:** $${withdrawalFee} USDC  
+                • **Recipient Received:** $${netAmount} USDC
+                • **Recipient Address:** ${address}
+                • **Network:** Arbitrum
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                Your funds are on the way! Arbitrum network transactions are typically fast and cost-effective.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
+
         return transaction
 
         
     }
+
+    private Transfer_USDC_OP = async(payload:{
+        userId: string, 
+        account_ID: string,
+        address: string,
+        index: number,
+        amount: number
+    })=>{
+
+        const { userId, account_ID, address, index, amount } = payload
+
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('OPTIMISM');
+            // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDC.OPTIMISM_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDC.OPTIMISM_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
+
+
+
+        let transaction;
+
+        const response = await tatumAxios.post('/offchain/optimism/transfer', TransferData)
+        console.log(response)
+        const result = response.data
+
+        transaction = await prisma.transaction.create({
+            data:{
+                id: result.id,
+                userId: userId,
+                currency: 'USDC OPTIMISM',
+                amount,
+                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+                walletId: account_ID,
+                type:'DEBIT_PAYMENT',
+                description:'USDC OPTIMISM transfer'
+            }
+        })
+
+        if(!result.completed){
+            transaction = await this.complete_Withdrawal(result.id, result.txId)
+        }
+
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDC Transfer Successful**
+
+                We've successfully processed your USDC transfer on Optimism network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDC
+                • **Network Fee:** $${withdrawalFee} USDC  
+                • **Recipient Received:** $${netAmount} USDC
+                • **Recipient Address:** ${address}
+                • **Network:** OPTIMISM
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                Your funds are on the way! OPTIMISM network transactions are typically fast and cost-effective.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
+
+        return transaction
+
+        
+    }
+
+    private Transfer_USDC_BSC = async(payload:{
+        userId: string, 
+        account_ID: string,
+        address: string,
+        index: number,
+        amount: number,
+    })=>{
+
+        const { userId, account_ID, address, index, amount } = payload
+
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('BSC');
+            // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDC.BSC_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDC.BSC_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
+
+        let transaction;
+
+        const response = await tatumAxios.post('/offchain/bsc/transfer', TransferData)
+        console.log(response)
+        const result = response.data
+
+        transaction = await prisma.transaction.create({
+            data:{
+                id: result.id,
+                userId: userId,
+                currency: 'USDC BSC',
+                amount,
+                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+                walletId: account_ID,
+                type:'DEBIT_PAYMENT',
+                description:'USDC BSC transfer'
+            }
+        })
+
+        if(!result.completed){
+            transaction = await this.complete_Withdrawal(result.id, result.txId)
+        }
+
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDC Transfer Successful**
+
+                We've successfully processed your USDC transfer on Binance smart chain.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDC
+                • **Network Fee:** $${withdrawalFee} USDC  
+                • **Recipient Received:** $${netAmount} USDC
+                • **Recipient Address:** ${address}
+                • **Network:** Binance smart chain
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                Your funds are on the way! BSC network transactions are typically fast and cost-effective.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
+
+        return transaction
+
+        
+    }
+
+    private Transfer_USDC_MATIC = async(payload:{
+        userId: string, 
+        account_ID: string,
+        address: string,
+        index: number,
+        amount: number,
+    })=>{
+
+        const { userId, account_ID, address, index, amount } = payload
+
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('POLYGON');
+            // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDC.POLYGON_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDC.POLYGON_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
+
+        let transaction;
+
+        const response = await tatumAxios.post('/offchain/polygon/transfer', TransferData)
+        console.log(response)
+        const result = response.data
+
+        transaction = await prisma.transaction.create({
+            data:{
+                id: result.id,
+                userId: userId,
+                currency: 'USDC MATIC',
+                amount,
+                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+                walletId: account_ID,
+                type:'DEBIT_PAYMENT',
+                description:'USDC MATIC transfer'
+            }
+        })
+
+        if(!result.completed){
+            transaction = await this.complete_Withdrawal(result.id, result.txId)
+        }
+
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDC Transfer Successful**
+
+                We've successfully processed your USDC transfer on Polygon network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDC
+                • **Network Fee:** $${withdrawalFee} USDC  
+                • **Recipient Received:** $${netAmount} USDC
+                • **Recipient Address:** ${address}
+                • **Network:** POLYGON
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                Your funds are on the way! Base network transactions are typically fast and cost-effective.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
+
+        return transaction
+
+        
+    }
+
+    private Transfer_USDC_ETH = async(payload:{
+        userId: string, 
+        account_ID: string,
+        address: string,
+        index: number,
+        amount: number,
+    })=>{
+
+        const {userId, account_ID, address, index, amount } = payload
+
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('ETHEREUM');
+            // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDC.ETH_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDC.ETH_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
+
+        let transaction;
+
+        const response = await tatumAxios.post('/offchain/ethereum/erc20/transfer', TransferData)
+        console.log(response)
+        const result = response.data
+
+        transaction = await prisma.transaction.create({
+            data:{
+                id: result.id,
+                userId: userId,
+                currency: 'USDC ETH',
+                amount,
+                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+                walletId: account_ID,
+                type:'DEBIT_PAYMENT',
+                description:'USDC ETHEREUM transfer'
+            }
+        })
+
+        if(!result.completed){
+            transaction = await this.complete_Withdrawal(result.id, result.txId)
+        }
+
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDC Transfer Successful**
+
+                We've successfully processed your USDC transfer on Ethereum network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDC
+                • **Network Fee:** $${withdrawalFee} USDC  
+                • **Recipient Received:** $${netAmount} USDC
+                • **Recipient Address:** ${address}
+                • **Network:** Ethereum
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                💡 Ethereum transactions require blockchain confirmations for security. Your transaction is being processed and will be confirmed shortly.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
+
+        return transaction
+
+        
+    }
+    
+
+
+    
+    
+    
+    
 
     // USDT TRANSFERS
     private Transfer_USDT_ETH = async(payload:{
@@ -553,17 +921,66 @@ class stableCoinService
 
         const { userId, account_ID,address, index, amount } = payload
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDT.ETH_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('ETHEREUM');
+        // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDT.ETH_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDT.ETH_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
 
         let transaction;
 
-        const response = await tatumAxios.post('/offchain/ethereum/erc20/transfer', data)
+        const response = await tatumAxios.post('/offchain/ethereum/erc20/transfer', TransferData)
         console.log(response)
         const result = response.data
 
@@ -571,7 +988,7 @@ class stableCoinService
             data:{
                 id: result.id,
                 userId: userId,
-                currency: 'USDT_ETH',
+                currency: 'USDT ETH',
                 amount,
                 status: result.completed ? 'SUCCESSFUL' : 'PENDING',
                 walletId: account_ID,
@@ -583,6 +1000,30 @@ class stableCoinService
         if(!result.completed){
             transaction = await this.complete_Withdrawal(result.id, result.txId)
         }
+
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDT Transfer Successful**
+
+                We've successfully processed your USDT transfer on Ethereum network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDT
+                • **Network Fee:** $${withdrawalFee} USDT  
+                • **Recipient Received:** $${netAmount} USDT
+                • **Recipient Address:** ${address}
+                • **Network:** Ethereum
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                💡 Ethereum transactions require blockchain confirmations for security. Your transaction is being processed and will be confirmed shortly.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
 
         return transaction
 
@@ -598,17 +1039,66 @@ class stableCoinService
 
         const { userId, account_ID, address, index, amount } = payload
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDT.BASE_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('BASE');
+        // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDT.BASE_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDT.BASE_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
 
         let transaction;
 
-        const response = await tatumAxios.post('/offchain/base/transfer', data)
+        const response = await tatumAxios.post('/offchain/base/transfer', TransferData)
         console.log(response)
         const result = response.data
 
@@ -616,7 +1106,7 @@ class stableCoinService
             data:{
                 id: result.id,
                 userId: userId,
-                currency: 'USDT_BASE',
+                currency: 'USDT BASE',
                 amount,
                 status: result.completed ? 'SUCCESSFUL' : 'PENDING',
                 walletId: account_ID,
@@ -629,10 +1119,34 @@ class stableCoinService
             transaction = await this.complete_Withdrawal(result.id, result.txId)
         }
 
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDT Transfer Successful**
+
+                We've successfully processed your USDT transfer on Base network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDT
+                • **Network Fee:** $${withdrawalFee} USDT  
+                • **Recipient Received:** $${netAmount} USDT
+                • **Recipient Address:** ${address}
+                • **Network:** Base
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                Your funds are on the way! Base network transactions are typically fast and cost-effective.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
+
         return transaction
 
-        
     }
+
     private Transfer_USDT_BSC = async(payload:{
         userId: string, 
         account_ID: string,
@@ -643,17 +1157,66 @@ class stableCoinService
 
         const { userId, account_ID, address, index, amount } = payload
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDT.BSC_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('BSC');
+        // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDT.BSC_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDT.BSC_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
 
         let transaction;
 
-        const response = await tatumAxios.post('/offchain/bsc/transfer', data)
+        const response = await tatumAxios.post('/offchain/bsc/transfer', TransferData)
         console.log(response)
         const result = response.data
 
@@ -661,7 +1224,7 @@ class stableCoinService
             data:{
                 id: result.id,
                 userId: userId,
-                currency: 'USDT_BSC',
+                currency: 'USDT BSC',
                 amount,
                 status: result.completed ? 'SUCCESSFUL' : 'PENDING',
                 walletId: account_ID,
@@ -674,55 +1237,35 @@ class stableCoinService
             transaction = await this.complete_Withdrawal(result.id, result.txId)
         }
 
-        return transaction
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
 
-        
-    }
-    private Transfer_USDT_TRON = async(payload:{
-        userId: string, 
-        account_ID: string,
-        address: string,
-        index: number,
-        amount: number
-    })=>{
+              content:`💰 **USDT Transfer Successful**
 
-        const { userId, account_ID, address, index, amount } = payload
+                We've successfully processed your USDT transfer on Binance smart chain.
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDT.TRON_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDT
+                • **Network Fee:** $${withdrawalFee} USDT  
+                • **Recipient Received:** $${netAmount} USDT
+                • **Recipient Address:** ${address}
+                • **Network:** BSC
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
 
-        let transaction;
+                Your funds are on the way! BSC network transactions are typically fast and cost-effective.
 
-        const response = await tatumAxios.post('/offchain/tron/transfer', data)
-        console.log(response)
-        const result = response.data
-
-        transaction = await prisma.transaction.create({
-            data:{
-                id: result.id,
-                userId: userId,
-                currency: 'USDT_TRON',
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                walletId: account_ID,
-                type:'DEBIT_PAYMENT',
-                description:'USDT TRON transfer'
-            }
+                Need help? Contact our support team anytime.
+                    `,
+                       
         })
 
-        if(!result.completed){
-            transaction = await this.complete_Withdrawal(result.id, result.txId)
-        }
-
         return transaction
 
         
     }
+
     private Transfer_USDT_OP = async(payload:{
         userId: string, 
         account_ID: string,
@@ -733,17 +1276,66 @@ class stableCoinService
 
         const { userId, account_ID, address, index, amount } = payload
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDT.OPTIMISM_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('OPTIMISM');
+        // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+         if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDT.OPTIMISM_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDT.OPTIMISM_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
 
         let transaction;
 
-        const response = await tatumAxios.post('/offchain/optimism/transfer', data)
+        const response = await tatumAxios.post('/offchain/optimism/transfer', TransferData)
         console.log(response)
         const result = response.data
 
@@ -751,7 +1343,7 @@ class stableCoinService
             data:{
                 id: result.id,
                 userId: userId,
-                currency: 'USDT_OP',
+                currency: 'USDT OP',
                 amount,
                 status: result.completed ? 'SUCCESSFUL' : 'PENDING',
                 walletId: account_ID,
@@ -764,10 +1356,34 @@ class stableCoinService
             transaction = await this.complete_Withdrawal(result.id, result.txId)
         }
 
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDT Transfer Successful**
+
+                We've successfully processed your USDT transfer on Optimism network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDT
+                • **Network Fee:** $${withdrawalFee} USDT  
+                • **Recipient Received:** $${netAmount} USDT
+                • **Recipient Address:** ${address}
+                • **Network:** OPTIMISM
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                Your funds are on the way! Optimism network transactions are typically fast and cost-effective.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
+
         return transaction
 
-        
     }
+
     private Transfer_USDT_ARB = async(payload:{
         userId: string, 
         account_ID: string,
@@ -778,17 +1394,66 @@ class stableCoinService
 
         const { userId, account_ID, address, index, amount } = payload
 
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDT.ARBITRUM_MNEMONIC,
-            index: index || 1,
-            address,
-            amount: String(amount)
-        };
+        // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('ARBITRUM');
+        // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDT.ARBITRUM_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDT.ARBITRUM_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
 
         let transaction;
 
-        const response = await tatumAxios.post('/offchain/arb/transfer', data)
+        const response = await tatumAxios.post('/offchain/arb/transfer', TransferData)
         console.log(response)
         const result = response.data
 
@@ -796,7 +1461,7 @@ class stableCoinService
             data:{
                 id: result.id,
                 userId: userId,
-                currency: 'USDT_ARB',
+                currency: 'USDT ARB',
                 amount,
                 status: result.completed ? 'SUCCESSFUL' : 'PENDING',
                 walletId: account_ID,
@@ -808,6 +1473,149 @@ class stableCoinService
         if(!result.completed){
             transaction = await this.complete_Withdrawal(result.id, result.txId)
         }
+
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDT Transfer Successful**
+
+                We've successfully processed your USDT transfer on Arbitrum network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDT
+                • **Network Fee:** $${withdrawalFee} USDT  
+                • **Recipient Received:** $${netAmount} USDT
+                • **Recipient Address:** ${address}
+                • **Network:** ARBITRUM
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                Your funds are on the way! Arbitrum network transactions are typically fast and cost-effective.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
+
+        return transaction
+
+        
+    }
+
+    private Transfer_USDT_TRON = async(payload:{
+        userId: string, 
+        account_ID: string,
+        address: string,
+        index: number,
+        amount: number
+    })=>{
+
+        const { userId, account_ID, address, index, amount } = payload
+
+         // First of all we transfer the asset to the Admin Account, which is the master account, 
+        // then from there we transfer to the desired address
+
+        let userWallet;
+        let adminWallet;
+        let TransferData;
+
+        const withdrawalFee = transferfeeService.calculateFee('TRON');
+        // Calculate net amount (amount after fee deduction)
+        const netAmount = amount - withdrawalFee;
+        console.log(`Transfer details: Gross: $${amount}, Fee: $${withdrawalFee}, Net: $${netAmount}`);
+
+        if(config.Admin_Id !== userId){
+
+            userWallet = await prisma.wallet.findUnique({
+                where:{id: account_ID },
+                select:{ currencyId: true }
+            })
+
+            adminWallet = await prisma.wallet.findFirst({
+                where:{ 
+                    userId: config.Admin_Id, 
+                    currencyId: userWallet?.currencyId as string 
+                },
+                select:{ 
+                    id: true,
+                    derivationKey: true
+                }
+            })
+        
+            const AdminTransfer = await this.offchain_Transfer({
+                userId,
+                receipientId: config.Admin_Id,
+                currencyId: userWallet?.currencyId as string, 
+                amount
+            })
+            console.log('Admin Transfer', AdminTransfer)
+
+            TransferData = {
+                senderAccountId: adminWallet?.id as string,
+                mnemonic: config.USDT.TRON_MNEMONIC,
+                index: adminWallet?.derivationKey as number || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+
+        }else{
+
+           TransferData = {
+                senderAccountId: account_ID,
+                mnemonic: config.USDT.TRON_MNEMONIC,
+                index: index || 1,
+                address,
+                amount: String(netAmount)
+            }; 
+        }
+
+        let transaction;
+
+        const response = await tatumAxios.post('/offchain/tron/transfer', TransferData)
+        console.log(response)
+        const result = response.data
+
+        transaction = await prisma.transaction.create({
+            data:{
+                id: result.id,
+                userId: userId,
+                currency: 'USDT TRON',
+                amount,
+                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+                walletId: account_ID,
+                type:'DEBIT_PAYMENT',
+                description:'USDT TRON transfer'
+            }
+        })
+
+        if(!result.completed){
+            transaction = await this.complete_Withdrawal(result.id, result.txId)
+        }
+
+        notificationService.queue({
+              userId,
+              type:'GENERAL' as NotificationType,
+              title:`Transaction Notification`,
+
+              content:`💰 **USDT Transfer Successful**
+
+                We've successfully processed your USDT transfer on Tron network.
+
+                **Transaction Details:**
+                • **Amount Sent:** $${amount} USDT
+                • **Network Fee:** $${withdrawalFee} USDT  
+                • **Recipient Received:** $${netAmount} USDT
+                • **Recipient Address:** ${address}
+                • **Network:** TRON
+                • **Status:** ${result.completed ? 'Completed' : 'Processing'}
+
+                Your funds are on the way! Tron network transactions are typically fast and cost-effective.
+
+                Need help? Contact our support team anytime.
+                    `,
+                       
+        })
 
         return transaction
 
@@ -1260,6 +2068,7 @@ class stableCoinService
     }){
         const {chain, userId, walletId, amount, address, index } = payload
 
+
         let result;
 
         const transferPayload = {
@@ -1341,7 +2150,7 @@ class stableCoinService
                break;
    
                case 'BASE':
-               result = await this.Transfer_USDC_BASECHAIN(transferPayload)
+               result = await this.Transfer_USDC_BASE(transferPayload)
                return result
                break;
    

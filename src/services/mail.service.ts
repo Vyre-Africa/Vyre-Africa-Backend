@@ -38,6 +38,43 @@ class MailService {
         this.batchClient = new SendMailClient({ url: this.batchUrl, token: this.token });
     }
 
+    public async general(
+        address:string, 
+        userName:string, 
+        title: string,
+        content: string,
+       ): Promise<void> {
+        try {
+            
+            const response = await this.client.sendMail({
+                mail_template_key:
+                    '2d6f.55476f26b2f59b6f.k1.01a6e280-af3f-11f0-a465-fae9afc80e45.19a0bccc0a8',
+                from: {
+                    address: 'team@vyre.africa',
+                    name: 'Vyre',
+                },
+                to: [
+                    {
+                        email_address: {
+                            address: address,
+                            name: 'Vyre',
+                        },
+                    },
+                ],
+                merge_info: { 
+                    title,
+                    content,
+                    link:'',
+                    user_name: userName 
+                },
+                subject: title,
+            });
+            console.log('success', response);
+        } catch (error) {
+            console.error('error', error);
+        }
+    }
+
     public async sendBroadCast(receipients:{}[]): Promise<void> {
 
             this.batchClient.mailBatchWithTemplate({

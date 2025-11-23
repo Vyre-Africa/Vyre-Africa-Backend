@@ -8,6 +8,9 @@ import nativecoinService from './nativecoin.service';
 // import { currency as baseCurrency } from '../globals';
 import qorepayService from './qorepay.service';
 import { hasSufficientBalance } from '../utils';
+import transferfeeService from './transferfee.service';
+import { Queue } from 'bullmq';
+
 
     const tatumAxios = axios.create({
         baseURL: 'https://api.tatum.io/v3',
@@ -36,6 +39,22 @@ import { hasSufficientBalance } from '../utils';
 
 class WalletService
 {    
+
+    private generalQueue: Queue;
+    
+    constructor() {
+        // Initialize the processing queue
+        this.generalQueue = new Queue('general-process', {
+            connection: {
+                host: config.redisHost,
+                port: parseInt(config.redisPort),
+                username: "default",
+                password: config.redisPassWord
+            }
+        });
+    }
+
+
 
     private complete_Withdrawal = async(
         withdrawal_Id: string,
@@ -202,6 +221,7 @@ class WalletService
               
         })
 
+
         if(!currency){
             const error = new Error('currency not found');
             error.name = 'CurrencyNotFoundError';
@@ -219,6 +239,16 @@ class WalletService
         let result;
 
         if(currency.isStablecoin){
+
+            const isvalid = transferfeeService.isValidWithdrawal(currency?.chain as any,amount)
+
+            if(!isvalid){
+                const error = new Error('Withdrawal amount below minimum');
+                error.name = 'Amount Below Minimum';
+                throw error;
+            }
+
+
 
             switch (currency.ISO) {
 
@@ -625,54 +655,87 @@ class WalletService
           console.error('Error deleting account:', error)
           return false
         }
-      }
-
-    async createUserWallet(userId: string|null)
-    {
-        // return await prisma.wallet.create({
-        //     data: {
-        //         userId,
-        //         currency: config.defaultCurrency
-        //     }
-        // })
     }
 
-    async getUserbalance(userId: string|null)
-    {
-        // const wallet =  await prisma.wallet.findFirst({
-        //     where:{userId : userId}
-        // })
-        // return wallet?.balance
+    async queue(payload:{
+        amount: number,
+        address?: string,
+        destination_Tag?: number
+
+        userId?: string,
+        receipientId?: string,
+        currencyId?: string,
+
+
+        currency?: string,
+        email?:string, 
+        phone?:string,
+     
+        account_number?: string,
+        bank_code?: string, 
+        recipient_name?: string
+
+
+        type: 'OFFCHAIN' | 'BLOCKCHAIN' | 'BANK'
+    }){
+
+        const {
+            amount,
+            address,
+            destination_Tag,
+
+            userId,
+            receipientId,
+            currencyId,
+
+
+            currency,
+            email, 
+            phone,
+        
+            account_number,
+            bank_code, 
+            recipient_name, 
+            type
+        } = payload
+
+        if(type === 'OFFCHAIN'){
+            return await this.generalQueue.add('offchain-transfer', {
+                userId,
+                receipientId,
+                currencyId, 
+                amount
+            });
+        }
+
+        if(type === 'BLOCKCHAIN'){
+
+            return await this.generalQueue.add('blockchain-transfer', {
+                userId, 
+                currencyId,
+                amount,
+                address,
+                destination_Tag
+            });
+        }
+
+        if(type === 'BANK'){
+
+            return await this.generalQueue.add('bank-transfer', {
+                currency,
+                amount,
+                email, 
+                phone,
+            
+                account_number,
+                bank_code, 
+                recipient_name
+            });
+        }
+
     }
 
-    // async createStoreWallet(storeId: string|null)
-    // {
-    //     return await prisma.wallet.create({
-    //         data: {
-    //             storeId,
-    //             currency: config.defaultCurrency
-    //         }
-    //     })
-    // }
-
-    async fundUserWallet(amount: number, userId: string){
-        // const wallet =  await prisma.wallet.findFirst({
-        //     where: {userId},
-        // })
-
-        // if(!wallet){
-        //     return false;
-        // }
-
-        // const balance: number = Number(wallet.balance);
-
-        // return await prisma.wallet.update({
-        //     where: {userId},
-        //     data: {
-        //         balance: balance + amount
-        //     }
-        // })
-    }
+   
 
     
 }

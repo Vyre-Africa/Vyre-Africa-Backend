@@ -8,9 +8,84 @@ import smsService from './sms.service';
 import config from '../config/env.config';
 import mobilePushService from './mobilePush.service';
 import { endOfDay, startOfDay } from 'date-fns';
+import { Queue } from 'bullmq';
+import ablyService from './ably.service';
 
 class NotificationService
 {
+
+    private generalQueue: Queue;
+
+    constructor() {
+        // Initialize the processing queue
+        this.generalQueue = new Queue('general-process', {
+        connection: {
+            host: config.redisHost,
+            port: parseInt(config.redisPort),
+            username: "default",
+            password: config.redisPassWord
+        }
+        });
+    }
+
+    async UserNotify(payload:{
+        userId: string,
+        title: string, 
+        content: string, 
+        type: NotificationType
+    }) {
+
+        try {
+
+            const user = await prisma.user.findUnique({
+                where:{id: payload.userId},
+                select:{
+                    firstName:true,
+                    lastName: true,
+                    email:true
+                }
+            })
+
+            await prisma.notification.create({
+                data: {
+                    userId: payload.userId,
+                    title: payload.title,
+                    content: payload.content,
+                    type: payload.type,
+                }
+            });
+
+
+            await mailService.general(
+                user?.email as string,
+                user?.firstName as string,
+                payload.title,
+                payload.content
+            )
+            
+            await ablyService.notifyUser(
+                payload.userId,
+                payload.title,
+                payload.content
+            )
+
+            
+        } catch (error) {
+            console.log(error)
+        }
+
+    }
+
+    async queue(payload:{
+        userId?: string, 
+        title: string, 
+        content: string,
+        type: NotificationType
+    }){
+       return await this.generalQueue.add('user-notification', payload);
+    }
+
+
     async create(userId:string|null, storeId:string|null, title:string|null, content:string, type:NotificationType)
     {
         // if(userId){
@@ -34,190 +109,6 @@ class NotificationService
         // }
 
 
-    }
-
-    // async subscribeToStore(token:string, userId:string)
-    // {
-
-    //     await prisma.user.update({
-    //         where: {id: userId},
-    //         data:{pushToken: token}
-    //     })
-
-    //     const registrationTokens = [
-    //         token,
-    //     ];
-
-    //     try {
-    //         await adminBase.messaging().subscribeToTopic(registrationTokens, 'STORE-BROADCAST')
-    //         await adminBase.messaging().subscribeToTopic(registrationTokens, 'GENERAL-BROADCAST')
-    //         return true
-    //     } catch (error:any) {
-    //         console.log('Error subscribing to topic:', error);
-    //       return false
-    //     }
-        
-    // }
-
-    // async subscribeToUser(token:string, userId:string)
-    // {
-
-    //     await prisma.user.update({
-    //         where: {id: userId},
-    //         data:{pushToken: token}
-    //     })
-
-    //     const registrationTokens = [
-    //         token,
-    //     ];
-
-    //     try {
-    //         await adminBase.messaging().subscribeToTopic(registrationTokens, 'USER-BROADCAST')
-    //         await adminBase.messaging().subscribeToTopic(registrationTokens, 'GENERAL-BROADCAST')
-    //         return true
-    //     } catch (error:any) {
-    //         console.log('Error subscribing to topic:', error);
-    //       return false
-    //     }
-        
-    // }
-
-    async sendPushNotification(userType:string, title:string, body:string)
-    {
-
-        console.log('push  triggered')
-        const Channel = userType === 'SHOPPERS' ? 'USER-BROADCAST' : userType === 'MALLS'? 'STORE-BROADCAST' : 'GENERAL-BROADCAST'
-
-        const message = {
-            notification: {
-              title: title,
-              body: body
-            },
-            topic: Channel
-        };
-
-        console.log(message)
-
-        try {
-            // if(userType === 'SHOPPERS' || userType === 'ALL'){
-            //     const shoppers = await prisma.user.findMany({
-            //         where:{ type:'USER' }
-            //     });
-
-            //     //get push tokens
-            //     const userPushTokens:any = []
-
-            //     shoppers.map((user) => {
-            //         if(user.pushToken){
-            //             userPushTokens.push(user.pushToken)
-            //         }
-            //     })
-
-            //     //send push notification
-            //     const response = await mobilePushService.BulkPush(title, body, userPushTokens)
-            //     console.log(response)
-            // }
-            
-            // if(userType === 'MALLS' || userType === 'ALL'){
-            //   const response = await adminBase.messaging().send(message)
-            //   console.log(response)
-
-            // }
-
-            return true
-        } catch (error:any) {
-            console.log('Error subscribing to topic:', error);
-          return false
-        }
-        
-    }
-
-    async sendSmsNotification(userType:string, title:string, body:string)
-    {
-        const allUsers = await prisma.user.findMany();
-
-        const userPhoneNumbers:any = []
-
-        allUsers.map((user) => {
-            if(user.phoneNumber){
-                const phone = user.phoneNumber.replace(/^\+/, '');
-                userPhoneNumbers.push(phone)
-            }
-        })
-
-        const data = {
-            api_key: config.termiiLiveKey,
-            to: userPhoneNumbers,
-            from: 'Qaya',
-            sms: body,
-            type: "plain",
-            channel: "generic",
-        }
-
-        try {
-            const response = await smsService.sendBulk(data)
-            console.log('response', response.data)
-            if(response.data?.code == 'ok'){
-                return true
-            }
-
-            return false;
-
-        } catch (error:any) {
-            console.log('Error Sending Broadcast:', error);
-          return false
-        }
-        
-    }
-
-    async sendEmailNotification(userType:string, title:string, body:string)
-    {
-        
-        const allUsers = await prisma.user.findMany();
-        
-        const mailUsers = allUsers.map((user)=>{
-          return {
-            email_address:{"address": user.email,"name": user.firstName},
-            merge_info: { 
-                body: body,
-                subject: title,
-                user_name: user.firstName
-            },
-          }
-        })
-
-        try {
-            const response = await mailService.sendBroadCast(mailUsers)
-            console.log(response)
-
-            return true
-        } catch (error:any) {
-            console.log('Error Sending Broadcast:', error);
-          return false
-        }
-        
-    }
-
-    async sendMulticastPushNotification(tokens: string[], title: string, body: string){
-        
-        const message = {
-            notification: {
-                title: title,
-                body: body,
-            },
-            tokens: tokens,
-        };
-
-        try {
-            const response = await adminBase.messaging().sendMulticast(message);
-
-            console.log('Successfully sent multicast notification:', response);
-
-            return true
-        } catch (error:any) {
-            console.log('Error sending push notification:', error);
-          return false
-        }
     }
 
     async getUserNotification(userId:string, limit:string)
