@@ -275,16 +275,18 @@ class EventController {
     try {
       const { body } = req;
 
-      console.log('body',body)
+      console.log('qorepay request body',body)
 
       const signatureHeader = req.headers["x-signature"] as string;
 
       const rawBody = JSON.stringify(req.body)
       // const rawBody = await req.json();
+      console.log('rawBody', rawBody)
 
       const isValid = await verifySignature(rawBody, signatureHeader);
 
       console.log(isValid)
+      console.log('qorepay event type', body.type)
 
       // if (!isValid) {
       //   return res.status(401).json({ error: 'Invalid signature' });
