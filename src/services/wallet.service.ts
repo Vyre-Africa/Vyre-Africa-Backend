@@ -10,6 +10,7 @@ import qorepayService from './qorepay.service';
 import { hasSufficientBalance } from '../utils';
 import transferfeeService from './transferfee.service';
 import { Queue } from 'bullmq';
+import notificationService from './notification.service';
 
 
     const tatumAxios = axios.create({
@@ -571,6 +572,14 @@ class WalletService
 
         return responseData.reference
     }
+
+    // async handleFiatCredit(payload:{amount:number,accountId: string}){
+    //     const {amount, accountId} = payload
+
+    //     await this.credit_Wallet(amount,accountId)
+
+        
+    // }
 
     async block_Amount(amount: number, accountId: string){
 

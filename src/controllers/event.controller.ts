@@ -300,7 +300,6 @@ class EventController {
         if(body.event_type === 'purchase.paid'){
 
           const result = await eventService.handleFiatEvent({reference: body.id })
-
         } 
         
         if(body.event_type === 'purchase.payment_failure'){

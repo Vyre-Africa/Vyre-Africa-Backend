@@ -8,6 +8,7 @@ import { hasSufficientBalance, amountSufficient } from '../utils';
 import { Queue } from 'bullmq'; // Using BullMQ for job queue
 import config from '../config/env.config';
 import logger from '../config/logger'
+import notificationService from './notification.service';
 
 
   // {
@@ -24,7 +25,7 @@ import logger from '../config/logger'
 
 class eventService {
 
-  private orderProcessingQueue: Queue;
+  private orderProcessingQueue: Queue;  
 
   constructor() {
     // Initialize the processing queue
@@ -157,7 +158,9 @@ class eventService {
       // 1. Find and validate transaction
       const transaction = await prisma.transaction.findFirst({
         where: { reference },
-        include: { wallet: true }
+        include: { wallet: {
+          include:{currency:true}
+        } }
       });
 
       if (!transaction) {
@@ -165,12 +168,15 @@ class eventService {
         return { status: 'rejected', reason: 'transaction_not_found' };
       }
 
+      if(transaction?.status !=='PENDING'){
+        return { status: 'Already processed', reason: 'transaction_already_processed' };
+      }
+
       // 2. Process wallet credit
       await walletService.credit_Wallet(
         Number(transaction.amount), // Explicit conversion
         transaction.walletId as string
       );
-
 
       await prisma.transaction.update({
         where: { id: transaction.id },
@@ -188,15 +194,28 @@ class eventService {
         }
       });
 
-      if (!awaiting) {
-        logger.warn(`No pending order found for reference: ${reference}`);
-        return { status: 'ignored', reason: 'no_pending_order' };
+      // if (!awaiting) {
+      //   logger.warn(`No pending order found for reference: ${reference}`);
+      //   return { status: 'ignored', reason: 'no_pending_order' };
+      // }
+
+      if(awaiting){
+        // Queue order processing
+        await this.orderProcessingQueue.add('process-order', {
+          awaitingId: awaiting.id
+        });
+        
+      }else{
+        await notificationService.queue({
+          userId: transaction.userId as string, // Make sure to get userId from the order
+          title: 'Deposit Successful',
+          type: 'GENERAL',
+          content: `Your deposit of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> has been processed successfully. The funds are now available in your wallet.`
+        })
+
       }
 
-      // Queue order processing
-      await this.orderProcessingQueue.add('process-order', {
-        awaitingId: awaiting.id
-      });
+      
 
 
       logger.info(`Fiat payment processed and queued for reference: ${reference}`);
