@@ -628,6 +628,23 @@ class WalletService
         
     }
 
+    async unblock_Amount(blockId:string){
+
+        const response = await tatumAxios.delete(`https://api.tatum.io/v3/ledger/account/block/${blockId}`)
+        const responseData = response.data
+        console.log(responseData)
+
+        await prisma.block.update({
+            where:{id: blockId},
+            data:{
+              active: false
+            }
+        })
+
+        return responseData.reference
+        
+    }
+
     async deletePaymentAccountById(accountId: string): Promise<boolean> {
         try {
           // First try to delete from fiat accounts

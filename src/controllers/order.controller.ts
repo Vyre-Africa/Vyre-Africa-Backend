@@ -476,10 +476,7 @@ class OrderController {
           });
       }
 
-      const canceledOrder = await prisma.order.update({
-        where:{id: order?.id},
-        data:{status:'CANCELED'}
-      })
+      const canceledOrder = await orderService.cancelOrder({orderId})
 
 
       return res
@@ -495,6 +492,7 @@ class OrderController {
       return res.status(500).send({ msg: 'Internal Server Error', success: false, error });
     }
   }
+
 
   async fetchOrders(req: Request | any, res: Response) {
     const { cursor, type, pairId, priceMin, priceMax } = req.query;
@@ -587,6 +585,84 @@ class OrderController {
         success: true,
         totalCount: totalCount,
         cursor: newCursor,
+        orders
+      });
+
+    } catch (error) {
+      console.error(error);
+      return res.status(500).send({ 
+        msg: 'Internal Server Error', 
+        success: false
+      });
+    }
+  }
+
+  async fetch_user_orders(req: Request | any, res: Response) {
+
+    const user = req.user
+
+    console.log(req.query)
+
+    try {
+
+      const orders = await prisma.order.findMany({
+        where: {userId: user.id},
+        select: {
+          id: true,
+          type: true,
+          user: {
+            select: {
+              firstName: true,
+              lastName: true,
+              photoUrl: true,
+            }
+          },
+          pair: {
+            select:{
+              name: true,
+              baseCurrency:{
+                select:{
+                  id: true, 
+                  type: true,
+                  name: true,
+                  ISO: true,
+                  chain: true,
+                  imgUrl: true,
+                  chainImgUrl: true,
+                  isStablecoin: true,
+                  flagEmoji: true 
+                }  
+              },
+              quoteCurrency:{
+                select:{
+                  id: true, 
+                  type: true,
+                  name: true,
+                  ISO: true,
+                  chain: true,
+                  imgUrl: true,
+                  chainImgUrl: true,
+                  isStablecoin: true,
+                  flagEmoji: true 
+                }  
+              }
+            }
+          },
+          amount: true,
+          amountProcessed: true,
+          percentageProcessed: true,
+          price: true,
+          status: true,
+          createdAt: true
+        },
+        orderBy: {
+          createdAt: 'desc'  // Assuming you want newest orders first
+        }
+      });
+
+      return res.status(200).json({
+        msg: 'Successful',
+        success: true,
         orders
       });
 

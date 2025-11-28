@@ -241,6 +241,46 @@ class OrderService {
 
     }
 
+    async cancelOrder(payload:{orderId:string}){
+
+      const {orderId} = payload
+
+      try {
+        
+        const order = await prisma.order.findUnique({
+          where:{
+            id: orderId
+          },
+          select:{
+            id: true,
+            type: true,
+            amount: true,
+            blockId: true
+          },
+        })
+
+        if(!order){
+          throw new Error('Order not found');
+        }
+
+        await walletService.unblock_Amount(order.blockId as string)
+
+        const canceledOrder = await prisma.order.update({
+          where:{id: order?.id},
+          data:{status:'CANCELED'}
+        })
+
+        return canceledOrder
+
+      } catch (error) {
+        console.log(error)
+      }
+      
+
+    }
+
+
+
     // async getStoreOrders(cursor: string | null, status: string | null, limit: string | null, storeId: string) {
     //     let orders;
 

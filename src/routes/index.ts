@@ -280,6 +280,12 @@ router.get(
 );
 
 router.get(
+  '/orders/user',
+  authMiddleware,
+  orderController.fetch_user_orders
+);
+
+router.get(
   '/order/:id',
   authMiddleware,
   orderController.fetchOrder
