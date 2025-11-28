@@ -5,6 +5,7 @@ import config from '../config/env.config';
 // import { OrderStatus } from '@prisma/client'
 import { Wallet, Pair, OrderType } from '@prisma/client';
 import {hasSufficientBalance,amountSufficient} from '../utils'
+import notificationService from './notification.service';
 
 
 class OrderService {
@@ -100,6 +101,13 @@ class OrderService {
             }
 
         )
+
+        await notificationService.queue({
+          userId, 
+          title:'Order is Live!',
+          type:'GENERAL',
+          content:`Your <strong>${orderType}</strong> order for <strong>${amount} ${pair?.baseCurrency?.ISO}</strong> on the <strong>${pair?.baseCurrency?.ISO}/${pair?.quoteCurrency?.ISO}</strong> pair has been placed successfully and is now active on the order book.`
+        })
 
         return result.order
 
