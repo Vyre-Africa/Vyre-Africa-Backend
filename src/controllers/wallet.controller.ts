@@ -133,7 +133,7 @@ class WalletController {
     }
 
     const currency = await prisma.currency.findUnique({
-      where:{id:currencyId}
+      where:{id: currencyId}
     })
 
     if(!currency){
