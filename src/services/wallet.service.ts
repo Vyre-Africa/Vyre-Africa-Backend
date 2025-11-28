@@ -562,7 +562,7 @@ class WalletService
 
         const data = {
             accountId,
-            amount
+            amount:String(amount)
         };
 
         const response = await tatumAxios.put('/ledger/virtualCurrency/mint', data)
