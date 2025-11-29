@@ -29,7 +29,7 @@ class eventService {
 
   constructor() {
     // Initialize the processing queue
-    this.orderProcessingQueue = new Queue('order-processing', {
+    this.orderProcessingQueue = new Queue('general-process', {
       connection: {
         host: config.redisHost,
         port: parseInt(config.redisPort),
@@ -232,7 +232,7 @@ class eventService {
 
   /**
    * Process queued order (called by worker)
-   */
+  */
   public async processOrderJob(jobData: { awaitingId: string }) {
     const { awaitingId } = jobData;
 
@@ -322,7 +322,7 @@ class eventService {
 
   /**
    * Process queued refund (called by worker)
-   */
+  */
   public async processRefundJob(jobData: { 
     awaitingId: string;
     senderAddress: string;
@@ -368,7 +368,7 @@ class eventService {
 
   /**
    * Process queued postActions (called by worker)
-   */
+  */
   public async process_Post_Action_Job(jobData: { 
     awaitingId: string
   }) {

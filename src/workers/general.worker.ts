@@ -5,6 +5,8 @@ import notificationService from '../services/notification.service';
 import config from '../config/env.config';
 import walletService from '../services/wallet.service';
 import connection from '../config/redis.config';
+import eventService from '../services/event.service';
+import orderService from '../services/order.service';
 
 
 // const connection = new IORedis({
@@ -22,6 +24,9 @@ const worker = new Worker('general-process',
       console.info(`Processing job ${job.id} of type ${job.name}`);
       
       switch (job.name) {
+
+        // GENERAL CASES
+
         case 'user-notification':
           return await notificationService.UserNotify(job.data)
         case 'blockchain-transfer':
@@ -32,9 +37,20 @@ const worker = new Worker('general-process',
 
         case 'bank-transfer':
           return await walletService.direct_bank_Transfer(job.data);
+
+
+        // ORDER CASES
+
+        case 'create-order':
+          return await orderService.createOrder(job.data);
+        case 'process-order':
+          return await eventService.processOrderJob(job.data);
+        case 'process-post-action':
+          return await eventService.process_Post_Action_Job(job.data);
+        case 'initiate-refund':
+          return await eventService.processRefundJob(job.data);
         
-        // case 'create-chore':
-        //   return await taskService.addChore(job.data);
+        
 
         default:
           throw new Error(`Unknown job type: ${job.name}`);

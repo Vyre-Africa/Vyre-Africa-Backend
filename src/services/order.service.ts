@@ -6,9 +6,26 @@ import config from '../config/env.config';
 import { Wallet, Pair, OrderType } from '@prisma/client';
 import {hasSufficientBalance,amountSufficient} from '../utils'
 import notificationService from './notification.service';
+import { Queue } from 'bullmq'; // Using BullMQ for job queue
 
 
 class OrderService {
+
+  private generalQueue: Queue;  
+
+  constructor() {
+    // Initialize the processing queue
+    this.generalQueue = new Queue('general-process', {
+      connection: {
+        host: config.redisHost,
+        port: parseInt(config.redisPort),
+        username: "default",
+        password: config.redisPassWord
+      }
+    });
+  }
+
+
 
     async createOrder(payload:{
         userId: string,
@@ -20,6 +37,7 @@ class OrderService {
         baseWallet: Wallet,
         quoteWallet: Wallet
     }) {
+
         let blockId: any;
         let order: any
 
@@ -66,17 +84,23 @@ class OrderService {
 
               console.log('inside transaction')
               // deduct fee amount
-              const transfer = await walletService.offchain_Transfer({
-                userId,
-                receipientId: config.Admin_Id,
-                currencyId: orderType === 'SELL'? pair?.baseCurrency?.id as string : pair?.quoteCurrency?.id as string,
-                amount: fee
-              })
+
+              if(config.Admin_Id !== userId){
+                const transfer = await walletService.offchain_Transfer({
+                  userId,
+                  receipientId: config.Admin_Id,
+                  currencyId: orderType === 'SELL'? pair?.baseCurrency?.id as string : pair?.quoteCurrency?.id as string,
+                  amount: fee
+                })
+
+                console.log('---------------- FEE DEDUCTED -----------------')
+              }
+              
 
               console.log('done with offchain transfer')
               // block adjustedAmount
               blockId = await walletService.block_Amount(adjustedAmount, orderType === 'SELL'? baseWallet.id: quoteWallet.id)
-
+              console.log('---------------- AMOUNT LOCKED -----------------')
               console.log('done with offchain transfer',blockId)
 
               order = await prisma.order.create({
@@ -106,8 +130,9 @@ class OrderService {
           userId, 
           title:'Order is Live!',
           type:'GENERAL',
-          content:`Your <strong>${orderType}</strong> order for <strong>${amount} ${pair?.baseCurrency?.ISO}</strong> on the <strong>${pair?.baseCurrency?.ISO}/${pair?.quoteCurrency?.ISO}</strong> pair has been placed successfully and is now active on the order book.`
+          content:`Your <strong>${orderType}</strong> order for <strong>${amount} ${pair?.baseCurrency?.ISO}</strong> on the <strong>${pair?.baseCurrency?.ISO}/${pair?.quoteCurrency?.ISO}</strong> pair has been placed successfully and is now active on the market,.`
         })
+        console.log('---------------- NOTIFICATION QUEUED -----------------')
 
         return result.order
 
@@ -297,6 +322,19 @@ class OrderService {
       }
       
 
+    }
+
+    async queue(payload:{
+        userId: string,
+        rate: number, 
+        amount: number, 
+        orderType: OrderType, 
+        pairId: string, 
+        minimumAmount:number,
+        baseWallet: Wallet,
+        quoteWallet: Wallet
+    }){
+      return await this.generalQueue.add('create-order', payload);
     }
 
 

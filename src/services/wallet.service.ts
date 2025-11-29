@@ -366,7 +366,7 @@ class WalletService
         const data = {
             senderAccountId: user_Wallet?.id!,
             recipientAccountId: receipient_Wallet?.id!,
-            amount: `${amount}`,
+            amount: String(amount),
             anonymous: false,
             compliant: false
         };
@@ -584,7 +584,7 @@ class WalletService
     async block_Amount(amount: number, accountId: string){
 
         const data = {
-            amount: `${amount}`,
+            amount: String(amount),
             type:'ORDER_BLOCK',
             description:'order amount blocked',
             ensureSufficientBalance: true
@@ -613,7 +613,7 @@ class WalletService
 
         const data = {
             recipientAccountId,
-            amount,
+            amount: String(amount),
             anonymous: true,
             compliant: false
         };
