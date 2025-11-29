@@ -44,10 +44,11 @@ server.listen(env.port, async() => {
 	// if (process.env.NODE_ENV !== 'dev') {
 		try {
 		  await import('./workers/order.worker');
+		  await import('./workers/general.worker');
 		//   await startWorker();
-		  console.log('Order worker started successfully');
+		  console.log('All workers started successfully');
 		} catch (err) {
-		  console.error('Failed to start worker:', err);
+		  console.error('Failed to start workers:', err);
 		  // Don't crash the server if worker fails
 		}
 	//   }
