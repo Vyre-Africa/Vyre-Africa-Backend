@@ -4,16 +4,17 @@ import IORedis from 'ioredis';
 import notificationService from '../services/notification.service';
 import config from '../config/env.config';
 import walletService from '../services/wallet.service';
+import connection from '../config/redis.config';
 
 
-const connection = new IORedis({
-    host: config.redisHost,
-    port: parseInt(config.redisPort),
-    username: "default",
-    password: config.redisPassWord,
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false
-});
+// const connection = new IORedis({
+//     host: config.redisHost,
+//     port: parseInt(config.redisPort),
+//     username: "default",
+//     password: config.redisPassWord,
+//     maxRetriesPerRequest: null,
+//     enableReadyCheck: false
+// });
 
 const worker = new Worker('general-process',
   async (job) => {
