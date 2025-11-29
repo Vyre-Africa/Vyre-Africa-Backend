@@ -154,13 +154,14 @@ class eventService {
     const { reference } = payload;
 
     try {
-
       // 1. Find and validate transaction
       const transaction = await prisma.transaction.findFirst({
         where: { reference },
-        include: { wallet: {
-          include:{currency:true}
-        } }
+        include: { 
+          wallet: {
+            include: { currency: true }
+          } 
+        }
       });
 
       if (!transaction) {
@@ -168,13 +169,13 @@ class eventService {
         return { status: 'rejected', reason: 'transaction_not_found' };
       }
 
-      if(transaction?.status !=='PENDING'){
+      if (transaction?.status !== 'PENDING') {
         return { status: 'Already processed', reason: 'transaction_already_processed' };
       }
 
-      // 2. Process wallet credit
+      // 2. Credit wallet for ALL successful transactions first
       await walletService.credit_Wallet(
-        Number(transaction.amount), // Explicit conversion
+        Number(transaction.amount),
         transaction.walletId as string
       );
 
@@ -183,6 +184,7 @@ class eventService {
         data: { status: 'SUCCESSFUL' }
       });
 
+      // 3. Check for awaiting transfer
       const awaiting = await prisma.awaiting.findFirst({
         where: {
           reference,
@@ -194,32 +196,31 @@ class eventService {
         }
       });
 
-      // if (!awaiting) {
-      //   logger.warn(`No pending order found for reference: ${reference}`);
-      //   return { status: 'ignored', reason: 'no_pending_order' };
-      // }
-
-      if(awaiting){
-        // Queue order processing
+      if (awaiting) {
+        // For transactions WITH awaiting transfers:
+        // Queue for order processing (NO notification)
         await this.orderProcessingQueue.add('process-order', {
           awaitingId: awaiting.id
         });
-        
-      }else{
+
+        logger.info(`Fiat payment processed and queued for order processing, reference: ${reference}`);
+        return { status: 'queued', action: 'order-processing' };
+
+      } else {
+        // For transactions WITHOUT awaiting transfers:
+        // Send notification only
         await notificationService.queue({
-          userId: transaction.userId as string, // Make sure to get userId from the order
+          userId: transaction.userId as string,
           title: 'Deposit Successful',
           type: 'GENERAL',
           content: `Your deposit of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> has been processed successfully. The funds are now available in your wallet.`
-        })
+        });
 
+        console.log('notification hit the queue here')
+
+        logger.info(`Direct deposit processed and notification sent, reference: ${reference}`);
+        return { status: 'processed', action: 'wallet-credit-and-notify' };
       }
-
-      
-
-
-      logger.info(`Fiat payment processed and queued for reference: ${reference}`);
-      return { status: 'queued', action: 'order-processing' };
 
     } catch (error) {
       logger.error(`Error handling webhook for : ${reference}:`, error);

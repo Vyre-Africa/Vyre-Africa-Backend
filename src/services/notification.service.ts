@@ -35,6 +35,8 @@ class NotificationService
         type: NotificationType
     }) {
 
+        console.log('new notification here')
+
         try {
 
             const user = await prisma.user.findUnique({
@@ -82,6 +84,7 @@ class NotificationService
         content: string,
         type: NotificationType
     }){
+        console.log('new notification queue')
        return await this.generalQueue.add('user-notification', payload);
     }
 
