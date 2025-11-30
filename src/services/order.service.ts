@@ -304,15 +304,15 @@ class OrderService {
         })
 
         // Determine which currency to show based on order type
-                const currencyISO = order.type === 'SELL'
-                    ? (order?.pair?.baseCurrency?.ISO ?? order?.pair?.quoteCurrency?.ISO ?? '')
-                    : (order?.pair?.quoteCurrency?.ISO ?? order?.pair?.baseCurrency?.ISO ?? '')
+        const currencyISO = order.type === 'SELL'
+          ? (order?.pair?.baseCurrency?.ISO ?? order?.pair?.quoteCurrency?.ISO ?? '')
+          : (order?.pair?.quoteCurrency?.ISO ?? order?.pair?.baseCurrency?.ISO ?? '')
 
         await notificationService.queue({
             userId: order?.userId as string, // Make sure to get userId from the order
             title: 'Order Cancelled',
             type: 'GENERAL',
-            content: `Your <strong>${order.type}</strong> order for <strong>${order.amount} ${currencyISO}</strong> has been cancelled successfully. The funds have been unblocked and are available in your wallet.`
+            content: `Your <strong>${order?.type}</strong> order for <strong>${order?.amount} ${currencyISO||'currency'}</strong> has been cancelled successfully. The funds have been unblocked and are available in your wallet.`
         })
 
         return canceledOrder
