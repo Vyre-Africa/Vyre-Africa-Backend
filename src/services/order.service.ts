@@ -35,36 +35,40 @@ class OrderService {
     }) {
 
         let blockId: any;
-        let order: any
+        let order: any;
 
        const {userId, rate, amount, orderType, pairId, minimumAmount, baseWallet, quoteWallet } = payload
 
+      //  const amount =  orderType === 'SELL'? requestAmount : requestAmount * rate;
+
+       console.log('create order payload received')
+
        const pair = await prisma.pair.findUnique({
-        where:{id: pairId},
-        include:{
-          quoteCurrency:{
-            select:{
-              id:true,
-              ISO:true  
+          where:{id: pairId},
+          include:{
+            quoteCurrency:{
+              select:{
+                id:true,
+                ISO:true  
+              },
             },
-          },
-          baseCurrency:{
-            select:{
-              id:true,
-              ISO:true  
+            baseCurrency:{
+              select:{
+                id:true,
+                ISO:true  
+              },
             },
-          },
-          quoteWallet:true,
-          baseWallet:true,
-        }
+            quoteWallet:true,
+            baseWallet:true,
+          }
        })
 
 
         if(orderType === 'SELL' && !hasSufficientBalance(baseWallet.availableBalance,amount)){
-           throw new Error('Available balance not sufficient');
+           throw new Error('Available balance for base not sufficient');
         }
         if(orderType === 'BUY' && !hasSufficientBalance(quoteWallet.availableBalance,amount)){
-           throw new Error('Available balance not sufficient');
+           throw new Error('Available balance for quote not sufficient');
         }
   
         console.log('checked amount sufficiency')
@@ -229,7 +233,10 @@ class OrderService {
     
                 // order sends quote currency
                 orderTransfer = await walletService.unblock_Transfer(amountToProcess, order?.blockId as string, userQuoteWallet.id)
-                newBlockId = await walletService.block_Amount(amountLeft, orderQuoteWallet.id)
+                console.log('orderTransfer success from unblocked amount',orderTransfer)
+
+                // newBlockId = await walletService.block_Amount(amountLeft, orderQuoteWallet.id)
+
                 // user sends base currency
                 userTransfer = await walletService.offchain_Transfer({userId: userId,receipientId: order?.userId as string, currencyId: pair?.baseCurrency?.id!, amount})
     
@@ -238,7 +245,9 @@ class OrderService {
     
                 // order sends base currency
                 orderTransfer = await walletService.unblock_Transfer(amountToProcess, order?.blockId as string, userBaseWallet.id)
-                newBlockId = await walletService.block_Amount(amountLeft, orderBaseWallet.id)
+                console.log('orderTransfer success from unblocked amount',orderTransfer)
+                // newBlockId = await walletService.block_Amount(amountLeft, orderBaseWallet.id)
+
                 // user sends quote currency
                 userTransfer = await walletService.offchain_Transfer({userId: userId,receipientId: order?.userId as string, currencyId: pair?.quoteCurrency?.id!, amount})
     
@@ -247,7 +256,7 @@ class OrderService {
               const updatedOrder = await prisma.order.update({
                 where:{id: order.id },
                 data:{
-                  blockId: newBlockId,
+                  // blockId: newBlockId,
                   amountProcessed: order?.amountProcessed + amountToProcess,
                   percentageProcessed: ((order?.amountProcessed + amountToProcess) / order?.amount) * 100,
                   status: (order.amountProcessed + amountToProcess) >= order?.amount ? 'CLOSED' :'OPEN'
