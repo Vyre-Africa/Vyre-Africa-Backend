@@ -7,6 +7,7 @@ import { Wallet, Pair, OrderType } from '@prisma/client';
 import {hasSufficientBalance,amountSufficient} from '../utils'
 import notificationService from './notification.service';
 import { Queue } from 'bullmq'; // Using BullMQ for job queue
+import connection from '../config/redis.config';
 
 
 class OrderService {
@@ -16,12 +17,7 @@ class OrderService {
   constructor() {
     // Initialize the processing queue
     this.generalQueue = new Queue('general-process', {
-      connection: {
-        host: config.redisHost,
-        port: parseInt(config.redisPort),
-        username: "default",
-        password: config.redisPassWord
-      }
+      connection
     });
   }
 

@@ -10,6 +10,7 @@ import mobilePushService from './mobilePush.service';
 import { endOfDay, startOfDay } from 'date-fns';
 import { Queue } from 'bullmq';
 import ablyService from './ably.service';
+import connection from '../config/redis.config';
 
 class NotificationService
 {
@@ -19,12 +20,7 @@ class NotificationService
     constructor() {
         // Initialize the processing queue
         this.generalQueue = new Queue('general-process', {
-        connection: {
-            host: config.redisHost,
-            port: parseInt(config.redisPort),
-            username: "default",
-            password: config.redisPassWord
-        }
+        connection
         });
     }
 

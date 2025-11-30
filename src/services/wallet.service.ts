@@ -11,6 +11,7 @@ import { hasSufficientBalance } from '../utils';
 import transferfeeService from './transferfee.service';
 import { Queue } from 'bullmq';
 import notificationService from './notification.service';
+import connection from '../config/redis.config';
 
 
     const tatumAxios = axios.create({
@@ -46,12 +47,7 @@ class WalletService
     constructor() {
         // Initialize the processing queue
         this.generalQueue = new Queue('general-process', {
-            connection: {
-                host: config.redisHost,
-                port: parseInt(config.redisPort),
-                username: "default",
-                password: config.redisPassWord
-            }
+            connection
         });
     }
 
