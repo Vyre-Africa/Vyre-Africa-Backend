@@ -330,6 +330,7 @@ class OrderService {
         baseWallet: Wallet,
         quoteWallet: Wallet
     }){
+      console.log('queuing create order job')
       return await this.generalQueue.add('create-order', payload);
     }
 
