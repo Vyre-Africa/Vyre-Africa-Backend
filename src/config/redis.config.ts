@@ -14,15 +14,15 @@ const connection = new IORedis({
     password: config.redisPassWord,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
-    lazyConnect: true, // Don't connect immediately
+    // lazyConnect: true, // Don't connect immediately
      // Connection pooling settings
      // connectTimeout: 30000,
      // commandTimeout: 30000,
      // Limit concurrent connections
-    maxLoadingRetryTime: 10000,
+    // maxLoadingRetryTime: 10000,
     // retryDelayOnFailover: 1000,
-    connectTimeout: 45000,
-    commandTimeout: 45000,
+    // connectTimeout: 45000,
+    // commandTimeout: 45000,
     // retryDelayOnFailover: 2000
 });
 
