@@ -520,7 +520,8 @@ class OrderController {
             ...(priceMin && { gte: parseFloat(priceMin) }),
             ...(priceMax && { lte: parseFloat(priceMax) })
           }
-        })
+        }),
+        status: 'OPEN'
       };
 
       const totalCount = await prisma.order.count({
