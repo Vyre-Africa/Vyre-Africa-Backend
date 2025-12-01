@@ -1412,3 +1412,20 @@ ReferenceError: logger is not defined
 2025-12-01 00:23:16 [info] Server running on port 4000 
 2025-12-01 00:23:19 [info] Server running on port 4000 
 2025-12-01 00:23:42 [info] Server running on port 4000 
+2025-12-01 03:25:52 [error] invalid json response body at https://api.zeptomail.eu/v1.1/email/template reason: Unexpected token '<', "<!DOCTYPE "... is not valid JSON 
+FetchError: invalid json response body at https://api.zeptomail.eu/v1.1/email/template reason: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+    at /Users/user/Vyre-Africa-Backend/node_modules/node-fetch/lib/index.js:273:32
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+2025-12-01 09:28:43 [info] Server running on port 4000 
+2025-12-01 09:28:59 [info] Server running on port 4000 
+2025-12-01 09:29:06 [info] Server running on port 4000 
+2025-12-01 09:40:18 [info] Server running on port 4000 
+2025-12-01 09:40:24 [info] Server running on port 4000 
+2025-12-01 10:07:21 [info] Server running on port 4000 
+2025-12-01 10:07:24 [info] Server running on port 4000 
+2025-12-01 10:10:57 [info] Server running on port 4000 
+2025-12-01 10:11:02 [info] Server running on port 4000 
+2025-12-01 10:11:50 [info] Server running on port 4000 
+2025-12-01 10:32:08 [info] Server running on port 4000 
+2025-12-01 10:54:19 [info] Server running on port 4000 
+2025-12-01 10:54:23 [info] Server running on port 4000 

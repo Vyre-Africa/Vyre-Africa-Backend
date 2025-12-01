@@ -5,3 +5,7 @@ ReferenceError: logger is not defined
     at Server.emit (node:events:532:35)
     at emitListeningNT (node:net:1945:10)
     at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+2025-12-01 03:25:52 [error] invalid json response body at https://api.zeptomail.eu/v1.1/email/template reason: Unexpected token '<', "<!DOCTYPE "... is not valid JSON 
+FetchError: invalid json response body at https://api.zeptomail.eu/v1.1/email/template reason: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+    at /Users/user/Vyre-Africa-Backend/node_modules/node-fetch/lib/index.js:273:32
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
