@@ -10,11 +10,17 @@ import config from '../config/env.config';
 const connection = new IORedis({
     host: config.redisHost || 'localhost',
     port: parseInt(config.redisPort),
-    username: "default",
+    // username: "default",
     // password: config.redisPassWord,
+    connectTimeout: 30000,  // 30 seconds - IMPORTANT!
+    commandTimeout: 30000,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
-    lazyConnect: true, // Don't connect immediately
+    lazyConnect: false,  // Changed from true to false
+    // For Memorystore performance
+    keepAlive: 10000,
+    enableOfflineQueue: false
+
      
 });
 
