@@ -12,15 +12,14 @@ const connection = new IORedis({
     port: parseInt(config.redisPort),
     // username: "default",
     // password: config.redisPassWord,
-    connectTimeout: 30000,  // 30 seconds - IMPORTANT!
-    commandTimeout: 30000,
-    maxRetriesPerRequest: null,
+    // connectTimeout: 30000,  // 30 seconds - IMPORTANT!
+    // commandTimeout: 30000,
+    // maxRetriesPerRequest: null,
     enableReadyCheck: false,
     lazyConnect: false,  // Changed from true to false
     // For Memorystore performance
     keepAlive: 10000,
     enableOfflineQueue: false,
-    family: 4
     
      
 });
