@@ -19,8 +19,9 @@ const connection = new IORedis({
     lazyConnect: false,  // Changed from true to false
     // For Memorystore performance
     keepAlive: 10000,
-    enableOfflineQueue: false
-
+    enableOfflineQueue: false,
+    family: 4
+    
      
 });
 
