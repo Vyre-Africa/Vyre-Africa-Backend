@@ -6,7 +6,7 @@ import config from '../config/env.config';
 // import { Redis } from '@upstash/redis';
 
 
-const redisUrl = config.redisHost; // "rediss://default:token@organic-worm-35699.upstash.io:6379"
+// const redisUrl = config.redisHost; // "rediss://default:token@organic-worm-35699.upstash.io:6379"
 
 // Method 1: Parse with URL class
 // let host, port, username, password, tlsEnabled;
@@ -55,11 +55,15 @@ const redisUrl = config.redisHost; // "rediss://default:token@organic-worm-35699
 // });
 
 const connection = new IORedis({
-  host: 'organic-worm-35699.upstash.io',
+  host: "organic-worm-35699.upstash.io",
   port: 6379,
-  password: 'AYtzAAIncDFjMmU2NjFlNjEzZWY0MmU1OTc3ZWE0NzVmOTU1OTgwOXAxMzU2OTk',
-  tls: {}, // Required for Upstash
+  password: "AYtzAAIncDFjMmU2NjFlNjEzZWY0MmU1OTc3ZWE0NzVmOTU1OTgwOXAxMzU2OTk",
+//   lazyConnect: true,
+  connectTimeout: 15000,
+//   username: "default",
+//   tls: {}, // Required for Upstash
   maxRetriesPerRequest: null,
+  family: 4
 });
 
 // Event listeners for debugging
@@ -73,20 +77,20 @@ const connection = new IORedis({
 
 connection.on('connect', () => {
   console.log('✅ Redis connected successfully to:', 
-    `${config.redisHost}:${config.redisPort || 6379}`);
+    `organic-worm-35699.upstash.io:6379`); // Use hardcoded values
 });
 
-connection.on('close', () => {
-  console.log('Redis connection closed');
-});
+// connection.on('close', () => {
+//   console.log('Redis connection closed');
+// });
 
-connection.on('ready', () => {
-  console.log('Redis client is ready to accept commands');
-});
+// connection.on('ready', () => {
+//   console.log('Redis client is ready to accept commands');
+// });
 
-connection.on('reconnecting', () => {
-  console.log(`Redis reconnecting `);
-});
+// connection.on('reconnecting', () => {
+//   console.log(`Redis reconnecting `);
+// });
 
 // Test connection immediately
 // (async () => {
