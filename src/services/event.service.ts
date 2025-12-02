@@ -9,6 +9,7 @@ import { Queue } from 'bullmq'; // Using BullMQ for job queue
 import config from '../config/env.config';
 import logger from '../config/logger'
 import notificationService from './notification.service';
+import connection from '../config/redis.config';
 
 
   // {
@@ -30,12 +31,7 @@ class eventService {
   constructor() {
     // Initialize the processing queue
     this.orderProcessingQueue = new Queue('general-process', {
-      connection: {
-        host: config.redisHost,
-        port: parseInt(config.redisPort),
-        username: "default",
-        password: config.redisPassWord
-      }
+      connection
     });
   }
 

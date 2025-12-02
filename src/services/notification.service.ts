@@ -12,6 +12,8 @@ import { Queue } from 'bullmq';
 import ablyService from './ably.service';
 import connection from '../config/redis.config';
 
+// import connection from '../config/redis.config';
+
 class NotificationService
 {
 
@@ -20,7 +22,7 @@ class NotificationService
     constructor() {
         // Initialize the processing queue
         this.generalQueue = new Queue('general-process', {
-        connection
+            connection
         });
     }
 

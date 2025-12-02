@@ -45,7 +45,8 @@ const corsOptions = {
       'https://app.vyre.africa',
       'https://p2p.vyre.africa',
       'https://payments.vyre.africa',
-      'https://swap.vyre.africa'
+      'https://swap.vyre.africa',
+      'https://ideal-hedgehog-13788.upstash.io'
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: [

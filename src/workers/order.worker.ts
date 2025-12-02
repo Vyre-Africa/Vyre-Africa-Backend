@@ -3,17 +3,8 @@ import IORedis from 'ioredis';
 import logger from '../config/logger';
 import eventService from '../services/event.service';
 import config from '../config/env.config';
+// import connection from '../config/redis.config';
 import connection from '../config/redis.config';
-
-
-// const connection = new IORedis({
-//     host: config.redisHost,
-//     port: parseInt(config.redisPort),
-//     username: "default",
-//     password: config.redisPassWord,
-//     maxRetriesPerRequest: null,
-//     enableReadyCheck: false
-// });
 
 const worker = new Worker('order-processing', 
   async (job) => {

@@ -7,8 +7,8 @@ import { Wallet, Pair, OrderType } from '@prisma/client';
 import {hasSufficientBalance,amountSufficient} from '../utils'
 import notificationService from './notification.service';
 import { Queue } from 'bullmq'; // Using BullMQ for job queue
+// import connection from '../config/redis.config';
 import connection from '../config/redis.config';
-
 
 class OrderService {
 

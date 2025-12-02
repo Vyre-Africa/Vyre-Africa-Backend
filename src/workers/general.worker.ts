@@ -4,19 +4,10 @@ import IORedis from 'ioredis';
 import notificationService from '../services/notification.service';
 import config from '../config/env.config';
 import walletService from '../services/wallet.service';
-import connection from '../config/redis.config';
+// import connection from '../config/redis.config';
 import eventService from '../services/event.service';
 import orderService from '../services/order.service';
-
-
-// const connection = new IORedis({
-//     host: config.redisHost,
-//     port: parseInt(config.redisPort),
-//     username: "default",
-//     password: config.redisPassWord,
-//     maxRetriesPerRequest: null,
-//     enableReadyCheck: false
-// });
+import connection from '../config/redis.config';
 
 const worker = new Worker('general-process',
   async (job) => {

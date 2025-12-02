@@ -11,7 +11,9 @@ import { hasSufficientBalance } from '../utils';
 import transferfeeService from './transferfee.service';
 import { Queue } from 'bullmq';
 import notificationService from './notification.service';
-import connection from '../config/redis.config';
+import IORedis from 'ioredis';
+
+// import connection from '../config/redis.config';
 
 
     const tatumAxios = axios.create({
@@ -39,6 +41,17 @@ import connection from '../config/redis.config';
         }
     });
 
+    const connection = new IORedis({
+        host: "13.244.198.250", // IP address
+        port: 6379,
+        password: "ATXcAAIncDI1Y2MzYTJhODc3ZjA0MzVkYmM2NjBlMDRmMmRiNGQ3ZHAyMTM3ODg",
+        connectTimeout: 15000,
+        tls: {
+            servername: 'ideal-hedgehog-13788.upstash.io', // IMPORTANT!
+        },
+        maxRetriesPerRequest: 3,
+    });
+
 class WalletService
 {    
 
@@ -47,7 +60,7 @@ class WalletService
     constructor() {
         // Initialize the processing queue
         this.generalQueue = new Queue('general-process', {
-            connection
+            connection: connection as any, // Type assertion if necessary
         });
     }
 

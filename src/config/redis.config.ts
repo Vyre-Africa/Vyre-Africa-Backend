@@ -55,12 +55,15 @@ import config from '../config/env.config';
 // });
 
 const connection = new IORedis({
-  host: "organic-worm-35699.upstash.io",
+  host: config.redisHost,
   port: 6379,
-  password: "AYtzAAIncDFjMmU2NjFlNjEzZWY0MmU1OTc3ZWE0NzVmOTU1OTgwOXAxMzU2OTk",
-//   lazyConnect: true,
+  password: config.redisPassWord,
+  lazyConnect: true,
   connectTimeout: 15000,
 //   username: "default",
+  tls: {
+    servername: 'ideal-hedgehog-13788.upstash.io', // IMPORTANT: SNI for TLS
+  },
 //   tls: {}, // Required for Upstash
   maxRetriesPerRequest: null,
   family: 4
@@ -75,10 +78,10 @@ const connection = new IORedis({
 //   });
 // });
 
-connection.on('connect', () => {
-  console.log('✅ Redis connected successfully to:', 
-    `organic-worm-35699.upstash.io:6379`); // Use hardcoded values
-});
+// connection.on('connect', () => {
+//   console.log('✅ Redis connected successfully to:', 
+//     `organic-worm-35699.upstash.io:6379`); // Use hardcoded values
+// });
 
 // connection.on('close', () => {
 //   console.log('Redis connection closed');
