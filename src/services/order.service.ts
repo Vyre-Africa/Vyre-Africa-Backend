@@ -209,7 +209,7 @@ class OrderService {
         : (order?.amount! - order?.amountProcessed!) * order?.price!
 
         if (maxAmount < amount) {
-            throw new Error('Max amount exceeded');
+          throw new Error('Max amount exceeded');
         }
 
 
@@ -219,8 +219,8 @@ class OrderService {
               let amountToProcess: number;
     
               amountToProcess = order?.type === "BUY"
-              ? amount / order.price // User is sending base, calculate quote amount
-              : amount * order.price; // User is sending quote, calculate base amount
+              ? amount * order.price // User is sending base, calculate quote amount
+              : amount / order.price; // User is sending quote, calculate base amount
     
               const amountLeft = order?.amount - (order?.amountProcessed + amount)
     
