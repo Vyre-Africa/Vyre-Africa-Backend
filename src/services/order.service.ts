@@ -205,7 +205,7 @@ class OrderService {
         }
 
         const maxAmount = order?.type === "BUY"
-        ? (order?.amount - order?.amountProcessed) / order?.price // User is sending base, calculate quote amount
+        ? (order?.amount - order?.amountProcessed) / order?.price // order balance
         : (order?.amount! - order?.amountProcessed!) * order?.price!
 
         if (maxAmount < amount) {

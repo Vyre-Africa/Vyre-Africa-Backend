@@ -47,13 +47,13 @@ class OrderValidator {
 
       // user bank details
       body('bank').isObject().optional(),
-          body('bank.accountNumber').notEmpty().withMessage('bank accountNumber is required').isString().withMessage('bank accountNumber is invalid'),
-          body('bank.bankCode').notEmpty().withMessage('bank code is required').isString().withMessage('bank code is invalid'),
-          body('bank.recipient').notEmpty().withMessage('recipient name is required').isString().withMessage('recipient name is invalid'),
+          body('bank.accountNumber').optional(),
+          body('bank.bankCode').optional(),
+          body('bank.recipient').optional(),
           
       // user crypto wallet details
       body('crypto').isObject().optional(),
-          body('crypto.address').notEmpty().withMessage('crypto address is required').isString().withMessage('crypto address is invalid'),
+          body('crypto.address').optional()
 
     ];
   }
