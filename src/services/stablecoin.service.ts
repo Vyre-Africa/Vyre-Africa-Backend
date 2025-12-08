@@ -1657,6 +1657,8 @@ class stableCoinService
         return newWallet
     }
     private create_USDC_Base_wallet = async(userId:string, currencyId:string)=>{
+
+        console.log('Creating USDC BASE wallet')
         const data = {
             currency: "USDC_BASE",
             xpub: config.USDC.BASE_XPUB,

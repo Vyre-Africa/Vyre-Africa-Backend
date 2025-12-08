@@ -64,10 +64,19 @@ class AnonService {
      })
 
       try {
+
+        let user:any;
       
         const result = await prisma.$transaction(async (prisma) => {
 
-          const user = await prisma.user.create({
+          user = await prisma.user.findUnique({
+            where: { email }
+          });
+
+          console.log('found user', user)
+      
+          if (!user) {
+            user = await prisma.user.create({
               data: {
                   firstName,
                   lastName,
@@ -75,14 +84,16 @@ class AnonService {
                   email,
                   // emailVerified: email_verified,
               }
-          });
+            });
+            console.log('newUser', user)
+          }
 
-          console.log('newUser', user)
+      
           // create base wallet
           const baseWallet =  await walletService.createWallet({userId: user.id, currencyId: pair?.baseCurrency?.id as string})
 
           // create quote wallet
-          const quoteWallet = await walletService.createWallet({userId: user.id, currencyId: pair?.baseCurrency?.id as string})
+          const quoteWallet = await walletService.createWallet({userId: user.id, currencyId: pair?.quoteCurrency?.id as string})
 
           console.log('wallets',baseWallet, quoteWallet )
 
