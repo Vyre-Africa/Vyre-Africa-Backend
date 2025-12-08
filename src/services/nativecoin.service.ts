@@ -305,12 +305,9 @@ class nativeCoinService
     }
 
 
-
-    
-
-
-
     private create_Naira_wallet = async(userId:string,currencyId:string)=>{
+
+        console.log('Creating Naira wallet')
         const data = {
             currency: "VC_NGN",
             customer:{

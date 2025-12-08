@@ -66,12 +66,10 @@ class AnonService {
       try {
 
         let user:any;
-      
-        const result = await prisma.$transaction(async (prisma) => {
 
-          user = await prisma.user.findUnique({
-            where: { email }
-          });
+        user = await prisma.user.findUnique({
+          where: { email }
+        });
 
           console.log('found user', user)
       
@@ -87,8 +85,9 @@ class AnonService {
             });
             console.log('newUser', user)
           }
-
       
+        const result = await prisma.$transaction(async (prisma) => {
+
           // create base wallet
           const baseWallet =  await walletService.createWallet({userId: user.id, currencyId: pair?.baseCurrency?.id as string})
 
