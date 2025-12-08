@@ -330,6 +330,8 @@ class nativeCoinService
             }
         })
 
+        console.log('new Naira wallet', newWallet)
+
         return newWallet
     }
 

@@ -89,12 +89,25 @@ class AnonService {
         const result = await prisma.$transaction(async (prisma) => {
 
           // create base wallet
-          const baseWallet =  await walletService.createWallet({userId: user.id, currencyId: pair?.baseCurrency?.id as string})
+          const [baseWallet, quoteWallet] = await Promise.all([
+            walletService.createWallet({
+              userId: user.id,
+              currencyId: pair?.baseCurrency?.id as string
+            }),
+            walletService.createWallet({
+              userId: user.id,
+              currencyId: pair?.quoteCurrency?.id as string
+            })
+          ]);
 
-          // create quote wallet
-          const quoteWallet = await walletService.createWallet({userId: user.id, currencyId: pair?.quoteCurrency?.id as string})
+          // Now you have both wallets
+          console.log('Base wallet:', baseWallet);
+          console.log('Quote wallet:', quoteWallet);
 
-          console.log('wallets',baseWallet, quoteWallet )
+
+          if(!baseWallet || !quoteWallet){
+            throw new Error('wallets creation not complete');
+          }
 
           // subscribe wallet address for event trigger
           if(order?.type ==='BUY'){
