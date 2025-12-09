@@ -125,7 +125,8 @@ class QorepayService {
         const account = await qorepayServer.post(`/p/${result.id}/`, formData);
 
         console.log(account.data)
-        const details = account.data
+        const bankResult = account.data
+        const details = bankResult.data
 
 
 
