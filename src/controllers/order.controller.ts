@@ -272,19 +272,19 @@ class OrderController {
         });
       }
 
-      if(order?.type === 'BUY' && !bank ){
-        return res.status(400)
+      if(order?.type === 'BUY' && (!bank.accountNumber || !bank.bankCode || !bank.recipient)){
+          return res.status(400)
             .json({
               msg: 'bank details required',
-              success: false,
-        });
+              success: false
+            });
       }
 
-      if(order?.type === 'SELL' && !crypto){
+      if(order?.type === 'SELL' && !crypto.address){
         return res.status(400)
             .json({
               msg: 'crypto details required',
-              success: false,
+              success: false
         });
 
       }
