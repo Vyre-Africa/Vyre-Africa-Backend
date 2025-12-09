@@ -226,7 +226,7 @@ class AnonService {
           bank_Name: payments?.bank,
           bank_Account_Number: payments?.account_number,
           bank_Account_Name: payments?.account_name,
-          bank_expires_At: payments?.expires_at
+          bank_expires_At: new Date(payments?.expires_at.replace(' ', 'T')).toISOString()
 
         }
       });
