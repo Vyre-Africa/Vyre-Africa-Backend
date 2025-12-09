@@ -100,14 +100,14 @@ class AnonService {
             })
           ]);
 
-          // Now you have both wallets
-          console.log('Base wallet:', baseWallet);
-          console.log('Quote wallet:', quoteWallet);
+          // // Now you have both wallets
+          // console.log('Base wallet:', baseWallet);
+          // console.log('Quote wallet:', quoteWallet);
 
 
-          if(!baseWallet || !quoteWallet){
-            throw new Error('wallets creation not complete');
-          }
+          // if(!baseWallet || !quoteWallet){
+          //   throw new Error('wallets creation not complete');
+          // }
 
           // subscribe wallet address for event trigger
           if(order?.type ==='BUY'){
@@ -124,6 +124,14 @@ class AnonService {
           };
 
         });
+
+        // Now you have both wallets
+          console.log('Base wallet:', result.baseWallet);
+          console.log('Quote wallet:', result.quoteWallet);
+
+          // if(!baseWallet || !quoteWallet){
+          //   throw new Error('wallets creation not complete');
+          // }
     
         // Return true if a crypto account was deleted
         return {
