@@ -310,10 +310,14 @@ class EventController {
     
           console.log('transaction here', transaction)
 
-          await prisma.transaction.update({
-            where:{id:transaction?.id!},
-            data:{status:'FAILED'}
-          })
+          if(transaction){
+            await prisma.transaction.update({
+              where:{id:transaction?.id!},
+              data:{status:'FAILED'}
+            })
+          }
+
+          
 
         }
 

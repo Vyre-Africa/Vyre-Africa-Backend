@@ -64,6 +64,7 @@ class QorepayService {
         // create transaction record
         const transaction = await prisma.transaction.create({
             data:{
+                id:result.id,
                 userId,
                 currency,
                 amount,
@@ -133,6 +134,7 @@ class QorepayService {
         // create transaction record
         const transaction = await prisma.transaction.create({
             data:{
+                id:result.id,
                 userId,
                 currency,
                 amount,
