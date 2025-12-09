@@ -202,7 +202,7 @@ class WalletService
         }else{
 
           result = await nativecoinService.createWallet(currency.ISO, userId, currency.id)
-
+          return result
         }
 
         

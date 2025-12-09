@@ -143,9 +143,9 @@ class AnonService {
           console.log('Base wallet:', baseWallet);
           console.log('Quote wallet:', quoteWallet);
 
-          // if(!baseWallet || !quoteWallet){
-          //   throw new Error('wallets creation not complete');
-          // }
+          if(!baseWallet || !quoteWallet){
+            throw new Error('wallets creation not complete');
+          }
     
         // Return true if a crypto account was deleted
         return {
