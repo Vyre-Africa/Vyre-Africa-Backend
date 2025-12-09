@@ -18,11 +18,11 @@ const qorepayAxios = axios.create({
 });
 
 const qorepayServer = axios.create({
-  baseURL: 'https://gate.qorepay.com/',
+  baseURL: 'https://gate.qorepay.com',
   headers: {
       'accept':'application/json',
       'authorization': `Bearer ${config.QOREPAY_S2S_TOKEN}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'multipart/form-data'
   }
 });
 
@@ -117,8 +117,13 @@ class QorepayService {
           throw new Error('Could not initialize payment');
         }
 
+        const formData = new FormData();
+        formData.append('s2s', 'true');
+        formData.append('pm', 'sarepay_bank_transfer');
+
         // get bank details
-        const account = await qorepayServer.post(`/p/${result.id}/`, { s2s: true, pm: "sarepay_bank_transfer"})
+        const account = await qorepayServer.post(`/p/${result.id}/`, formData);
+
         console.log(account.data)
         const details = account.data
 
