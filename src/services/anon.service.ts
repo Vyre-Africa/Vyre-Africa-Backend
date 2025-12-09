@@ -86,10 +86,41 @@ class AnonService {
             console.log('newUser', user)
           }
       
-        const result = await prisma.$transaction(async (prisma) => {
+        // const result = await prisma.$transaction(async (prisma) => {
 
-          // create base wallet
-          const [baseWallet, quoteWallet] = await Promise.all([
+        //   // create base wallet
+        //   // const [baseWallet, quoteWallet] = await Promise.all([
+        //   //   walletService.createWallet({
+        //   //     userId: user.id,
+        //   //     currencyId: pair?.baseCurrency?.id as string
+        //   //   }),
+        //   //   walletService.createWallet({
+        //   //     userId: user.id,
+        //   //     currencyId: pair?.quoteCurrency?.id as string
+        //   //   })
+        //   // ]);
+
+        //   // // Now you have both wallets
+        //   // console.log('Base wallet:', baseWallet);
+        //   // console.log('Quote wallet:', quoteWallet);
+
+
+        //   // if(!baseWallet || !quoteWallet){
+        //   //   throw new Error('wallets creation not complete');
+        //   // }
+
+        //   // subscribe wallet address for event trigger
+          
+
+        //   // return {
+        //   //   user,
+        //   //   baseWallet,
+        //   //   quoteWallet
+        //   // };
+
+        // });
+
+        const [baseWallet, quoteWallet] = await Promise.all([
             walletService.createWallet({
               userId: user.id,
               currencyId: pair?.baseCurrency?.id as string
@@ -100,34 +131,17 @@ class AnonService {
             })
           ]);
 
-          // // Now you have both wallets
-          // console.log('Base wallet:', baseWallet);
-          // console.log('Quote wallet:', quoteWallet);
 
-
-          // if(!baseWallet || !quoteWallet){
-          //   throw new Error('wallets creation not complete');
-          // }
-
-          // subscribe wallet address for event trigger
-          if(order?.type ==='BUY'){
+        if(order?.type ==='BUY'){
             await walletService.subscribe_address({
               address: baseWallet?.depositAddress as string,
               chain: pair?.baseCurrency?.tatumChain as string
             })
           }
 
-          return {
-            user,
-            baseWallet,
-            quoteWallet
-          };
-
-        });
-
         // Now you have both wallets
-          console.log('Base wallet:', result.baseWallet);
-          console.log('Quote wallet:', result.quoteWallet);
+          console.log('Base wallet:', baseWallet);
+          console.log('Quote wallet:', quoteWallet);
 
           // if(!baseWallet || !quoteWallet){
           //   throw new Error('wallets creation not complete');
@@ -135,9 +149,9 @@ class AnonService {
     
         // Return true if a crypto account was deleted
         return {
-          user: result.user, 
-          baseWallet: result.baseWallet,
-          quoteWallet: result.quoteWallet
+          user: user, 
+          baseWallet: baseWallet,
+          quoteWallet: quoteWallet
         }
 
       } catch (error) {
