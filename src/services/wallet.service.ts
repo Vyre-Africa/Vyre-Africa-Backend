@@ -464,7 +464,15 @@ class WalletService
     {
         const { currency, amount, email, userId, walletId } = payload
         
-        const details = await qorepayService.deposit_via_Url({
+        // const details = await qorepayService.deposit_via_Url({
+        //     currency,
+        //     amount, 
+        //     email,
+        //     userId,
+        //     walletId
+        // })
+
+        const details = await qorepayService.deposit_via_Bank({
             currency,
             amount, 
             email,
