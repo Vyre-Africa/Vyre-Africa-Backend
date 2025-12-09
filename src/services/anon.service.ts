@@ -240,9 +240,9 @@ class AnonService {
           amount,
           currencyId,
 
-          bankCode: bank.bank_code,
-          accountNumber: bank.accountNumber,
-          recipient_Name: bank.recipient,
+          bankCode: bank?.bank_code,
+          accountNumber: bank?.accountNumber,
+          recipient_Name: bank?.recipient,
 
           chain: currency?.chain,
           address: crypto.address

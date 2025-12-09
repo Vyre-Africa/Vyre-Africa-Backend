@@ -17,6 +17,15 @@ const qorepayAxios = axios.create({
   }
 });
 
+const qorepayServer = axios.create({
+  baseURL: 'https://gate.qorepay.com/',
+  headers: {
+      'accept':'application/json',
+      'authorization': `Bearer ${config.QOREPAY_S2S_TOKEN}`,
+      'Content-Type': 'application/json'
+  }
+});
+
 class QorepayService {
     
 
@@ -109,7 +118,7 @@ class QorepayService {
         }
 
         // get bank details
-        const account = await qorepayAxios.post(`/p/${result.id}/`, { s2s: true, pm: "sarepay_bank_transfer"})
+        const account = await qorepayServer.post(`/p/${result.id}/`, { s2s: true, pm: "sarepay_bank_transfer"})
         console.log(account.data)
         const details = account.data
 

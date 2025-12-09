@@ -92,9 +92,10 @@ const config = {
 
     defaultPassword: process.env.DEFAULT_PASSWORD || 'defaultPassword123',
 
-    QOREPAY_BEARER_TOKEN: process.env.BEARER_TOKEN,
-    QOREPAY_BRAND_ID: process.env.BRAND_ID,
-    QOREPAY_PUBLIC_KEY: process.env.PUBLIC_KEY,
+    QOREPAY_BEARER_TOKEN: process.env.QOREPAY_BEARER_TOKEN,
+    QOREPAY_BRAND_ID: process.env.QOREPAY_BRAND_ID,
+    QOREPAY_PUBLIC_KEY: process.env.QOREPAY_PUBLIC_KEY,
+    QOREPAY_S2S_TOKEN: process.env.QOREPAY_S2S_TOKEN,
 
     TATUM_TEST_KEY: process.env.TATUM_TEST_KEY,
     TATUM_LIVE_KEY: process.env.TATUM_LIVE_KEY,
