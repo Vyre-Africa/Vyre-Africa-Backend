@@ -12,7 +12,8 @@ import mobilePushService from '../services/mobilePush.service';
 import { subMinutes } from 'date-fns';
 import anonService from '../services/anon.service';
 // import {Currency,walletType} from '@prisma/client';
-import { hasSufficientBalance, amountSufficient } from '../utils';
+import { hasSufficientBalance, amountSufficient, getPaymentSystems } from '../utils';
+
 
 class OrderController {
 
@@ -446,7 +447,7 @@ class OrderController {
         .json({
           msg: 'Successful',
           success: true,
-          order,
+          order:{...order,paymentMethods: getPaymentSystems(order?.pair?.quoteCurrency?.ISO as string)},
         });
 
     } catch (error) {

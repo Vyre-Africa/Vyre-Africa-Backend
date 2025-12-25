@@ -12,6 +12,8 @@ import transferfeeService from './transferfee.service';
 import { Queue } from 'bullmq';
 import notificationService from './notification.service';
 import IORedis from 'ioredis';
+import connection from '../config/redis.config';
+import { currency } from '../globals';
 
 // import connection from '../config/redis.config';
 
@@ -41,16 +43,16 @@ import IORedis from 'ioredis';
         }
     });
 
-    const connection = new IORedis({
-        host: "13.244.198.250", // IP address
-        port: 6379,
-        password: "ATXcAAIncDI1Y2MzYTJhODc3ZjA0MzVkYmM2NjBlMDRmMmRiNGQ3ZHAyMTM3ODg",
-        connectTimeout: 15000,
-        tls: {
-            servername: 'ideal-hedgehog-13788.upstash.io', // IMPORTANT!
-        },
-        maxRetriesPerRequest: 3,
-    });
+    // const connection = new IORedis({
+    //     host: "13.244.198.250", // IP address
+    //     port: 6379,
+    //     password: "ATXcAAIncDI1Y2MzYTJhODc3ZjA0MzVkYmM2NjBlMDRmMmRiNGQ3ZHAyMTM3ODg",
+    //     connectTimeout: 15000,
+    //     tls: {
+    //         servername: 'ideal-hedgehog-13788.upstash.io', // IMPORTANT!
+    //     },
+    //     maxRetriesPerRequest: 3,
+    // });
 
 class WalletService
 {    
@@ -60,7 +62,7 @@ class WalletService
     constructor() {
         // Initialize the processing queue
         this.generalQueue = new Queue('general-process', {
-            connection: connection as any, // Type assertion if necessary
+            connection, // Type assertion if necessary
         });
     }
 
@@ -138,7 +140,7 @@ class WalletService
             attr:{
                address: payload.address,
                chain: payload.chain,
-               url:"https://api.vyre.africa/api/v1/tatum/events" //The URL of the webhook listener you are using
+               url:"https://api.vyre.africa/api/v1/webhook/tatum" //The URL of the webhook listener you are using
                }
             }
 
@@ -437,7 +439,9 @@ class WalletService
     }
 
     async direct_bank_Transfer(payload:{
-        currency: string,
+        userId:string,
+        currencyId:string,
+
         amount:number,
         email:string, 
         phone:string,
@@ -448,9 +452,44 @@ class WalletService
      
     })
     {
-        // const {account_number,bank_code,recipient_name,currency} = payload
+        const {amount,currencyId, userId} = payload
 
-        const result = await qorepayService.bank_Transfer(payload)
+        const wallet = await prisma.wallet.findFirst({
+            where:{
+             userId:userId,
+             currencyId
+            },
+            include:{
+              currency: true
+            }
+        })
+
+        if(!wallet){
+
+        }
+
+        const result = await qorepayService.bank_Transfer({...payload, currency: wallet?.currency?.ISO as string})
+
+        console.log('---------Wallet to bank withdrawal initiated--------')
+
+        // deduct amount from wallet
+        // // debit user wallet
+        await this.debit_Wallet(amount as any, wallet?.id as string)
+
+        // record transaction
+        await prisma.transaction.create({
+            data:{
+              userId,
+              currency: wallet?.currency?.ISO,
+              amount,
+              reference: result.id,
+              status: 'PENDING',
+              walletId: wallet?.id,
+              type:'FIAT_WITHDRAWAL',
+              description:`${currency} withdrawal transfer`
+            }
+        })
+
         return result
     }
 
@@ -765,7 +804,8 @@ class WalletService
         if(type === 'BANK'){
 
             return await this.generalQueue.add('bank-transfer', {
-                currency,
+                userId,
+                currencyId,
                 amount,
                 email, 
                 phone,

@@ -93,37 +93,6 @@ const getKey = (header:any, callback:any) => {
 };
 
 
-// export const verifyAccessToken = (token: string): Promise<VerificationResult> => {
-//   return new Promise((resolve) => {
-//     jwt.verify(
-//       token,
-//       getKey,
-//       {
-//         audience: 'https://api.vyre.africa',
-//         issuer: 'https://auth.vyre.africa/',
-//         algorithms: ['RS256']
-//       },
-//       (err, decoded) => {
-//         if (err) {
-//           console.error('Token verification failed:', err);
-//           return resolve({ success: false, error: 'verification failed' });
-//         }
-        
-//         if (!decoded) {
-//           return resolve({ success: false, error: 'Token decoded as empty' });
-//         }
-
-//         console.log('Token successfully verified:', decoded);
-//         resolve({ 
-//           success: true, 
-//           data: decoded as Auth0JwtPayload 
-//         });
-//       }
-//     );
-//   });
-// };
-
-
 export const verifyAccessToken = (token: string): VerificationResult => {
   // console.log('jwtPublicKey',jwtPublicKey)
   console.log('token',token)
@@ -475,6 +444,48 @@ type PaymentMethod =
   export const getISOByCountry = (countryName: string): string | undefined => {
     return countryToISOMap[countryName];
   };
+
+type PaymentSystem = 
+  | 'BANK_TRANSFER'
+  | 'MOMO'
+  | 'CARD'
+  | 'MOBILE_MONEY'
+  | 'MPESA'
+  | 'PAYPAL'
+  | 'SEPA'
+  | 'FASTER_PAYMENTS'
+  | 'EWALLET';
+
+type CurrencyISO = 
+  | 'NGN'  // Nigerian Naira
+  | 'GHS'  // Ghanaian Cedi
+  | 'KSH'  // Kenyan Shilling
+  | 'KES'  // Kenyan Shilling (alternative)
+  | 'USD'  // US Dollar
+  | 'EUR'  // Euro
+  | 'GBP'  // British Pound
+  | 'ZAR'  // South African Rand
+  | string; // Allow other strings for flexibility
+
+
+  // Basic version: Returns array of payment method codes
+export function getPaymentSystems(currencyISO: CurrencyISO): PaymentSystem[] {
+  const currency = currencyISO.toUpperCase();
+  
+  const PaymentSystemsMap: Record<string, PaymentSystem[]> = {
+    'NGN': ['BANK_TRANSFER', 'MOMO', 'CARD'],
+    'GHS': ['BANK_TRANSFER', 'MOMO', 'MOBILE_MONEY'],
+    'KSH': ['BANK_TRANSFER', 'MOMO', 'MPESA'],
+    'KES': ['BANK_TRANSFER', 'MOMO', 'MPESA'],
+    'USD': ['CARD', 'PAYPAL', 'BANK_TRANSFER'],
+    'EUR': ['CARD', 'BANK_TRANSFER', 'SEPA'],
+    'GBP': ['CARD', 'BANK_TRANSFER', 'FASTER_PAYMENTS'],
+    'ZAR': ['BANK_TRANSFER', 'CARD', 'EWALLET'],
+  };
+  
+  return PaymentSystemsMap[currency] || [];
+}
+
 
   
   

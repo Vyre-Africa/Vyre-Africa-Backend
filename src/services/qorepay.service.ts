@@ -160,6 +160,7 @@ class QorepayService {
 
 
     async bank_Transfer(payload:{
+       userId:string,
        currency: string,
        amount:number,
        email:string, 
@@ -216,7 +217,7 @@ class QorepayService {
       console.log('qorepay transfer response',transferResponse.data)
       const transferResult = transferResponse.data
 
-      return transferResult
+      return result
 
 
     }

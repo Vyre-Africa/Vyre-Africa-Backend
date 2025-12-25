@@ -34,6 +34,26 @@ class nativeCoinService
         return result
     }
 
+    async subscribe_address(payload:{
+        address: string,
+        chain: string
+    }){
+
+        const data = {
+            type:"ADDRESS_EVENT",
+            attr:{
+               address: payload.address,
+               chain: payload.chain,
+               url:"https://api.vyre.africa/api/v1/webhook/tatum" //The URL of the webhook listener you are using
+               }
+            }
+
+        const result = await tatumAxiosV4.post('/subscription', data)
+
+        return result.data
+
+    }
+
     private complete_Withdrawal = async(
         withdrawal_Id: string,
         txId: string
@@ -376,12 +396,18 @@ class nativeCoinService
 
         const deposit = await this.generate_Address(result.id)
 
+        const subscribed = await this.subscribe_address({
+            address: deposit.address,
+            chain:'bitcoin-mainnet'
+        })
+
         const newWallet = await prisma.wallet.create({
             data:{
                 id: result.id,
                 currencyId,
                 userId,
                 depositAddress: deposit.address,
+                subscriptionId: subscribed.id,
                 derivationKey: deposit.derivationKey,
                 Tatum_customerId: result.customerId,
                 accountingCurrency: result.accountingCurrency,
@@ -407,12 +433,18 @@ class nativeCoinService
 
         const deposit = await this.generate_Address(result.id)
 
+        const subscribed = await this.subscribe_address({
+            address: deposit.address,
+            chain:'ethereum-mainnet'
+        })
+
         const newWallet = await prisma.wallet.create({
             data:{
                 id: result.id,
                 currencyId,
                 userId,
                 depositAddress: deposit.address,
+                subscriptionId: subscribed.id,
                 derivationKey: deposit.derivationKey,
                 Tatum_customerId: result.customerId,
                 accountingCurrency: result.accountingCurrency,
@@ -437,12 +469,18 @@ class nativeCoinService
         const result = response.data
         const deposit = await this.generate_Address(result.id)
 
+        const subscribed = await this.subscribe_address({
+            address: deposit.address,
+            chain:'litecoin-mainnet'
+        })
+
         const newWallet = await prisma.wallet.create({
             data:{
                 id: result.id,
                 currencyId,
                 userId,
                 depositAddress: deposit.address,
+                subscriptionId: subscribed.id,
                 derivationKey: deposit.derivationKey,
                 Tatum_customerId: result.customerId,
                 accountingCurrency: result.accountingCurrency,
@@ -467,12 +505,18 @@ class nativeCoinService
         const result = response.data
         const deposit = await this.generate_Address(result.id)
 
+        const subscribed = await this.subscribe_address({
+            address: deposit.address,
+            chain:'tron-mainnet'
+        })
+
         const newWallet = await prisma.wallet.create({
             data:{
                 id: result.id,
                 currencyId,
                 userId,
                 depositAddress: deposit.address,
+                subscriptionId: subscribed.id,
                 derivationKey: deposit.derivationKey,
                 Tatum_customerId: result.customerId,
                 accountingCurrency: result.accountingCurrency,
@@ -497,12 +541,18 @@ class nativeCoinService
         const result = response.data
         const deposit = await this.generate_Address(result.id)
 
+        const subscribed = await this.subscribe_address({
+            address: deposit.address,
+            chain:'bsc-mainnet'
+        })
+
         const newWallet = await prisma.wallet.create({
             data:{
                 id: result.id,
                 currencyId,
                 userId,
                 depositAddress: deposit.address,
+                subscriptionId: subscribed.id,
                 derivationKey: deposit.derivationKey,
                 Tatum_customerId: result.customerId,
                 accountingCurrency: result.accountingCurrency,
@@ -527,12 +577,18 @@ class nativeCoinService
         const result = response.data
         const deposit = await this.generate_Address(result.id)
 
+        const subscribed = await this.subscribe_address({
+            address: deposit.address,
+            chain:'ripple-mainnet'
+        })
+
         const newWallet = await prisma.wallet.create({
             data:{
                 id: result.id,
                 currencyId,
                 userId,
                 depositAddress: deposit.address,
+                subscriptionId: subscribed.id,
                 derivationKey: deposit.derivationKey,
                 destinationTag: deposit.destinationTag,
 

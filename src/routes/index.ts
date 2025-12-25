@@ -48,7 +48,7 @@ router.post(
 
 
 router.post(
-  '/webhook',
+  '/webhook/qorepay',
   eventController.qorepay_WebHook
 );
 
@@ -58,7 +58,7 @@ router.post(
 );
 
 router.post(
-  '/tatum/events',
+  '/webhook/tatum',
   eventController.tatum_WebHook
 );
 

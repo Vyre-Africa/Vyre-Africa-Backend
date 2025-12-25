@@ -78,19 +78,189 @@ class eventService {
   //   }
   // }
 
+  async queue(payload:{
+   
+    QorePay_Event?: 'purchase' | 'payout';
+    QorePay_EventType?: 'purchase.paid' | 'purchase.payment_failure' | 'payout.created' | 'payout.success';
+    QorePay_Reference?: string;
+
+    Tatum_Address?: string;
+    Tatum_SenderAddress?: string;
+    Tatum_Amount?: any;
+    Tatum_SubscriptionId?: string;
+    Tatum_EventType?: string;
+
+
+    type: 'TATUM' | 'QOREPAY' | 'FERN'
+  }){
+    console.log('new event queue', payload)
+
+    const {
+      type, 
+      QorePay_Event, 
+      QorePay_EventType, 
+      QorePay_Reference, 
+      
+      Tatum_Address, 
+      Tatum_SenderAddress, 
+      Tatum_Amount, 
+      Tatum_SubscriptionId, 
+      Tatum_EventType 
+    } = payload
+
+    if(type === 'QOREPAY'){
+      return await this.orderProcessingQueue.add('Qorepay_Event', {
+        event: QorePay_Event,
+        eventType: QorePay_EventType,
+        reference: QorePay_Reference
+      });
+    }
+
+    if(type === 'TATUM'){
+      return await this.orderProcessingQueue.add('Tatum_Event', {
+        address: Tatum_Address,
+        senderAddress: Tatum_SenderAddress,
+        amount: Tatum_Amount,
+        subscriptionId: Tatum_SubscriptionId,
+        type: Tatum_EventType
+      });
+    }
+
+  }
+
+
+  public async handleQorepayEvent(payload: {
+    event: 'purchase' | 'payout';
+    eventType: 'purchase.paid' | 'purchase.payment_failure' | 'payout.created' | 'payout.success';
+    reference: string;
+  }) {
+    const {event, eventType, reference } = payload;
+
+
+    try {
+
+      // FOR FIAT DEPOSITS
+
+      if(event === 'purchase'){
+
+        if(eventType === 'purchase.paid'){
+          const result = await this.handleFiatEvent({event:'CREDIT', reference })
+          return result
+        } 
+        
+        if(eventType === 'purchase.payment_failure'){
+          const result = await this.handleFiatEvent({event:'CREDIT_FAILED', reference })
+          return result
+        }
+
+      }
+
+      // FOR FIAT WITHDRAWALS
+      if(event === 'payout'){
+
+        if(eventType === 'payout.created'){
+
+          return { status: 'processed', action: 'wallet-payout-created' }
+
+        }else if(eventType === 'payout.success'){
+          const result = await this.handleFiatEvent({event:'DEBIT', reference })
+          return result
+        }else{
+          const result = await this.handleFiatEvent({event:'DEBIT_FAILED', reference })
+          return result
+        }
+
+      }
+     
+
+    } catch (error) {
+      logger.error(`Error handling webhook for : ${reference}:`, error);
+      console.error('Error handling webhook:', error);
+      throw error;
+    }
+  }
+
+  public async handleTatumEvent(payload: {
+    address: string;
+    senderAddress: string;
+    amount: any;
+    subscriptionId: string;
+    type: string;
+  }) {
+    console.log('-----------handling tatum event current payload------------')
+    console.log(payload)
+
+    const {address, amount, subscriptionId, type, senderAddress } = payload;
+
+    const parseAmount = parseFloat(amount);
+    console.log('parseAmount', parseAmount)
+
+
+    try {
+
+      let result:any;
+
+      if (parseAmount >= 0) {
+      // This path is for POSITIVE amounts (0 or greater)
+      // Example: "0.001", "50.00", "100"
+
+      result = await this.handleCryptoEvent({
+        address,
+        subscriptionId,
+        amount: Math.abs(parseAmount),
+        sender: senderAddress,
+        event: 'CREDIT'
+      })
+      
+    } else {
+      // This path is for NEGATIVE amounts (less than 0)
+      // Example: "-0.001", "-50.00", "-100"
+      
+      result = await this.handleCryptoEvent({
+        address,
+        subscriptionId,
+        amount: Math.abs(parseAmount),
+        sender: senderAddress,
+        event: 'DEBIT'
+      })
+
+    }
+     
+
+    } catch (error) {
+      logger.error(`Error handling webhook for : ${address}:`, error);
+      console.error('Error handling webhook:', error);
+      throw error;
+    }
+  }
+
   /**
    * Handles incoming webhook events from payment provider
    * Responds immediately and queues processing work
    */
   public async handleCryptoEvent(payload: {
     address: string;
-    type: string;
+    subscriptionId: string;
     amount: number;
     sender: string;
+    event: 'CREDIT'|'DEBIT'
   }) {
-    const { address, amount, sender } = payload;
+    const { address, amount, sender, event, subscriptionId } = payload;
 
     try {
+
+      const wallet = await prisma.wallet.findFirst({
+        where:{
+          depositAddress: address,
+          subscriptionId
+        }
+      })
+
+      if(!wallet){
+        return { status: 'ignored', message: 'No matching wallet' };
+      }
+
+      const synced_Wallet = await walletService.getAccount(wallet.id)
 
       const awaiting = await prisma.awaiting.findFirst({
         where: {
@@ -103,40 +273,82 @@ class eventService {
         }
       });
 
-      if (!awaiting) {
-        console.warn(`No pending order found for address: ${address}`);
-        return { status: 'ignored', message: 'No matching pending order' };
-      }
+      console.log('awaiting', awaiting)
+      
 
-      await prisma.transaction.create({
-        data:{
-            userId: awaiting?.userId,
-            currency: awaiting?.currency?.ISO!,
-            amount,
-            status: 'SUCCESSFUL',
-            walletId: awaiting?.walletId!,
-            type:'CREDIT_PAYMENT',
-            description:`ACCOUNT_TRANSACTION`
+      if(event === 'CREDIT'){
+
+        await prisma.transaction.create({
+          data:{
+              userId: synced_Wallet?.userId,
+              currency: synced_Wallet?.currency?.ISO,
+              amount,
+              status: 'SUCCESSFUL',
+              walletId: synced_Wallet.id,
+              type:'CRYPTO_DEPOSIT',
+              description:`ACCOUNT_TRANSACTION`
+            }
+        })
+
+
+        if(awaiting){
+
+          // Verify payment amount
+          if (!amountSufficient(Number(synced_Wallet.availableBalance), Number(awaiting.amount))) {
+            await this.orderProcessingQueue.add('initiate-refund', {
+              awaitingId: awaiting.id,
+              senderAddress: sender,
+              currencyType: awaiting?.currency?.type
+            });
+            return { status: 'queued', action: 'refund' };
           }
-      })
 
+          // Queue order processing
+          await this.orderProcessingQueue.add('process-order', {
+            awaitingId: awaiting.id
+          });
 
-      // Verify payment amount
-      if (!amountSufficient(Number(amount), Number(awaiting.amount))) {
-        await this.orderProcessingQueue.add('initiate-refund', {
-          awaitingId: awaiting.id,
-          senderAddress: sender,
-          currencyType: awaiting?.currency?.type
+          return { status: 'queued', action: 'order-processing' };
+
+        }
+
+        await notificationService.queue({
+            userId: synced_Wallet?.userId as string,
+            title: 'Transaction Notification',
+            type: 'GENERAL',
+            content: `<strong>${amount} ${synced_Wallet?.currency?.ISO}</strong> was sent to you and available in your wallet. Thanks for choosing Vyre.`
         });
-        return { status: 'queued', action: 'refund' };
+
+        return { status: 'notified', action: 'transaction-notified' };
+        
+        
       }
 
-      // Queue order processing
-      await this.orderProcessingQueue.add('process-order', {
-        awaitingId: awaiting.id
-      });
+      if(event === 'DEBIT'){
 
-      return { status: 'queued', action: 'order-processing' };
+        await prisma.transaction.create({
+          data:{
+              userId: synced_Wallet?.userId,
+              currency: synced_Wallet?.currency?.ISO,
+              amount,
+              status: 'SUCCESSFUL',
+              walletId: synced_Wallet.id,
+              type:'CRYPTO_WITHDRAWAL',
+              description:`ACCOUNT_TRANSACTION`
+            }
+        })
+
+        await notificationService.queue({
+            userId: synced_Wallet?.userId as string,
+            title: 'Transaction Notification',
+            type: 'GENERAL',
+            content: `Transfer of <strong>${amount} ${synced_Wallet?.currency?.ISO}</strong> was successful. Thanks for choosing Vyre.`
+        });
+
+        return { status: 'notified', action: 'transaction-notified' };
+
+      }
+
 
     } catch (error) {
       console.error('Error handling webhook:', error);
@@ -145,43 +357,24 @@ class eventService {
   }
 
   public async handleFiatEvent(payload: {
-    reference: string
+    reference: string;
+    event: 'CREDIT'|'DEBIT'|'CREDIT_FAILED'|'DEBIT_FAILED'
   }) {
-    const { reference } = payload;
+    const { reference, event} = payload;
 
-    try {
-      // 1. Find and validate transaction
-      const transaction = await prisma.transaction.findFirst({
+    // 1. Find and validate transaction
+    const transaction = await prisma.transaction.findFirst({
         where: { reference },
         include: { 
           wallet: {
             include: { currency: true }
           } 
         }
-      });
+    });
 
-      if (!transaction) {
-        logger.warn(`Transaction not found for reference: ${reference}`);
-        return { status: 'rejected', reason: 'transaction_not_found' };
-      }
+    console.log('transaction',transaction)
 
-      if (transaction?.status !== 'PENDING') {
-        return { status: 'Already processed', reason: 'transaction_already_processed' };
-      }
-
-      // 2. Credit wallet for ALL successful transactions first
-      await walletService.credit_Wallet(
-        Number(transaction.amount),
-        transaction.walletId as string
-      );
-
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: 'SUCCESSFUL' }
-      });
-
-      // 3. Check for awaiting transfer
-      const awaiting = await prisma.awaiting.findFirst({
+    const awaiting = await prisma.awaiting.findFirst({
         where: {
           reference,
           status: 'PENDING'
@@ -190,33 +383,134 @@ class eventService {
           currency: true,
           wallet: true
         }
-      });
+    });
 
-      if (awaiting) {
-        // For transactions WITH awaiting transfers:
-        // Queue for order processing (NO notification)
-        await this.orderProcessingQueue.add('process-order', {
-          awaitingId: awaiting.id
+    console.log('awaiting', awaiting)
+
+    if (!transaction) {
+        logger.warn(`Transaction not found for reference: ${reference}`);
+        return { status: 'rejected', reason: 'transaction_not_found' };
+    }
+
+    if (transaction?.status !== 'PENDING') {
+        return { status: 'Already processed', reason: 'transaction_already_processed' };
+    }
+
+
+    try {
+
+      if(event === 'CREDIT'){
+
+        // 2. Credit wallet for ALL successful transactions first
+        await walletService.credit_Wallet(
+          Number(transaction.amount),
+          transaction.walletId as string
+        );
+
+        await prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { status: 'SUCCESSFUL' }
         });
 
-        logger.info(`Fiat payment processed and queued for order processing, reference: ${reference}`);
-        return { status: 'queued', action: 'order-processing' };
+        // CHECK FOR AWAITING TRANSFER 
 
-      } else {
-        // For transactions WITHOUT awaiting transfers:
-        // Send notification only
-        await notificationService.queue({
-          userId: transaction.userId as string,
-          title: 'Deposit Successful',
-          type: 'GENERAL',
-          content: `Your deposit of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> has been processed successfully. The funds are now available in your wallet.`
-        });
+        if (awaiting) {
+          // For transactions WITH awaiting transfers:
+          // Queue for order processing (NO notification)
+          await this.orderProcessingQueue.add('process-order', {
+            awaitingId: awaiting.id
+          });
 
-        console.log('notification hit the queue here')
+          logger.info(`Fiat payment processed and queued for order processing, reference: ${reference}`);
+          return { status: 'queued', action: 'order-processing' };
 
-        logger.info(`Direct deposit processed and notification sent, reference: ${reference}`);
-        return { status: 'processed', action: 'wallet-credit-and-notify' };
+        } else {
+          // For transactions WITHOUT awaiting transfers:
+          // Send notification only
+          await notificationService.queue({
+            userId: transaction.userId as string,
+            title: 'Deposit Successful',
+            type: 'GENERAL',
+            content: `Your deposit of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> has been processed successfully. The funds are now available in your wallet.`
+          });
+
+          console.log('notification hit the queue here')
+
+          logger.info(`Direct deposit processed and notification sent, reference: ${reference}`);
+          return { status: 'processed', action: 'wallet-credit-and-notify' };
+        }
+
       }
+
+      if(event === 'CREDIT_FAILED'){
+
+        if(transaction){
+          await prisma.transaction.update({
+            where:{id:transaction?.id!},
+            data:{status:'FAILED'}
+          })
+        }
+
+        logger.info(`Failed deposit processed, reference: ${reference}`);
+        return { status: 'processed', action: 'wallet-credit-failed' };
+        
+      }
+
+
+      if(event === 'DEBIT'){
+
+        if(transaction){
+          await prisma.transaction.update({
+            where:{id:transaction?.id},
+            data:{status: 'SUCCESSFUL',}
+          })
+        }
+
+        if(!awaiting){
+          await notificationService.queue({
+            userId: transaction.userId as string,
+            title: 'Withdrawal Successful',
+            type: 'GENERAL',
+            content: `Your withdrawal of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> has been processed successfully. Thanks for choosing Vyre.`
+          });
+        }
+
+        logger.info(`Successful payout processed, reference: ${reference}`);
+        return { status: 'processed', action: 'wallet-payout-and-notify' };
+        
+      }
+
+
+      if(event === 'DEBIT_FAILED'){
+
+        // // refund the user wallet 
+        await walletService.credit_Wallet(
+          Number(transaction.amount),
+          transaction.walletId as string
+        );
+
+        if(transaction){
+          await prisma.transaction.update({
+            where:{id:transaction?.id},
+            data:{status: 'FAILED',}
+          })
+        }
+
+        if(!awaiting){
+          await notificationService.queue({
+            userId: transaction.userId as string,
+            title: 'Withdrawal Failed',
+            type: 'GENERAL',
+            content: `Your withdrawal of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> could not be processed at this time. Please try again later.`
+          });
+        }
+        
+        logger.info(`Failed payout processed, reference: ${reference}`);
+        return { status: 'processed', action: 'wallet-payout-failed' };
+        
+      }
+
+      
 
     } catch (error) {
       logger.error(`Error handling webhook for : ${reference}:`, error);
@@ -420,7 +714,8 @@ class eventService {
       if(awaiting?.order?.type === 'BUY' ){
 
         await walletService.direct_bank_Transfer({
-          currency: wallet?.currency?.ISO as string,
+          userId: awaiting.userId as string,
+          currencyId: wallet?.currencyId as string,
           amount: Number(wallet?.availableBalance),
           email: user?.email as string, 
           phone: user?.phoneNumber as string,

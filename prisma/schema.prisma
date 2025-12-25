@@ -130,8 +130,11 @@ enum ActivityStatus {
 
 enum TransactionType {
   FAILED
+  TRANSFER
   CREDIT_PAYMENT
   DEBIT_PAYMENT
+  CRYPTO_DEPOSIT
+  CRYPTO_WITHDRAWAL
   FIAT_DEPOSIT
   FIAT_WITHDRAWAL
   EXCHANGE_BUY
@@ -458,6 +461,8 @@ model Wallet {
   Tatum_customerId   String
   accountingCurrency String
   depositAddress     String?
+  subscriptionId     String?
+
   destinationTag     String?
   derivationKey      Int?
   frozen             Boolean

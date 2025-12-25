@@ -295,103 +295,110 @@ class EventController {
 
       // FOR FIAT DEPOSITS 
 
-      if(body.type === 'purchase'){
+      // if(body.type === 'purchase'){
 
-        if(body.event_type === 'purchase.paid'){
+      //   if(body.event_type === 'purchase.paid'){
 
-          const result = await eventService.handleFiatEvent({reference: body.id })
-        } 
+      //     const result = await eventService.handleFiatEvent({reference: body.id })
+      //   } 
         
-        if(body.event_type === 'purchase.payment_failure'){
+      //   if(body.event_type === 'purchase.payment_failure'){
 
-          const transaction = await prisma.transaction.findFirst({
-            where:{reference: body.id}
-          })
+      //     const transaction = await prisma.transaction.findFirst({
+      //       where:{reference: body.id}
+      //     })
     
-          console.log('transaction here', transaction)
+      //     console.log('transaction here', transaction)
 
-          if(transaction){
-            await prisma.transaction.update({
-              where:{id:transaction?.id!},
-              data:{status:'FAILED'}
-            })
-          }
+      //     if(transaction){
+      //       await prisma.transaction.update({
+      //         where:{id:transaction?.id!},
+      //         data:{status:'FAILED'}
+      //       })
+      //     }
 
           
 
-        }
+      //   }
 
-      }
+      // }
 
 
       // FOR FIAT WITHDRAWAL 
 
-      if(body.type === 'payout'){
+      // if(body.type === 'payout'){
 
-        if(body.event_type === 'payout.created'){
+      //   if(body.event_type === 'payout.created'){
 
-          const user = await prisma.user.findFirst({
-            where:{email:body.client.email}
-          })
+      //     const user = await prisma.user.findFirst({
+      //       where:{email:body.client.email}
+      //     })
 
-          const wallet = await prisma.wallet.findFirst({
-            where: {
-              userId: user?.id,
-              currency: {  // Use the relation field name (currency) not the model name (Currency)
-                ISO: body.payment.currency  // This assumes 'type' is a variable containing the currency type you're filtering by
-              }
-            },
-            include: {
-              currency:{
-                select:{
-                  id:true,
-                  ISO:true
-                }
-              }  // Optionally include the full currency data in the response
-            }
-          });
-          // record transaction
-          const transaction = await prisma.transaction.create({
-            data:{
-              userId: user?.id,
-              currency: wallet?.currency?.ISO!,
-              amount: body?.payment.amount/100,
-              reference: body.id,
-              status: 'PENDING',
-              walletId: wallet?.id,
-              type:'FIAT_WITHDRAWAL',
-              description:`${wallet?.currency?.ISO} withdrawal transfer`
-            }
-          })
+      //     const wallet = await prisma.wallet.findFirst({
+      //       where: {
+      //         userId: user?.id,
+      //         currency: {  // Use the relation field name (currency) not the model name (Currency)
+      //           ISO: body.payment.currency  // This assumes 'type' is a variable containing the currency type you're filtering by
+      //         }
+      //       },
+      //       include: {
+      //         currency:{
+      //           select:{
+      //             id:true,
+      //             ISO:true
+      //           }
+      //         }  // Optionally include the full currency data in the response
+      //       }
+      //     });
+      //     // record transaction
+      //     const transaction = await prisma.transaction.create({
+      //       data:{
+      //         userId: user?.id,
+      //         currency: wallet?.currency?.ISO!,
+      //         amount: body?.payment.amount/100,
+      //         reference: body.id,
+      //         status: 'PENDING',
+      //         walletId: wallet?.id,
+      //         type:'FIAT_WITHDRAWAL',
+      //         description:`${wallet?.currency?.ISO} withdrawal transfer`
+      //       }
+      //     })
 
 
-        }else if(body.event_type === 'payout.success'){
+      //   }else if(body.event_type === 'payout.success'){
 
-          const transaction = await prisma.transaction.findFirst({
-            where:{reference: body.id}
-          })
-          // debit user wallet
-          await walletService.debit_Wallet(transaction?.amount as any, transaction?.walletId!)
+      //     const transaction = await prisma.transaction.findFirst({
+      //       where:{reference: body.id}
+      //     })
+      //     // debit user wallet
+      //     await walletService.debit_Wallet(transaction?.amount as any, transaction?.walletId!)
 
-          await prisma.transaction.update({
-            where:{id:transaction?.id},
-            data:{status: 'SUCCESSFUL',}
-          })
+      //     await prisma.transaction.update({
+      //       where:{id:transaction?.id},
+      //       data:{status: 'SUCCESSFUL',}
+      //     })
 
-        }else{
+      //   }else{
 
-          const transaction = await prisma.transaction.findFirst({
-            where:{reference: body.id}
-          })
+      //     const transaction = await prisma.transaction.findFirst({
+      //       where:{reference: body.id}
+      //     })
           
-          await prisma.transaction.update({
-            where:{id:transaction?.id},
-            data:{status: 'FAILED',}
-          })
+      //     await prisma.transaction.update({
+      //       where:{id:transaction?.id},
+      //       data:{status: 'FAILED',}
+      //     })
 
-        }
+      //   }
 
-      }
+      // }
+
+      await eventService.queue({
+        type: 'QOREPAY', 
+        QorePay_Event: body.type,
+        QorePay_EventType: body.event_type, 
+        QorePay_Reference: body.id, 
+      })
   
       return res.status(200).json({
         msg: 'Event verified',
@@ -427,21 +434,30 @@ class EventController {
       const checkValues = xPayloadHash == base64Hash;
 
       console.log(`x-payload-hash and base64Hash are equal? ${checkValues}`);
-      
-      // FOR ACCOUNT_INCOMING_BLOCKCHAIN_TRANSACTION 
-
-      if(body.subscriptionType === 'ADDRESS_EVENT'){
-
-        await eventService.handleCryptoEvent({
-          address: body?.address,
-          type: body?.subscriptionType,
-          amount: body.amount,
-          sender: body.counterAddress
-        })
     
-      }
+      // // FOR ACCOUNT_INCOMING_BLOCKCHAIN_TRANSACTION 
+
+      // if(body.subscriptionType === 'ADDRESS_EVENT'){
+
+      //   await eventService.handleCryptoEvent({
+      //     address: body?.address,
+      //     type: body?.subscriptionType,
+      //     amount: body.amount,
+      //     sender: body.counterAddress
+      //   })
+    
+      // }
   
       // ... (your webhook processing logic here) ...
+      await eventService.queue({
+        type: 'TATUM', 
+
+        Tatum_Address: body?.address, 
+        Tatum_SenderAddress: body.counterAddress, 
+        Tatum_Amount: body.amount, 
+        Tatum_SubscriptionId: body.subscriptionId, 
+        Tatum_EventType: body.subscriptionType
+      })
   
       return res.status(200).json({
         msg: 'Event verified',

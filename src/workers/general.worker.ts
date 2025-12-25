@@ -40,6 +40,15 @@ const worker = new Worker('general-process',
           return await eventService.process_Post_Action_Job(job.data);
         case 'initiate-refund':
           return await eventService.processRefundJob(job.data);
+
+          
+
+        // EVENT CASES
+
+        case 'Qorepay_Event':
+          return await eventService.handleQorepayEvent(job.data);
+        case 'Tatum_Event':
+          return await eventService.handleTatumEvent(job.data);
         
         
 

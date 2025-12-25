@@ -132,12 +132,12 @@ class AnonService {
           ]);
 
 
-        if(order?.type ==='BUY'){
-            await walletService.subscribe_address({
-              address: baseWallet?.depositAddress as string,
-              chain: pair?.baseCurrency?.tatumChain as string
-            })
-          }
+        // if(order?.type ==='BUY'){
+        //     await walletService.subscribe_address({
+        //       address: baseWallet?.depositAddress as string,
+        //       chain: pair?.baseCurrency?.tatumChain as string
+        //     })
+        //   }
 
         // Now you have both wallets
           console.log('Base wallet:', baseWallet);
