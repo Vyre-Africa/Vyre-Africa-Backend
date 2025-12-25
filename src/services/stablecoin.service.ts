@@ -2122,6 +2122,7 @@ class stableCoinService
         }
 
     }
+    
     async create_USDC_wallet(chain:string, userId:string, currencyId:string){
         let result;
         switch (chain) {
