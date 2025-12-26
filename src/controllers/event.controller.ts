@@ -417,13 +417,15 @@ class EventController {
   async tatum_WebHook(req: Request | any, res: Response) {
 
     try {
+      const { body } = req;
+      
       console.log('request body', req.body)
       const xPayloadHash = req.headers['x-payload-hash'] as string;
       const rawBody = req.body.toString();//
       const stringifybody = JSON.stringify(req.body);
-      const body = JSON.parse(rawBody);
+      // const body = JSON.parse(rawBody);
     
-      // const { body } = req;
+      
       console.log('body',body)      
 
       // Step 4: Calculate digest as a Base64 string using the HMAC Secret, the webhook payload, and the HMAC SHA512 algorithm.
@@ -435,19 +437,7 @@ class EventController {
       const checkValues = xPayloadHash == base64Hash;
 
       console.log(`x-payload-hash and base64Hash are equal? ${checkValues}`);
-    
-      // // FOR ACCOUNT_INCOMING_BLOCKCHAIN_TRANSACTION 
-
-      // if(body.subscriptionType === 'ADDRESS_EVENT'){
-
-      //   await eventService.handleCryptoEvent({
-      //     address: body?.address,
-      //     type: body?.subscriptionType,
-      //     amount: body.amount,
-      //     sender: body.counterAddress
-      //   })
-    
-      // }
+  
   
       // ... (your webhook processing logic here) ...
       await eventService.queue({
