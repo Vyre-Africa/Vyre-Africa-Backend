@@ -198,34 +198,15 @@ class eventService {
 
     try {
 
-      let result:any;
-
-      if (parseAmount >= 0) {
       // This path is for POSITIVE amounts (0 or greater)
       // Example: "0.001", "50.00", "100"
 
-      result = await this.handleCryptoEvent({
+      const result = await this.handleCryptoEvent({
         address,
         subscriptionId,
         amount: Math.abs(parseAmount),
-        sender: senderAddress,
-        event: 'CREDIT'
+        sender: senderAddress
       })
-      
-    } else {
-      // This path is for NEGATIVE amounts (less than 0)
-      // Example: "-0.001", "-50.00", "-100"
-      
-      result = await this.handleCryptoEvent({
-        address,
-        subscriptionId,
-        amount: Math.abs(parseAmount),
-        sender: senderAddress,
-        event: 'DEBIT'
-      })
-
-    }
-     
 
     } catch (error) {
       logger.error(`Error handling webhook for : ${address}:`, error);
@@ -243,9 +224,8 @@ class eventService {
     subscriptionId: string;
     amount: number;
     sender: string;
-    event: 'CREDIT'|'DEBIT'
   }) {
-    const { address, amount, sender, event, subscriptionId } = payload;
+    const { address, amount, sender, subscriptionId } = payload;
 
     try {
 
@@ -260,7 +240,12 @@ class eventService {
         return { status: 'ignored', message: 'No matching wallet' };
       }
 
-      const synced_Wallet = await walletService.getAccount(wallet.id)
+      // Get current blockchain balance
+      const syncedWallet = await walletService.getAccount(wallet.id);
+        
+      if (!syncedWallet) {
+        throw new Error(`Failed to sync wallet ${wallet.id}`);
+      }
 
       const awaiting = await prisma.awaiting.findFirst({
         where: {
@@ -274,19 +259,24 @@ class eventService {
       });
 
       console.log('awaiting', awaiting)
+
+        // Determine transfer type by comparing with stored balance
+        const previousBalance = wallet.accountBalance;
+        const currentBalance = syncedWallet.accountBalance;
+        const transferType = currentBalance > previousBalance ? 'CREDIT' : 'DEBIT';
       
 
-      if(event === 'CREDIT'){
+      if(transferType === 'CREDIT'){
 
         await prisma.transaction.create({
           data:{
-              userId: synced_Wallet?.userId,
-              currency: synced_Wallet?.currency?.ISO,
+              userId: syncedWallet?.userId,
+              currency: syncedWallet?.currency?.ISO,
               amount,
               status: 'SUCCESSFUL',
-              walletId: synced_Wallet.id,
+              walletId: syncedWallet.id,
               type:'CRYPTO_DEPOSIT',
-              description:`ACCOUNT_TRANSACTION`
+              description:`Wallet credited with ${amount}`
             }
         })
 
@@ -294,7 +284,7 @@ class eventService {
         if(awaiting){
 
           // Verify payment amount
-          if (!amountSufficient(Number(synced_Wallet.availableBalance), Number(awaiting.amount))) {
+          if (!amountSufficient(Number(syncedWallet.availableBalance), Number(awaiting.amount))) {
             await this.orderProcessingQueue.add('initiate-refund', {
               awaitingId: awaiting.id,
               senderAddress: sender,
@@ -313,39 +303,39 @@ class eventService {
         }
 
         await notificationService.queue({
-            userId: synced_Wallet?.userId as string,
+            userId: syncedWallet?.userId as string,
             title: 'Transaction Notification',
             type: 'GENERAL',
-            content: `<strong>${amount} ${synced_Wallet?.currency?.ISO}</strong> was sent to you and available in your wallet. Thanks for choosing Vyre.`
+            content: `<strong>${amount} ${syncedWallet?.currency?.ISO}</strong> was sent to you and available in your wallet. Thanks for choosing Vyre.`
         });
 
-        return { status: 'notified', action: 'transaction-notified' };
+        return { status: 'success', action: 'credit-completed' };
         
         
       }
 
-      if(event === 'DEBIT'){
+      if(transferType === 'DEBIT'){
 
         await prisma.transaction.create({
           data:{
-              userId: synced_Wallet?.userId,
-              currency: synced_Wallet?.currency?.ISO,
+              userId: syncedWallet?.userId,
+              currency: syncedWallet?.currency?.ISO,
               amount,
               status: 'SUCCESSFUL',
-              walletId: synced_Wallet.id,
+              walletId: syncedWallet.id,
               type:'CRYPTO_WITHDRAWAL',
-              description:`ACCOUNT_TRANSACTION`
+              description:`Wallet debited`
             }
         })
 
         await notificationService.queue({
-            userId: synced_Wallet?.userId as string,
+            userId: syncedWallet?.userId as string,
             title: 'Transaction Notification',
             type: 'GENERAL',
-            content: `Transfer of <strong>${amount} ${synced_Wallet?.currency?.ISO}</strong> was successful. Thanks for choosing Vyre.`
+            content: `Transfer of <strong>${amount} ${syncedWallet?.currency?.ISO}</strong> was successful. Thanks for choosing Vyre.`
         });
 
-        return { status: 'notified', action: 'transaction-notified' };
+        return { status: 'success', action: 'debit-completed' };
 
       }
 
