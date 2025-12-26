@@ -44,7 +44,7 @@ class nativeCoinService
             attr:{
                address: payload.address,
                chain: payload.chain,
-               url:"https://api.vyre.africa/api/v1/webhook/tatum" //The URL of the webhook listener you are using
+               url:"https://api-dev.vyre.africa/api/v1/webhook/tatum" //The URL of the webhook listener you are using
                }
             }
 

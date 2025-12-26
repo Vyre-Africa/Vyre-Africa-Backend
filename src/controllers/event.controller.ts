@@ -414,9 +414,10 @@ class EventController {
     }
   }
 
-  async tatum_WebHook(req: Request, res: Response) {
+  async tatum_WebHook(req: Request | any, res: Response) {
 
     try {
+      console.log('request body', req.body)
       const xPayloadHash = req.headers['x-payload-hash'] as string;
       const rawBody = req.body.toString();//
       const stringifybody = JSON.stringify(req.body);

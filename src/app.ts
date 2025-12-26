@@ -16,7 +16,7 @@ dotenv.config();
 
 // FOR WEBHOOK handler
 app.use('/api/v1/webhook/fern', express.raw({ type: 'application/json', limit: '10mb' }));
-app.use('/api/v1/tatum/events', express.raw({ type: 'application/json', limit: '10mb' }));
+// app.use('/api/v1/tatum/events', express.raw({ type: 'application/json', limit: '10mb' }));
 // app.use('/api/v1/webhook', express.raw({ type: 'application/json', limit: '10mb' }));
 
 app.use(express.json({ limit: '10mb' }));
