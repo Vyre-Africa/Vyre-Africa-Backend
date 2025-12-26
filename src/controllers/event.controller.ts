@@ -418,7 +418,7 @@ class EventController {
 
     try {
       const { body } = req;
-      
+
       console.log('request body', req.body)
       const xPayloadHash = req.headers['x-payload-hash'] as string;
       const rawBody = req.body.toString();//
@@ -447,7 +447,8 @@ class EventController {
         Tatum_SenderAddress: body.counterAddress, 
         Tatum_Amount: body.amount, 
         Tatum_SubscriptionId: body.subscriptionId, 
-        Tatum_EventType: body.subscriptionType
+        Tatum_EventType: body.subscriptionType,
+        Tatum_TxId: body.txId
       })
   
       return res.status(200).json({

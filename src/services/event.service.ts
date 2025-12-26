@@ -89,6 +89,7 @@ class eventService {
     Tatum_Amount?: any;
     Tatum_SubscriptionId?: string;
     Tatum_EventType?: string;
+    Tatum_TxId?: string;
 
 
     type: 'TATUM' | 'QOREPAY' | 'FERN'
@@ -105,7 +106,8 @@ class eventService {
       Tatum_SenderAddress, 
       Tatum_Amount, 
       Tatum_SubscriptionId, 
-      Tatum_EventType 
+      Tatum_EventType,
+      Tatum_TxId
     } = payload
 
     if(type === 'QOREPAY'){
@@ -122,7 +124,8 @@ class eventService {
         senderAddress: Tatum_SenderAddress,
         amount: Tatum_Amount,
         subscriptionId: Tatum_SubscriptionId,
-        type: Tatum_EventType
+        type: Tatum_EventType,
+        txId: Tatum_TxId
       });
     }
 
@@ -185,12 +188,13 @@ class eventService {
     senderAddress: string;
     amount: any;
     subscriptionId: string;
+    txId: string;
     type: string;
   }) {
     console.log('-----------handling tatum event current payload------------')
     console.log(payload)
 
-    const {address, amount, subscriptionId, type, senderAddress } = payload;
+    const {address, amount, subscriptionId, type, txId, senderAddress } = payload;
 
     const parseAmount = parseFloat(amount);
     console.log('parseAmount', parseAmount)
@@ -205,7 +209,8 @@ class eventService {
         address,
         subscriptionId,
         amount: Math.abs(parseAmount),
-        sender: senderAddress
+        sender: senderAddress,
+        txId
       })
 
     } catch (error) {
@@ -224,8 +229,9 @@ class eventService {
     subscriptionId: string;
     amount: number;
     sender: string;
+    txId: string;
   }) {
-    const { address, amount, sender, subscriptionId } = payload;
+    const { address, amount, sender, subscriptionId, txId } = payload;
 
     try {
 
@@ -239,6 +245,18 @@ class eventService {
       if(!wallet){
         return { status: 'ignored', message: 'No matching wallet' };
       }
+
+      const existingTx = await prisma.transaction.findFirst({
+        where: {
+          reference: txId,
+          walletId: wallet.id
+        }
+      });
+
+      if (existingTx) {
+        return { status: 'ignored', message: 'Duplicate transaction' };
+      }
+
 
       // Get current blockchain balance
       const syncedWallet = await walletService.getAccount(wallet.id);
@@ -274,6 +292,7 @@ class eventService {
               currency: syncedWallet?.currency?.ISO,
               amount,
               status: 'SUCCESSFUL',
+              reference: txId,
               walletId: syncedWallet.id,
               type:'CRYPTO_DEPOSIT',
               description:`Wallet credited with ${amount}`
@@ -322,6 +341,7 @@ class eventService {
               currency: syncedWallet?.currency?.ISO,
               amount,
               status: 'SUCCESSFUL',
+              reference: txId,
               walletId: syncedWallet.id,
               type:'CRYPTO_WITHDRAWAL',
               description:`Wallet debited`
