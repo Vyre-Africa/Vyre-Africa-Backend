@@ -348,12 +348,19 @@ class eventService {
             }
         })
 
-        await notificationService.queue({
+
+        if(config.Admin_Id !== syncedWallet?.userId){
+
+          await notificationService.queue({
             userId: syncedWallet?.userId as string,
-            title: 'Transaction Notification',
-            type: 'GENERAL',
-            content: `Transfer of <strong>${amount} ${syncedWallet?.currency?.ISO}</strong> was successful. Thanks for choosing Vyre.`
-        });
+              title: 'Transaction Notification',
+              type: 'GENERAL',
+              content: `Transfer of <strong>${amount} ${syncedWallet?.currency?.ISO}</strong> was successful. Thanks for choosing Vyre.`
+          });
+
+        }
+
+       
 
         return { status: 'success', action: 'debit-completed' };
 
