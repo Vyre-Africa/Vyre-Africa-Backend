@@ -22,8 +22,8 @@ import orderValidator from '../validators/order.validator';
     };
     crypto:{
       address: string,
-    }
-
+    };
+    paymentMethod?: string
   }
 
 class AnonService {
@@ -160,7 +160,7 @@ class AnonService {
   }
 
   async preActions(payload: PreAction) {
-    const { orderId, currencyId, amount, userDetails, bank, crypto} = payload;
+    const { orderId, currencyId, amount, userDetails, bank, crypto, paymentMethod} = payload;
   
     try {
 
@@ -201,14 +201,15 @@ class AnonService {
         if (!quoteWallet) {
           throw new Error('Quote wallet not created');
         }
-        
-        payments = await walletService.depositFiat({
+
+        payments = await walletService.getPaymentMethod({
           currency: currency.ISO,
           amount: parseFloat(amount),
           email: user.email,
           userId: user.id, 
           walletId: quoteWallet.id
-        });
+        })
+
       }
 
       const awaiting = await prisma.awaiting.create({
@@ -221,14 +222,18 @@ class AnonService {
           orderType: order.type as OrderType,
           currencyId,
 
+          method: paymentMethod,
+
           // bank details
           reference: payments?.id,
           bank_Name: payments?.bank,
           bank_Account_Number: payments?.account_number,
           bank_Account_Name: payments?.account_name,
-          bank_expires_At: new Date(payments?.expires_at.replace(' ', 'T')).toISOString()
+          bank_expires_At: new Date(payments?.expires_at.replace(' ', 'T')).toISOString(),
 
-        }
+          paymentDetails: payments
+
+        }// Remember to add momo payment details to this awaiting object also
       });
 
       const postDetails = await prisma.postDetails.create({

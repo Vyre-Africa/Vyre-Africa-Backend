@@ -438,6 +438,25 @@ class WalletService
         return result
     }
 
+    private async processMomoPayment(payload: {
+
+        currency: string;
+        amount: number;
+        email: string;
+        userId: string;
+        walletId: string;
+        }) {
+        // Implement your MOMO payment logic here
+        // Example:
+        // return await qorepayService.deposit_via_Momo(payload);
+        
+        // For now, throw an error if not implemented
+        throw new Error('MOMO payment method not yet implemented');
+    }
+
+    /**
+     * Initiate bank withdrawal notifying the user
+    */
     async direct_bank_Transfer(payload:{
         userId:string,
         currencyId:string,
@@ -486,7 +505,7 @@ class WalletService
               status: 'PENDING',
               walletId: wallet?.id,
               type:'FIAT_WITHDRAWAL',
-              description:`${currency} withdrawal transfer`
+              description:`${currency} bank withdrawal transfer`
             }
         })
 
@@ -498,10 +517,11 @@ class WalletService
         amount: number, 
         email: string,
         userId: string,
-        walletId: string
+        walletId: string,
+        method?: string
     })
     {
-        const { currency, amount, email, userId, walletId } = payload
+        const { currency, amount, email, userId, walletId, method } = payload
         
         // const details = await qorepayService.deposit_via_Url({
         //     currency,
@@ -522,6 +542,60 @@ class WalletService
         return details
     }
 
+    /**
+     * process and returns preferred method details for payment for anonymous order
+    */
+    async getPaymentMethod(payload: {
+            currency: string;
+            amount: number;
+            email: string;
+            userId: string;
+            walletId: string;
+            method?: string;
+        }) {
+        const { currency, amount, email, userId, walletId, method } = payload;
+        
+        try {
+            switch (method) {
+            case 'BANK_TRANSFER':
+                return await qorepayService.deposit_via_Bank({
+                currency,
+                amount,
+                email,
+                userId,
+                walletId
+                });
+                
+            case 'MOMO':
+                // Implement MOMO payment logic
+                return await this.processMomoPayment({
+                currency,
+                amount,
+                email,
+                userId,
+                walletId
+                });
+                
+            default:
+                // Default to bank transfer or handle differently based on requirements
+                return await qorepayService.deposit_via_Bank({
+                    currency,
+                    amount,
+                    email,
+                    userId,
+                    walletId
+                });
+            }
+        } catch (error) {
+            // Log error for debugging
+            console.error('Error in getPaymentMethod:', error);
+            
+            // Throw a more specific error or handle appropriately
+            throw new Error(`Failed to process payment method: ${method}. ${error}`);
+        }
+
+    }
+
     async getRate(currency: string,basePair: string)
     {
         const response = await tatumAxios.get(`/tatum/rate/${currency}?basePair=${basePair}`)
@@ -530,6 +604,9 @@ class WalletService
         return result
     }
 
+    /**
+     * Sync and returns wallet data including balances
+     */
     async getAccount(id: string)
     {
         const response = await tatumAxios.get(`/ledger/account/${id}`)

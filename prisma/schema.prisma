@@ -560,10 +560,14 @@ model Awaiting {
   status         AwaitingStatus @default(PENDING)
   currencyId     String?
 
+  method         String?
+
   bank_Name           String?
   bank_Account_Number String?
   bank_Account_Name   String?
   bank_expires_At     DateTime?
+
+  paymentDetails      Json?
 
   currency Currency? @relation(fields: [currencyId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])
@@ -582,6 +586,8 @@ model postDetails {
   orderId    String?
   amount     Decimal
   currencyId String?
+
+  persistDetails   Boolean     @default(true)
 
   bankCode       String?
   accountNumber  String?
