@@ -10,6 +10,7 @@ import config from '../config/env.config';
 import logger from '../config/logger'
 import notificationService from './notification.service';
 import connection from '../config/redis.config';
+import anonService from './anon.service';
 
 
   // {
@@ -317,6 +318,9 @@ class eventService {
             awaitingId: awaiting.id
           });
 
+          // Cancel the scheduled expiry
+          await anonService.cancelAwaitingExpiry(awaiting.id);
+
           return { status: 'queued', action: 'order-processing' };
 
         }
@@ -439,6 +443,10 @@ class eventService {
           });
 
           logger.info(`Fiat payment processed and queued for order processing, reference: ${reference}`);
+
+          // Cancel the scheduled expiry
+          await anonService.cancelAwaitingExpiry(awaiting.id);
+
           return { status: 'queued', action: 'order-processing' };
 
         } else {
@@ -727,6 +735,14 @@ class eventService {
       if (!wallet) {
         throw new Error('Required wallet not found');
       }
+
+      // Update status to SUCCESS
+      await prisma.awaiting.update({
+        where: { id: awaitingId },
+        data: {
+          status: 'SUCCESS'
+        }
+      });
 
       if(awaiting?.order?.type === 'BUY' ){
 

@@ -8,6 +8,7 @@ import walletService from '../services/wallet.service';
 import eventService from '../services/event.service';
 import orderService from '../services/order.service';
 import connection from '../config/redis.config';
+import anonService from '../services/anon.service';
 
 const worker = new Worker('general-process',
   async (job) => {
@@ -40,8 +41,10 @@ const worker = new Worker('general-process',
           return await eventService.process_Post_Action_Job(job.data);
         case 'initiate-refund':
           return await eventService.processRefundJob(job.data);
+        case 'expire-awaiting':
+          return await anonService.cancelAwaitingJob(job.data);
 
-          
+
 
         // EVENT CASES
 

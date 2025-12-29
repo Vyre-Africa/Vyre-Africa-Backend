@@ -147,6 +147,7 @@ enum AwaitingStatus {
   SUCCESS
   REFUNDED
   FAILED
+  EXPIRED
 }
 
 enum TwoFactorAuthenticationMethod {
@@ -575,6 +576,7 @@ model Awaiting {
   order    Order?    @relation(fields: [orderId], references: [id])
 
   createdAt   DateTime      @default(now())
+  duration    DateTime      @default(now())
   postDetails postDetails[]
 }
 

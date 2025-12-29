@@ -2,8 +2,12 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma.config';
 import { OrderType } from '@prisma/client';
 import walletService from './wallet.service';
+import moment from 'moment';
+import { Queue } from 'bullmq'; // Using BullMQ for job queue
+import connection from '../config/redis.config';
 import orderService from './order.service';
 import orderValidator from '../validators/order.validator';
+import notificationService from './notification.service';
 
   interface PreAction {
     orderId: string;
@@ -27,6 +31,15 @@ import orderValidator from '../validators/order.validator';
   }
 
 class AnonService {
+
+  private awaitingQueue: Queue;  
+  
+  constructor() {
+    // Initialize the processing queue
+    this.awaitingQueue = new Queue('general-process', {
+      connection
+    });
+  }
 
     
   async setUpUser (payload:{
@@ -212,6 +225,9 @@ class AnonService {
 
       }
 
+      // Calculate expiry time (1 hour from now) using moment
+      const expiryDuration = moment().add(1, 'hour').toDate();
+
       const awaiting = await prisma.awaiting.create({
         data: {
           triggerAddress: order.type ==='BUY'? baseWallet?.depositAddress : quoteWallet?.depositAddress, //address to trigger transaction
@@ -223,6 +239,7 @@ class AnonService {
           currencyId,
 
           method: paymentMethod,
+          duration: expiryDuration,
 
           // bank details
           reference: payments?.id,
@@ -235,6 +252,18 @@ class AnonService {
 
         }// Remember to add momo payment details to this awaiting object also
       });
+
+      // Schedule expiry job to run in 1 hour
+      await this.awaitingQueue.add(
+        'expire-awaiting',
+        { awaitingId: awaiting.id },
+        {
+          delay: 60 * 60 * 1000, // 1 hour in milliseconds
+          jobId: `awaiting-expiry-${awaiting.id}`, // Unique job ID to prevent duplicates
+        }
+      );
+
+      console.log(`Scheduled expiry for awaiting ${awaiting.id} at ${expiryDuration.toISOString()}`);
 
       const postDetails = await prisma.postDetails.create({
         data: {
@@ -260,6 +289,94 @@ class AnonService {
     } catch (error) {
       console.error('Error initiating actions:', error);
       throw error; // Consider throwing the error or returning a specific error object
+    }
+  }
+
+
+  /**
+   * Cancel pending queued awaiting job
+  */
+  async cancelAwaitingExpiry(awaitingId: string) {
+
+    try {
+      const jobId = `awaiting-expiry-${awaitingId}`;
+      const job = await this.awaitingQueue.getJob(jobId);
+
+      if (job) {
+        await job.remove();
+        console.log(`Cancelled expiry job for awaiting ${awaitingId}`);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error(`Error cancelling expiry for awaiting ${awaitingId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Process expired awaiting order (called by worker)
+  */
+  async cancelAwaitingJob(jobData: { 
+      awaitingId: string;
+    }) {
+      const { awaitingId } = jobData;
+  
+      try {
+
+      console.log(`Processing expiry for awaiting: ${awaitingId}`);
+
+      // Get the awaiting record
+      const awaiting = await prisma.awaiting.findUnique({
+        where: { id: awaitingId },
+        include: {
+          order: true,
+          user: true,
+          currency: true
+        }
+      });
+
+      if (!awaiting) {
+        console.log(`Awaiting ${awaitingId} not found`);
+        return { status: 'not_found' };
+      }
+
+      // Only expire if still pending
+      if (awaiting.status !== 'PENDING') {
+        console.log(`Awaiting ${awaitingId} is already ${awaiting.status}`);
+        return { status: 'already_processed', currentStatus: awaiting.status };
+      }
+
+      // Update status to EXPIRED
+      const updated = await prisma.awaiting.update({
+        where: { id: awaitingId },
+        data: {
+          status: 'EXPIRED'
+        }
+      });
+
+      console.log(`Awaiting ${awaitingId} marked as EXPIRED`);
+
+      // Send notification to user
+      if (awaiting.userId) {
+        await notificationService.queue({
+          userId: awaiting.userId,
+          title: 'Payment Expired',
+          type: 'GENERAL',
+          content: `Your awaiting payment request has expired. Please create a new order if you still wish to proceed.`
+        });
+      }
+
+      return {
+        status: 'expired',
+        awaitingId,
+        expiredAt: new Date().toISOString()
+      };
+
+    } catch (error) {
+      console.error(`Error expiring awaiting ${awaitingId}:`, error);
+      throw error;
     }
   }
       

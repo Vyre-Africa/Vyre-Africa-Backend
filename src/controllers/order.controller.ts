@@ -296,7 +296,7 @@ class OrderController {
         amount,
         userDetails: user,
         paymentMethod,
-        
+
         bank:{
           accountNumber: bank.accountNumber,
           bank_code: bank.bankCode,
@@ -489,6 +489,23 @@ class OrderController {
             msg: 'order not found',
             success: false,
           });
+      }
+
+      const pendingOrders = await prisma.awaiting.findMany({
+        where: {
+          orderId: order.id,
+          status: {
+            in: ['PENDING', 'PROCESSING']
+          }
+        }
+      });
+
+      if (pendingOrders.length) {
+        return res.status(400).json({
+          msg: 'Pending order exists',
+          success: false,
+          data: pendingOrders // optional: include the pending orders in response
+        });
       }
 
       const canceledOrder = await orderService.cancelOrder({orderId})

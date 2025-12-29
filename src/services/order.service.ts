@@ -301,6 +301,19 @@ class OrderService {
           throw new Error('Order not found');
         }
 
+        const pendingOrders = await prisma.awaiting.findMany({
+          where: {
+            orderId: order.id,
+            status: {
+              in: ['PENDING', 'PROCESSING']
+            }
+          }
+        });
+
+        if(pendingOrders.length){
+          throw new Error('Pending Orders exists');
+        }
+
         await walletService.unblock_Amount(order.blockId as string)
 
         const canceledOrder = await prisma.order.update({
