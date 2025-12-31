@@ -225,66 +225,75 @@ class AnonService {
 
       }
 
+    
+      const result = await prisma.$transaction(async (tx) => {
+
+        const awaiting = await prisma.awaiting.create({
+          data: {
+            triggerAddress: order.type ==='BUY'? baseWallet?.depositAddress : quoteWallet?.depositAddress, //address to trigger transaction
+            walletId: order.type ==='BUY'? baseWallet?.id : quoteWallet?.id, // Provide fallback or handle undefined
+            userId: user.id,
+            orderId,
+            amount,
+            orderType: order.type as OrderType,
+            currencyId,
+
+            method: paymentMethod,
+            duration: expiryDuration,
+
+            // bank details
+            reference: payments?.id,
+            bank_Name: payments?.bank,
+            bank_Account_Number: payments?.account_number,
+            bank_Account_Name: payments?.account_name,
+            bank_expires_At: new Date(payments?.expires_at.replace(' ', 'T')).toISOString(),
+
+            paymentDetails: payments
+
+          }// Remember to add momo payment details to this awaiting object also
+        });
+
+        const postDetails = await prisma.postDetails.create({
+          data: {
+            awaitingId: awaiting.id,
+            walletId: order.type === 'BUY'? quoteWallet?.id : baseWallet?.id,
+            userId: user.id,
+            orderId,
+            amount,
+            currencyId,
+
+            bankCode: bank?.bank_code,
+            accountNumber: bank?.accountNumber,
+            recipient_Name: bank?.recipient,
+
+            chain: currency?.chain,
+            address: crypto.address
+          }
+        });
+          
+        return {
+          awaiting,
+          postDetails
+        }
+            
+      });
+
       // Calculate expiry time (1 hour from now) using moment
       const expiryDuration = moment().add(1, 'hour').toDate();
-
-      const awaiting = await prisma.awaiting.create({
-        data: {
-          triggerAddress: order.type ==='BUY'? baseWallet?.depositAddress : quoteWallet?.depositAddress, //address to trigger transaction
-          walletId: order.type ==='BUY'? baseWallet?.id : quoteWallet?.id, // Provide fallback or handle undefined
-          userId: user.id,
-          orderId,
-          amount,
-          orderType: order.type as OrderType,
-          currencyId,
-
-          method: paymentMethod,
-          duration: expiryDuration,
-
-          // bank details
-          reference: payments?.id,
-          bank_Name: payments?.bank,
-          bank_Account_Number: payments?.account_number,
-          bank_Account_Name: payments?.account_name,
-          bank_expires_At: new Date(payments?.expires_at.replace(' ', 'T')).toISOString(),
-
-          paymentDetails: payments
-
-        }// Remember to add momo payment details to this awaiting object also
-      });
 
       // Schedule expiry job to run in 1 hour
       await this.awaitingQueue.add(
         'expire-awaiting',
-        { awaitingId: awaiting.id },
+        { awaitingId: result.awaiting.id },
         {
           delay: 60 * 60 * 1000, // 1 hour in milliseconds
-          jobId: `awaiting-expiry-${awaiting.id}`, // Unique job ID to prevent duplicates
+          jobId: `awaiting-expiry-${result.awaiting.id}`, // Unique job ID to prevent duplicates
         }
       );
 
-      console.log(`Scheduled expiry for awaiting ${awaiting.id} at ${expiryDuration.toISOString()}`);
-
-      const postDetails = await prisma.postDetails.create({
-        data: {
-          awaitingId: awaiting.id,
-          walletId: order.type === 'BUY'? quoteWallet?.id : baseWallet?.id,
-          userId: user.id,
-          orderId,
-          amount,
-          currencyId,
-
-          bankCode: bank?.bank_code,
-          accountNumber: bank?.accountNumber,
-          recipient_Name: bank?.recipient,
-
-          chain: currency?.chain,
-          address: crypto.address
-        }
-      });
-  
+      console.log(`Scheduled expiry for awaiting ${result.awaiting.id} at ${expiryDuration.toISOString()}`);
       
-      return awaiting;
+      return result.awaiting;
   
     } catch (error) {
       console.error('Error initiating actions:', error);
@@ -348,12 +357,33 @@ class AnonService {
         return { status: 'already_processed', currentStatus: awaiting.status };
       }
 
-      // Update status to EXPIRED
-      const updated = await prisma.awaiting.update({
-        where: { id: awaitingId },
-        data: {
-          status: 'EXPIRED'
+      // Use database transaction for atomicity
+      const updated = await prisma.$transaction(async (tx) => {
+          
+        // Update awaiting status to EXPIRED
+        const updated_Awaiting = await tx.awaiting.update({
+          where: { id: awaitingId },
+          data: {
+            status: 'EXPIRED'
+          }
+        });
+
+        // Update postDetails status to EXPIRED
+        const updated_PostDetails = await tx.postDetails.updateMany({
+          where:{
+            awaitingId,
+            userId: awaiting.userId
+          },
+          data:{
+            status:'EXPIRED'
+          }
+        })
+
+        return {
+          awaiting: updated_Awaiting,
+          postDetails: updated_PostDetails
         }
+      
       });
 
       console.log(`Awaiting ${awaitingId} marked as EXPIRED`);

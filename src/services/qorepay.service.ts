@@ -217,7 +217,7 @@ class QorepayService {
       console.log('qorepay transfer response',transferResponse.data)
       const transferResult = transferResponse.data
 
-      return result
+      return {success:true, ...result}
 
 
     }

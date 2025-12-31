@@ -217,6 +217,8 @@ class OrderController {
       })
 
 
+
+
       return res
         .status(200)
         .json({
@@ -460,6 +462,7 @@ class OrderController {
   }
 
   async cancelOrder(req: Request | any, res: Response) {
+    const { user } = req;
     const orderId = req.params.id
 
     if (!orderId) {
@@ -508,7 +511,7 @@ class OrderController {
         });
       }
 
-      const canceledOrder = await orderService.cancelOrder({orderId})
+      const canceledOrder = await orderService.cancelOrder({orderId, userId:user.id})
 
 
       return res

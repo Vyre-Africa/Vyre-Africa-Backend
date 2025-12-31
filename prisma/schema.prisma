@@ -150,6 +150,14 @@ enum AwaitingStatus {
   EXPIRED
 }
 
+enum PostDetailStatus {
+  PENDING
+  SUCCESS
+  REFUNDED
+  FAILED
+  EXPIRED
+}
+
 enum TwoFactorAuthenticationMethod {
   EMAIL_OTP
   SMS_OTP
@@ -257,6 +265,7 @@ model User {
 
   Awaiting    Awaiting[]
   postDetails postDetails[]
+  OrderLog    OrderLog[]
 }
 
 model UserKyc {
@@ -320,7 +329,6 @@ model Identity {
   frontIdImage     String?
   documents        Documents? @relation("DocumentsToIdentity")
 }
-
 
 model Swap {
   id        String     @id @default(cuid())
@@ -425,6 +433,7 @@ model Transaction {
   type        TransactionType
   description String
   createdAt   DateTime          @default(now())
+  metadata    Json?
 }
 
 model Currency {
@@ -464,9 +473,9 @@ model Wallet {
   depositAddress     String?
   subscriptionId     String?
 
-  destinationTag     String?
-  derivationKey      Int?
-  frozen             Boolean
+  destinationTag String?
+  derivationKey  Int?
+  frozen         Boolean
 
   accountBalance   Decimal @default(0.00)
   availableBalance Decimal @default(0.00)
@@ -490,6 +499,7 @@ model Order {
   pair                Pair        @relation(fields: [pairId], references: [id])
   block               Block?      @relation(fields: [blockId], references: [id])
   amount              Float
+  version             Int         @default(0)
   amountProcessed     Float       @default(0.0) // Amount of the order that has been filled
   percentageProcessed Float       @default(0.0) // Percentage of the order that has been filled
   price               Float
@@ -497,6 +507,25 @@ model Order {
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
   Awaiting            Awaiting[]
+  OrderLog            OrderLog[]
+}
+
+model OrderLog {
+  id         String  @id @default(cuid())
+  userId     String?
+  orderId    String?
+
+  baseAmount  Float
+  quoteAmount Float
+  rate        Float
+
+  orderType OrderType
+
+  user     User?     @relation(fields: [userId], references: [id])
+  order    Order?    @relation(fields: [orderId], references: [id])
+
+  createdAt DateTime @default(now())
+  metadata  Json?
 }
 
 model Pair {
@@ -561,14 +590,14 @@ model Awaiting {
   status         AwaitingStatus @default(PENDING)
   currencyId     String?
 
-  method         String?
+  method String?
 
   bank_Name           String?
   bank_Account_Number String?
   bank_Account_Name   String?
   bank_expires_At     DateTime?
 
-  paymentDetails      Json?
+  paymentDetails Json?
 
   currency Currency? @relation(fields: [currencyId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])
@@ -578,6 +607,7 @@ model Awaiting {
   createdAt   DateTime      @default(now())
   duration    DateTime      @default(now())
   postDetails postDetails[]
+  metadata    Json?
 }
 
 model postDetails {
@@ -589,7 +619,9 @@ model postDetails {
   amount     Decimal
   currencyId String?
 
-  persistDetails   Boolean     @default(true)
+  status PostDetailStatus @default(PENDING)
+
+  persistDetails Boolean @default(true)
 
   bankCode       String?
   accountNumber  String?

@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma.config';
 import walletService from '../services/wallet.service';
 import config from '../config/env.config';
@@ -9,10 +10,22 @@ import notificationService from './notification.service';
 import { Queue } from 'bullmq'; // Using BullMQ for job queue
 // import connection from '../config/redis.config';
 import connection from '../config/redis.config';
+import logger from '../config/logger';
+
+interface ProcessOrderPayload {
+  userId: string;
+  orderId: string;
+  amount: number;
+  userBaseWallet: Wallet;
+  userQuoteWallet: Wallet;
+  retryCount?: number;
+}
 
 class OrderService {
 
   private generalQueue: Queue;  
+  private readonly MAX_DIRECT_RETRIES = 2;
+  private readonly RETRY_DELAY_MS = 50;
 
   constructor() {
     // Initialize the processing queue
@@ -22,143 +35,311 @@ class OrderService {
   }
 
 
+  // ============================================
+  // CREATE ORDER
+  // ============================================
 
-    async createOrder(payload:{
-        userId: string,
-        rate: number, 
-        amount: number, 
-        orderType: OrderType, 
-        pairId: string, 
-        minimumAmount:number,
-        baseWallet: Wallet,
-        quoteWallet: Wallet
-    }) {
+  async createOrder(payload: {
+    userId: string;
+    rate: number;
+    amount: number;
+    orderType: OrderType;
+    pairId: string;
+    minimumAmount: number;
+    baseWallet: Wallet;
+    quoteWallet: Wallet;
+  }) {
+    const { userId, rate, amount, orderType, pairId, minimumAmount, baseWallet, quoteWallet } = payload;
 
-        let blockId: any;
-        let order: any;
+    try {
+      logger.info('Creating order', { userId, orderType, amount });
 
-       const {userId, rate, amount, orderType, pairId, minimumAmount, baseWallet, quoteWallet } = payload
+      const pair = await prisma.pair.findUnique({
+        where: { id: pairId },
+        include: {
+          quoteCurrency: { select: { id: true, ISO: true } },
+          baseCurrency: { select: { id: true, ISO: true } }
+        }
+      });
 
-      //  const amount =  orderType === 'SELL'? requestAmount : requestAmount * rate;
+      if (!pair) throw new Error('Trading pair not found');
 
-       console.log('create order payload received')
+      if (orderType === 'SELL' && !hasSufficientBalance(baseWallet.availableBalance, amount)) {
+        throw new Error('Insufficient base balance');
+      }
+      if (orderType === 'BUY' && !hasSufficientBalance(quoteWallet.availableBalance, amount)) {
+        throw new Error('Insufficient quote balance');
+      }
 
-       const pair = await prisma.pair.findUnique({
-          where:{id: pairId},
-          include:{
-            quoteCurrency:{
-              select:{
-                id:true,
-                ISO:true  
-              },
-            },
-            baseCurrency:{
-              select:{
-                id:true,
-                ISO:true  
-              },
-            },
-            quoteWallet:true,
-            baseWallet:true,
+      const fee = amount * 0.012;
+      const adjustedAmount = amount - fee;
+
+      const result = await prisma.$transaction(
+        async (tx) => {
+          if (config.Admin_Id !== userId) {
+            await walletService.offchain_Transfer({
+              userId,
+              receipientId: config.Admin_Id,
+              currencyId: orderType === 'SELL'? pair?.baseCurrency?.id as string : pair?.quoteCurrency?.id as string,
+              amount: fee
+            });
           }
-       })
 
+          const blockId = await walletService.block_Amount(
+            adjustedAmount,
+            orderType === 'SELL' ? baseWallet.id : quoteWallet.id
+          );
 
-        if(orderType === 'SELL' && !hasSufficientBalance(baseWallet.availableBalance,amount)){
-           throw new Error('Available balance for base not sufficient');
-        }
-        if(orderType === 'BUY' && !hasSufficientBalance(quoteWallet.availableBalance,amount)){
-           throw new Error('Available balance for quote not sufficient');
-        }
-  
-        console.log('checked amount sufficiency')
-        console.log('entering prisma transaction')
-
-        const fee = amount * 0.012;
-        const adjustedAmount = amount - fee;
-        console.log(adjustedAmount,'adjustedAmount')
-        console.log(fee,'fee')
-
-        const result = await prisma.$transaction(
-            async (prisma) => {
-
-              console.log('inside transaction')
-              // deduct fee amount
-
-              if(config.Admin_Id !== userId){
-                const transfer = await walletService.offchain_Transfer({
-                  userId,
-                  receipientId: config.Admin_Id,
-                  currencyId: orderType === 'SELL'? pair?.baseCurrency?.id as string : pair?.quoteCurrency?.id as string,
-                  amount: fee
-                })
-
-                console.log('---------------- FEE DEDUCTED -----------------')
-              }
-              
-
-              console.log('done with offchain transfer')
-              // block adjustedAmount
-              blockId = await walletService.block_Amount(adjustedAmount, orderType === 'SELL'? baseWallet.id: quoteWallet.id)
-              console.log('---------------- AMOUNT LOCKED -----------------')
-              console.log('done with offchain transfer',blockId)
-
-              order = await prisma.order.create({
-                data:{
-                    userId,
-                    blockId,
-                    amountMinimum: minimumAmount,
-                    amount,
-                    type: orderType,
-                    pairId,
-                    price: rate
-                }
-              })
-      
-              return {
-                order
-              }
-            },
-            {
-              maxWait: 50000, // default: 2000
-              timeout: 50000, // default: 5000
+          return await tx.order.create({
+            data: {
+              userId,
+              blockId,
+              amountMinimum: minimumAmount,
+              amount,
+              type: orderType,
+              pairId,
+              price: rate,
+              version: 0
             }
+          });
+        },
+        { timeout: 30000 }
+      );
 
-        )
+      await notificationService.queue({
+        userId,
+        title: 'Order is Live!',
+        type: 'GENERAL',
+        content: `Your <strong>${orderType}</strong> order for <strong>${amount} ${pair.baseCurrency?.ISO}</strong> is now active.`
+      });
+
+      return result;
+
+    } catch (error) {
+      logger.error('Order creation failed:', error);
+      throw error;
+    }
+  }
+
+
+
+  // ============================================
+  // CANCEL ORDER
+  // ============================================
+
+  async cancelOrder(payload: { orderId: string; userId: string }) {
+    const { orderId, userId } = payload;
+
+    try {
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: {
+          pair: {
+            include: {
+              baseCurrency: true,
+              quoteCurrency: true
+            }
+          }
+        }
+      });
+
+      if (!order) throw new Error('Order not found');
+      if (order.userId !== userId) throw new Error('Unauthorized');
+      if (order.status !== 'OPEN') throw new Error(`Cannot cancel ${order.status.toLowerCase()} order`);
+
+      const pendingCount = await prisma.awaiting.count({
+        where: {
+          orderId: order.id,
+          status: { in: ['PENDING', 'PROCESSING'] }
+        }
+      });
+
+      if (pendingCount > 0) {
+        throw new Error(`Cannot cancel. ${pendingCount} pending transaction(s).`);
+      }
+
+      const canceledOrder = await prisma.$transaction(async (tx) => {
+        await walletService.unblock_Amount(order.blockId!);
+          return await tx.order.update({
+            where: { id: order.id },
+            data: { status: 'CANCELED' }
+          });
+        });
+
+        const currencyISO = order.type === 'SELL'
+          ? order.pair.baseCurrency?.ISO
+          : order.pair.quoteCurrency?.ISO;
 
         await notificationService.queue({
-          userId, 
-          title:'Order is Live!',
-          type:'GENERAL',
-          content:`Your <strong>${orderType}</strong> order for <strong>${amount} ${pair?.baseCurrency?.ISO}</strong> on the <strong>${pair?.baseCurrency?.ISO}/${pair?.quoteCurrency?.ISO}</strong> pair has been placed successfully and is now active on the market,.`
-        })
-        console.log('---------------- NOTIFICATION QUEUED -----------------')
+          userId: order.userId,
+          title: 'Order Cancelled',
+          type: 'GENERAL',
+          content: `Your <strong>${order.type}</strong> order for <strong>${order.amount} ${currencyISO}</strong> has been cancelled. Funds are now available.`
+        });
 
-        return result.order
+        return canceledOrder;
 
+      } catch (error) {
+        logger.error('Order cancellation failed:', error);
+        throw error;
+    }
+  }
+
+
+
+
+  async validateOrderProcessing(
+    order: any,
+    amount: number,
+    userBaseWallet: Wallet,
+    userQuoteWallet: Wallet
+  ) {
+    if (order.status !== 'OPEN') {
+      throw new Error(`Order is ${order.status.toLowerCase()}`);
     }
 
-    async processOrder(payload:{
-        userId: string,
-        orderId: string,
-        amount: number, 
-        userBaseWallet: Wallet,
-        userQuoteWallet: Wallet
-    }) {        
+    const remainingAmount = order.amount - order.amountProcessed;
+    if (remainingAmount <= 0) {
+      throw new Error('Order fully processed');
+    }
 
-       const { userId, orderId, amount, userBaseWallet, userQuoteWallet } = payload
+    const maxAmount = order.type === 'BUY'
+      ? remainingAmount / order.price
+      : remainingAmount * order.price;
 
-        const order = await prisma.order.findUnique({
-            where:{id: orderId}
-        })
+    if (amount > maxAmount) {
+      throw new Error(
+        `Max available: ${maxAmount.toFixed(8)}, requested: ${amount.toFixed(8)}`
+      );
+    }
 
-        if (order?.status !== "OPEN") {
-            throw new Error('Order is not open');
+    if (order.type === 'BUY' && !hasSufficientBalance(userBaseWallet.availableBalance, amount)) {
+      throw new Error('Insufficient base balance');
+    }
+
+    if (order.type === 'SELL' && !hasSufficientBalance(userQuoteWallet.availableBalance, amount)) {
+      throw new Error('Insufficient quote balance');
+    }
+
+    return { remainingAmount, maxAmount, isValid: true };
+  }
+
+
+  // ============================================
+  // PROCESS ORDER - TRANSACTION-SAFE VERSION
+  // ============================================
+
+  async processOrder(payload: ProcessOrderPayload): Promise<any> {
+    const { userId, orderId, amount, userBaseWallet, userQuoteWallet, retryCount = 0 } = payload;
+
+    const startTime = Date.now();
+
+    try {
+      logger.info('Processing order', { userId, orderId, amount, retryCount });
+
+      const result = await this.attemptDirectProcessing({
+        userId,
+        orderId,
+        amount,
+        userBaseWallet,
+        userQuoteWallet
+      });
+
+      const duration = Date.now() - startTime;
+      logger.info('Order processed successfully', { orderId, duration, retryCount });
+
+      return result;
+
+    } catch (error: any) {
+      const duration = Date.now() - startTime;
+
+      if (this.isVersionConflict(error)) {
+        logger.warn('Version conflict detected', { orderId, retryCount, duration });
+
+        if (retryCount < this.MAX_DIRECT_RETRIES) {
+          await this.sleep(this.RETRY_DELAY_MS * (retryCount + 1));
+          
+          return this.processOrder({
+            userId,
+            orderId,
+            amount,
+            userBaseWallet,
+            userQuoteWallet,
+            retryCount: retryCount + 1
+          });
         }
 
-        const pair = await prisma.pair.findFirst({
-            where:{id: order?.pairId},
-            include:{
+        logger.info('Queueing order due to contention', { orderId, retryCount });
+        
+        await this.generalQueue.add(
+          'process-order',
+          { userId, orderId, amount, userBaseWallet, userQuoteWallet },
+          {
+            delay: 100,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 100 }
+          }
+        );
+
+        return {
+          status: 'queued',
+          message: 'Order queued for processing due to high demand'
+        };
+      }
+
+      logger.error('Order processing failed', { orderId, error: error.message, duration });
+      throw error;
+    }
+  }
+
+
+  // ============================================
+  // DIRECT PROCESSING WITH EARLY VERSION CHECK
+  // ============================================
+
+    private async attemptDirectProcessing(payload: {
+      userId: string;
+      orderId: string;
+      amount: number;
+      userBaseWallet: Wallet;
+      userQuoteWallet: Wallet;
+    }) {
+      const { userId, orderId, amount, userBaseWallet, userQuoteWallet } = payload;
+
+      return await prisma.$transaction(
+        async (tx) => {
+          // ============================================
+          // STEP 1: LOCK ORDER & CHECK VERSION (CRITICAL!)
+          // ============================================
+          // Use SELECT FOR UPDATE to lock the row
+          // This prevents other transactions from reading stale data
+          const [orderRow] = await tx.$queryRaw<any[]>`
+            SELECT * FROM "Order" 
+            WHERE id = ${orderId}
+            FOR UPDATE
+          `;
+
+          if (!orderRow) {
+            throw new Error('Order not found');
+          }
+
+          // Store the current version we're working with
+          const currentVersion = orderRow.version;
+          const order = orderRow;
+
+          logger.info('Order locked', { 
+            orderId, 
+            version: currentVersion,
+            amountProcessed: order.amountProcessed 
+          });
+
+          // ============================================
+          // STEP 2: VALIDATE (EARLY FAIL)
+          // ============================================
+          // Get order pair info
+          const pair = await tx.pair.findUnique({
+            where: { id: order.pairId },
+            include: {
               quoteCurrency:{
                 select:{
                   id:true,
@@ -174,187 +355,649 @@ class OrderService {
               quoteWallet:true,
               baseWallet:true,
             }
-        })
+          });
 
+          if (!pair) throw new Error('Trading pair not found');
 
-        const orderBaseWallet = await prisma.wallet.findFirst({
-            where:{
-            currencyId: pair?.baseCurrency?.id,
-            userId: order?.userId as string
-            }
-        })
-    
-        const orderQuoteWallet = await prisma.wallet.findFirst({
-            where:{
-            currencyId: pair?.quoteCurrency?.id,
-            userId: order?.userId as string
-            }
-        })
-    
-        if (!orderBaseWallet || !orderQuoteWallet) {
-            throw new Error('Order wallet not found');
-        }
+          // Validate order can be processed
+          this.validateOrderProcessing(order, amount, userBaseWallet, userQuoteWallet);
 
-        // Validate user balances
-        if (order?.type === "BUY" && !hasSufficientBalance(userBaseWallet.availableBalance,amount)) {
-            throw new Error('Insufficient base currency balance');
-        }
-    
-        if (order?.type === "SELL" && !hasSufficientBalance(userQuoteWallet.availableBalance,amount)) {
-            throw new Error('Insufficient quote currency balance');
-        }
+          // Get order owner wallets
+          const [orderBaseWallet, orderQuoteWallet] = await Promise.all([
+            tx.wallet.findFirst({
+              where: { currencyId: pair.baseCurrency?.id, userId: order.userId }
+            }),
+            tx.wallet.findFirst({
+              where: { currencyId: pair.quoteCurrency?.id, userId: order.userId }
+            })
+          ]);
 
-        const maxAmount = order?.type === "BUY"
-        ? (order?.amount - order?.amountProcessed) / order?.price // order balance
-        : (order?.amount! - order?.amountProcessed!) * order?.price!
-
-        if (maxAmount < amount) {
-          throw new Error('Max amount exceeded');
-        }
-
-
-        const result = await prisma.$transaction(
-            async (prisma) => {
-    
-              let amountToProcess: number;
-    
-              amountToProcess = order?.type === "BUY"
-              ? amount * order.price // User is sending base, calculate quote amount
-              : amount / order.price; // User is sending quote, calculate base amount
-    
-              const amountLeft = order?.amount - (order?.amountProcessed + amount)
-    
-              let orderTransfer;
-              let newBlockId;
-              let userTransfer;
-    
-              if (order?.type === "BUY"){
-                // User sends base currency, order sends quote currency
-    
-                // order sends quote currency
-                orderTransfer = await walletService.unblock_Transfer(amountToProcess, order?.blockId as string, userQuoteWallet.id)
-                console.log('orderTransfer success from unblocked amount',orderTransfer)
-
-                // newBlockId = await walletService.block_Amount(amountLeft, orderQuoteWallet.id)
-
-                // user sends base currency
-                userTransfer = await walletService.offchain_Transfer({userId: userId,receipientId: order?.userId as string, currencyId: pair?.baseCurrency?.id!, amount})
-    
-              } else {
-                // User sends quote currency, order sends base currency
-    
-                // order sends base currency
-                orderTransfer = await walletService.unblock_Transfer(amountToProcess, order?.blockId as string, userBaseWallet.id)
-                console.log('orderTransfer success from unblocked amount',orderTransfer)
-                // newBlockId = await walletService.block_Amount(amountLeft, orderBaseWallet.id)
-
-                // user sends quote currency
-                userTransfer = await walletService.offchain_Transfer({userId: userId,receipientId: order?.userId as string, currencyId: pair?.quoteCurrency?.id!, amount})
-    
-              }
-    
-              const updatedOrder = await prisma.order.update({
-                where:{id: order.id },
-                data:{
-                  // blockId: newBlockId,
-                  amountProcessed: order?.amountProcessed + amountToProcess,
-                  percentageProcessed: ((order?.amountProcessed + amountToProcess) / order?.amount) * 100,
-                  status: (order.amountProcessed + amountToProcess) >= order?.amount ? 'CLOSED' :'OPEN'
-                }
-              })
-    
-              
-              return {
-                order: updatedOrder
-              }
-            },
-            {
-              maxWait: 50000, // default: 2000
-              timeout: 50000, // default: 5000
-            }
-    
-        )
-
-        return result.order
-
-    }
-
-    async cancelOrder(payload:{orderId:string}){
-
-      const {orderId} = payload
-
-      try {
-        
-        const order = await prisma.order.findUnique({
-            where: {id: orderId},
-            include: {
-                pair: {
-                    include: {
-                        baseCurrency: {select: {ISO: true}},
-                        quoteCurrency: {select: {ISO: true}}
-                    }
-                }
-            }
-        })
-
-        if(!order){
-          throw new Error('Order not found');
-        }
-
-        const pendingOrders = await prisma.awaiting.findMany({
-          where: {
-            orderId: order.id,
-            status: {
-              in: ['PENDING', 'PROCESSING']
-            }
+          if (!orderBaseWallet || !orderQuoteWallet) {
+            throw new Error('Order owner wallets not found');
           }
-        });
 
-        if(pendingOrders.length){
-          throw new Error('Pending Orders exists');
+          // ============================================
+          // STEP 3: CALCULATE AMOUNTS
+          // ============================================
+          const amountToProcess = order.type === 'BUY'
+            ? amount * order.price
+            : amount / order.price;
+
+          const newAmountProcessed = order.amountProcessed + amountToProcess;
+          const newPercentage = (newAmountProcessed / order.amount) * 100;
+          const newStatus = newAmountProcessed >= order.amount ? 'CLOSED' : 'OPEN';
+
+          logger.info('Amounts calculated', {
+            orderId,
+            amountToProcess,
+            newAmountProcessed,
+            newStatus
+          });
+
+          // ============================================
+          // STEP 4: UPDATE ORDER FIRST (RESERVE OUR SPOT)
+          // ============================================
+          // Update the order NOW before any transfers
+          // This claims our "reservation" on this amount
+          const updateResult = await tx.order.updateMany({
+            where: {
+              id: orderId,
+              version: currentVersion // Only update if version still matches
+            },
+            data: {
+              amountProcessed: newAmountProcessed,
+              percentageProcessed: newPercentage,
+              status: newStatus,
+              version: currentVersion + 1
+            }
+          });
+
+          // If count is 0, someone else updated it between our SELECT and UPDATE
+          if (updateResult.count === 0) {
+            logger.warn('Version conflict during update', { 
+              orderId, 
+              expectedVersion: currentVersion 
+            });
+            throw new Error('VERSION_CONFLICT: Order was modified by another transaction');
+          }
+
+          logger.info('Order updated successfully', { 
+            orderId, 
+            newVersion: currentVersion + 1,
+            newAmountProcessed 
+          });
+
+          // ============================================
+          // STEP 5: EXECUTE TRANSFERS (SAFE NOW)
+          // ============================================
+          // Now we can safely execute transfers
+          // If anything fails here, the whole transaction rolls back
+          // including our order update
+          if (order.type === 'BUY') {
+            await Promise.all([
+              walletService.unblock_Transfer(amountToProcess, order.blockId, userQuoteWallet.id),
+              walletService.offchain_Transfer({
+                userId,
+                receipientId: order.userId,
+                currencyId: pair?.baseCurrency?.id as string,
+                amount
+              })
+            ]);
+
+          } else {
+            await Promise.all([
+              walletService.unblock_Transfer(amountToProcess, order.blockId, userBaseWallet.id),
+              walletService.offchain_Transfer({
+                userId,
+                receipientId: order.userId,
+                currencyId: pair?.quoteCurrency?.id as string,
+                amount
+              })
+            ]);
+
+          }
+
+          logger.info('Transfers completed', { orderId });
+
+          // ============================================
+          // STEP 6: LOG TRANSACTION
+          // ============================================
+          await tx.orderLog.create({
+            data: {
+              userId,
+              orderId,
+              baseAmount: order.type === 'BUY' ? amount : amountToProcess,
+              quoteAmount: order.type === 'BUY' ? amountToProcess : amount,
+              rate: order.price,
+              orderType: order.type
+            }
+          });
+
+          // ============================================
+          // STEP 7: NOTIFICATION (ASYNC)
+          // ============================================
+          this.sendOrderSuccessNotification({
+            userId,
+            orderId,
+            amount,
+            baseCurrency: pair?.baseCurrency?.ISO,
+            quoteCurrency: pair?.quoteCurrency?.ISO
+          }).catch(err => logger.error('Notification failed', err));
+
+
+          return {
+            id: order.id,
+            amountProcessed: newAmountProcessed,
+            percentageProcessed: newPercentage,
+            status: newStatus,
+            version: currentVersion + 1
+          };
+        },
+        {
+          timeout: 15000,
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted
         }
-
-        await walletService.unblock_Amount(order.blockId as string)
-
-        const canceledOrder = await prisma.order.update({
-          where:{id: order?.id},
-          data:{status:'CANCELED'}
-        })
-
-        // Determine which currency to show based on order type
-        const currencyISO = order.type === 'SELL'
-          ? (order?.pair?.baseCurrency?.ISO ?? order?.pair?.quoteCurrency?.ISO ?? '')
-          : (order?.pair?.quoteCurrency?.ISO ?? order?.pair?.baseCurrency?.ISO ?? '')
-
-        await notificationService.queue({
-            userId: order?.userId as string, // Make sure to get userId from the order
-            title: 'Order Cancelled',
-            type: 'GENERAL',
-            content: `Your <strong>${order?.type}</strong> order for <strong>${order?.amount} ${currencyISO||'currency'}</strong> has been cancelled successfully. The funds have been unblocked and are available in your wallet.`
-        })
-
-        return canceledOrder
-
-      } catch (error) {
-        console.log(error)
-      }
-      
-
+      );
     }
 
-    async queue(payload:{
-        userId: string,
-        rate: number, 
-        amount: number, 
-        orderType: OrderType, 
-        pairId: string, 
-        minimumAmount:number,
-        baseWallet: Wallet,
-        quoteWallet: Wallet
-    }){
-      console.log('queuing create order job')
+    // ============================================
+    // HELPER METHODS
+    // ============================================
+
+    private isVersionConflict(error: any): boolean {
+      return error.message?.includes('VERSION_CONFLICT') ||
+            error.code === 'P2034' ||
+            error.message?.includes('was modified');
+    }
+
+    private sleep(ms: number): Promise<void> {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    private async sendOrderSuccessNotification(params: {
+      userId: string;
+      orderId: string;
+      amount: number;
+      baseCurrency?: string;
+      quoteCurrency?: string;
+    }) {
+      const { userId, baseCurrency, quoteCurrency, amount, orderId } = params;
+
+      const order = await prisma.order.findUnique({
+        where: { id: orderId }
+      });
+
+      if (!order) return;
+
+      const amountProcessed = order.type === 'BUY'
+        ? amount * order.price
+        : amount / order.price;
+
+      const baseAmount = order.type === 'BUY' ? amount : amountProcessed;
+      const quoteAmount = order.type === 'BUY' ? amountProcessed : amount;
+
+      await notificationService.queue({
+        userId,
+        title: '🎉 Order Completed!',
+        type: 'GENERAL',
+        content: `
+          <div style="font-family: Arial, sans-serif;">
+            <h3 style="color: #112044;">Your ${order.type} order completed!</h3>
+            <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0;">
+              <p><strong>You ${order.type === 'BUY' ? 'Sent' : 'Received'}:</strong> ${baseAmount.toFixed(8)} ${baseCurrency}</p>
+              <p><strong>You ${order.type === 'BUY' ? 'Received' : 'Sent'}:</strong> ${quoteAmount.toFixed(8)} ${quoteCurrency}</p>
+              <p><strong>Rate:</strong> ${order.price.toLocaleString('en-US')} ${quoteCurrency}</p>
+            </div>
+          </div>
+        `
+      });
+    }
+
+    async queue(payload: any) {
       return await this.generalQueue.add('create-order', payload);
     }
+
+
+
+
+    // async createOrder(payload:{
+    //     userId: string,
+    //     rate: number, 
+    //     amount: number, 
+    //     orderType: OrderType, 
+    //     pairId: string, 
+    //     minimumAmount:number,
+    //     baseWallet: Wallet,
+    //     quoteWallet: Wallet
+    // }) {
+
+    //     let blockId: any;
+    //     let order: any;
+
+    //    const {userId, rate, amount, orderType, pairId, minimumAmount, baseWallet, quoteWallet } = payload
+
+    //   //  const amount =  orderType === 'SELL'? requestAmount : requestAmount * rate;
+
+    //    console.log('create order payload received')
+
+    //    const pair = await prisma.pair.findUnique({
+    //       where:{id: pairId},
+    //       include:{
+    //         quoteCurrency:{
+    //           select:{
+    //             id:true,
+    //             ISO:true  
+    //           },
+    //         },
+    //         baseCurrency:{
+    //           select:{
+    //             id:true,
+    //             ISO:true  
+    //           },
+    //         },
+    //         quoteWallet:true,
+    //         baseWallet:true,
+    //       }
+    //    })
+
+
+    //     if(orderType === 'SELL' && !hasSufficientBalance(baseWallet.availableBalance,amount)){
+    //        throw new Error('Available balance for base not sufficient');
+    //     }
+    //     if(orderType === 'BUY' && !hasSufficientBalance(quoteWallet.availableBalance,amount)){
+    //        throw new Error('Available balance for quote not sufficient');
+    //     }
+  
+    //     console.log('checked amount sufficiency')
+    //     console.log('entering prisma transaction')
+
+    //     const fee = amount * 0.012;
+    //     const adjustedAmount = amount - fee;
+    //     console.log(adjustedAmount,'adjustedAmount')
+    //     console.log(fee,'fee')
+
+    //     const result = await prisma.$transaction(
+    //         async (prisma) => {
+
+    //           console.log('inside transaction')
+    //           // deduct fee amount
+
+    //           if(config.Admin_Id !== userId){
+    //             const transfer = await walletService.offchain_Transfer({
+    //               userId,
+    //               receipientId: config.Admin_Id,
+    //               currencyId: orderType === 'SELL'? pair?.baseCurrency?.id as string : pair?.quoteCurrency?.id as string,
+    //               amount: fee
+    //             })
+
+    //             console.log('---------------- FEE DEDUCTED -----------------')
+    //           }
+              
+
+    //           console.log('done with offchain transfer')
+    //           // block adjustedAmount
+    //           blockId = await walletService.block_Amount(adjustedAmount, orderType === 'SELL'? baseWallet.id: quoteWallet.id)
+    //           console.log('---------------- AMOUNT LOCKED -----------------')
+    //           console.log('done with offchain transfer',blockId)
+
+    //           order = await prisma.order.create({
+    //             data:{
+    //                 userId,
+    //                 blockId,
+    //                 amountMinimum: minimumAmount,
+    //                 amount,
+    //                 type: orderType,
+    //                 pairId,
+    //                 price: rate
+    //             }
+    //           })
+      
+    //           return {
+    //             order
+    //           }
+    //         },
+    //         {
+    //           maxWait: 50000, // default: 2000
+    //           timeout: 50000, // default: 5000
+    //         }
+
+    //     )
+
+    //     await notificationService.queue({
+    //       userId, 
+    //       title:'Order is Live!',
+    //       type:'GENERAL',
+    //       content:`Your <strong>${orderType}</strong> order for <strong>${amount} ${pair?.baseCurrency?.ISO}</strong> on the <strong>${pair?.baseCurrency?.ISO}/${pair?.quoteCurrency?.ISO}</strong> pair has been placed successfully and is now active on the market,.`
+    //     })
+    //     console.log('---------------- NOTIFICATION QUEUED -----------------')
+
+    //     return result.order
+
+    // }
+
+    // async processOrder(payload:{
+    //     userId: string,
+    //     orderId: string,
+    //     amount: number, 
+    //     userBaseWallet: Wallet,
+    //     userQuoteWallet: Wallet
+    // }) {        
+
+    //    const { userId, orderId, amount, userBaseWallet, userQuoteWallet } = payload
+
+    //     const order = await prisma.order.findUnique({
+    //         where:{id: orderId}
+    //     })
+
+    //     if (order?.status !== "OPEN") {
+    //         throw new Error('Order is not open');
+    //     }
+
+    //     const pair = await prisma.pair.findFirst({
+    //         where:{id: order?.pairId},
+    //         include:{
+    //           quoteCurrency:{
+    //             select:{
+    //               id:true,
+    //               ISO:true  
+    //             },
+    //           },
+    //           baseCurrency:{
+    //             select:{
+    //               id:true,
+    //               ISO:true  
+    //             },
+    //           },
+    //           quoteWallet:true,
+    //           baseWallet:true,
+    //         }
+    //     })
+
+
+    //     const orderBaseWallet = await prisma.wallet.findFirst({
+    //         where:{
+    //         currencyId: pair?.baseCurrency?.id,
+    //         userId: order?.userId as string
+    //         }
+    //     })
+    
+    //     const orderQuoteWallet = await prisma.wallet.findFirst({
+    //         where:{
+    //         currencyId: pair?.quoteCurrency?.id,
+    //         userId: order?.userId as string
+    //         }
+    //     })
+    
+    //     if (!orderBaseWallet || !orderQuoteWallet) {
+    //         throw new Error('Order wallet not found');
+    //     }
+
+    //     // Validate user balances
+    //     if (order?.type === "BUY" && !hasSufficientBalance(userBaseWallet.availableBalance,amount)) {
+    //         throw new Error('Insufficient base currency balance');
+    //     }
+    
+    //     if (order?.type === "SELL" && !hasSufficientBalance(userQuoteWallet.availableBalance,amount)) {
+    //         throw new Error('Insufficient quote currency balance');
+    //     }
+
+    //     const maxAmount = order?.type === "BUY"
+    //     ? (order?.amount - order?.amountProcessed) / order?.price // order balance
+    //     : (order?.amount! - order?.amountProcessed!) * order?.price!
+
+    //     if (maxAmount < amount) {
+    //       throw new Error('Max amount exceeded');
+    //     }
+
+
+    //     const result = await prisma.$transaction(
+    //         async (prisma) => {
+    
+    //           let amountToProcess: number;
+    
+    //           amountToProcess = order?.type === "BUY"
+    //           ? amount * order.price // User is sending base, calculate quote amount
+    //           : amount / order.price; // User is sending quote, calculate base amount
+    
+    //           const amountLeft = order?.amount - (order?.amountProcessed + amount)
+    
+    //           let orderTransfer;
+    //           let newBlockId;
+    //           let userTransfer;
+    
+    //           if (order?.type === "BUY"){
+    //             // User sends base currency, order sends quote currency
+    
+    //             // order sends quote currency
+    //             orderTransfer = await walletService.unblock_Transfer(amountToProcess, order?.blockId as string, userQuoteWallet.id)
+    //             console.log('orderTransfer success from unblocked amount',orderTransfer)
+
+    //             // newBlockId = await walletService.block_Amount(amountLeft, orderQuoteWallet.id)
+
+    //             // user sends base currency
+    //             userTransfer = await walletService.offchain_Transfer({userId: userId,receipientId: order?.userId as string, currencyId: pair?.baseCurrency?.id!, amount})
+    
+    //           } else {
+    //             // User sends quote currency, order sends base currency
+    
+    //             // order sends base currency
+    //             orderTransfer = await walletService.unblock_Transfer(amountToProcess, order?.blockId as string, userBaseWallet.id)
+    //             console.log('orderTransfer success from unblocked amount',orderTransfer)
+    //             // newBlockId = await walletService.block_Amount(amountLeft, orderBaseWallet.id)
+
+    //             // user sends quote currency
+    //             userTransfer = await walletService.offchain_Transfer({userId: userId,receipientId: order?.userId as string, currencyId: pair?.quoteCurrency?.id!, amount})
+    
+    //           }
+    
+    //           const updatedOrder = await prisma.order.update({
+    //             where:{id: order.id },
+    //             data:{
+    //               // blockId: newBlockId,
+    //               amountProcessed: order?.amountProcessed + amountToProcess,
+    //               percentageProcessed: ((order?.amountProcessed + amountToProcess) / order?.amount) * 100,
+    //               status: (order.amountProcessed + amountToProcess) >= order?.amount ? 'CLOSED' :'OPEN'
+    //             }
+    //           })
+
+    //           // log order transaction
+    //           await prisma.orderLog.create({
+    //             data:{
+    //               userId,
+    //               orderId,
+    //               baseAmount: order?.type === "BUY" ? amount : amountToProcess ,
+    //               quoteAmount: order?.type === "BUY" ? amountToProcess : amount ,
+    //               rate: order.price,
+    //               orderType: order?.type
+    //             }
+    //           })
+    
+              
+    //           return {
+    //             order: updatedOrder
+    //           }
+    //         },
+    //         {
+    //           maxWait: 50000, // default: 2000
+    //           timeout: 50000, // default: 5000
+    //         }
+    
+    //     )
+
+    //     await this.sendOrderSuccessNotification({
+    //       userId,
+    //       orderId,
+    //       amount,
+    //       baseCurrency: pair?.baseCurrency?.ISO,
+    //       quoteCurrency: pair?.quoteCurrency?.ISO
+    //     })
+
+    //     return result.order
+        
+
+    // }
+
+    // async cancelOrder(payload:{orderId:string}){
+
+    //   const {orderId} = payload
+
+    //   try {
+        
+    //     const order = await prisma.order.findUnique({
+    //         where: {id: orderId},
+    //         include: {
+    //             pair: {
+    //                 include: {
+    //                     baseCurrency: {select: {ISO: true}},
+    //                     quoteCurrency: {select: {ISO: true}}
+    //                 }
+    //             }
+    //         }
+    //     })
+
+    //     if(!order){
+    //       throw new Error('Order not found');
+    //     }
+
+    //     const pendingOrders = await prisma.awaiting.findMany({
+    //       where: {
+    //         orderId: order.id,
+    //         status: {
+    //           in: ['PENDING', 'PROCESSING']
+    //         }
+    //       }
+    //     });
+
+    //     if(pendingOrders.length){
+    //       throw new Error('Pending Orders exists');
+    //     }
+
+    //     await walletService.unblock_Amount(order.blockId as string)
+
+    //     const canceledOrder = await prisma.order.update({
+    //       where:{id: order?.id},
+    //       data:{status:'CANCELED'}
+    //     })
+
+    //     // Determine which currency to show based on order type
+    //     const currencyISO = order.type === 'SELL'
+    //       ? (order?.pair?.baseCurrency?.ISO ?? order?.pair?.quoteCurrency?.ISO ?? '')
+    //       : (order?.pair?.quoteCurrency?.ISO ?? order?.pair?.baseCurrency?.ISO ?? '')
+
+    //     await notificationService.queue({
+    //         userId: order?.userId as string, // Make sure to get userId from the order
+    //         title: 'Order Cancelled',
+    //         type: 'GENERAL',
+    //         content: `Your <strong>${order?.type}</strong> order for <strong>${order?.amount} ${currencyISO||'currency'}</strong> has been cancelled successfully. The funds have been unblocked and are available in your wallet.`
+    //     })
+
+    //     return canceledOrder
+
+    //   } catch (error) {
+    //     console.log(error)
+    //   }
+      
+
+    // }
+
+    // async queue(payload:{
+    //     userId: string,
+    //     rate: number, 
+    //     amount: number, 
+    //     orderType: OrderType, 
+    //     pairId: string, 
+    //     minimumAmount:number,
+    //     baseWallet: Wallet,
+    //     quoteWallet: Wallet
+    // }){
+    //   console.log('queuing create order job')
+    //   return await this.generalQueue.add('create-order', payload);
+    // }
+
+    
+
+    // private async sendOrderSuccessNotification(params: {
+    //   userId: string;
+    //   orderId: string;
+    //   amount: number;
+    //   baseCurrency?: string;
+    //   quoteCurrency?: string;
+    // }) {
+    //   const { userId, baseCurrency, quoteCurrency, amount, orderId } = params;
+
+    //   let notificationContent: string;
+    //   let notificationTitle: string;
+
+    //   const order = await prisma.order.findUnique({
+    //     where:{id: orderId}
+    //   })
+
+    //   if(!order){
+    //     return 
+    //   }
+
+    //   let amountProcessed: number;
+
+    //   amountProcessed = order?.type === "BUY"
+    //     ? amount * order.price // User is sending base, calculate quote amount
+    //     : amount / order.price; // User is sending quote, calculate base amount
+
+
+    //   const baseAmount = order?.type === "BUY" ? amount : amountProcessed;
+    //   const quoteAmount = order?.type === "BUY" ? amountProcessed : amount
+
+    //   if (order.type === 'BUY') {
+
+    //     notificationTitle = '🎉 Order Completed Successfully!';
+    //     notificationContent = `
+    //       <div style="font-family: Arial, sans-serif;">
+    //         <h3 style="color: #112044; margin-bottom: 10px;">Your BUY order has been completed!</h3>
+            
+    //         <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0;">
+    //           <p style="margin: 5px 0;"><strong>Order Type:</strong> BUY ${baseCurrency}</p>
+    //           <p style="margin: 5px 0;"><strong>Amount Sold:</strong> ${baseAmount} ${baseCurrency}</p>
+    //           <p style="margin: 5px 0;"><strong>Amount Received:</strong> ${quoteAmount} ${quoteCurrency}</p>
+    //           <p style="margin: 5px 0;"><strong>Exchange Rate:</strong> ${order.price?.toLocaleString('en-US')} ${quoteCurrency}</p>
+    //           <p style="margin: 5px 0;"><strong>Order ID:</strong> <code>${orderId}</code></p>
+    //         </div>
+
+    //         <p style="color: #666; font-size: 14px; margin-top: 15px;">
+    //           Thanks for choosing Vyre! If you have any questions, please contact our support team.
+    //         </p>
+    //       </div>
+    //     `;
+
+    //   } else {
+    //     // SELL: User paid fiat, received crypto
+
+    //     notificationTitle = '🎉 Order Completed Successfully!';
+    //     notificationContent = `
+    //       <div style="font-family: Arial, sans-serif;">
+    //         <h3 style="color: #112044; margin-bottom: 10px;">Your SELL order has been completed!</h3>
+            
+    //         <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0;">
+    //           <p style="margin: 5px 0;"><strong>Order Type:</strong> SELL ${baseCurrency}</p>
+    //           <p style="margin: 5px 0;"><strong>Amount Paid:</strong> ${quoteAmount} ${quoteCurrency}</p>
+    //           <p style="margin: 5px 0;"><strong>Amount Received:</strong> ${baseAmount} ${baseCurrency}</p>
+    //           <p style="margin: 5px 0;"><strong>Exchange Rate:</strong> ${order.price?.toLocaleString('en-US')} ${quoteCurrency}</p>
+    //           <p style="margin: 5px 0;"><strong>Order ID:</strong> <code>${orderId}</code></p>
+    //         </div>
+
+    //         <p style="color: #666; font-size: 14px; margin-top: 15px;">
+    //           Thanks for choosing Vyre! If you have any questions, please contact our support team.
+    //         </p>
+    //       </div>
+    //     `;
+    //   }
+
+    //   // Queue the notification
+    //   await notificationService.queue({
+    //     userId,
+    //     title: notificationTitle,
+    //     type: 'GENERAL',
+    //     content: notificationContent
+    //   });
+    // }
 
 
 
