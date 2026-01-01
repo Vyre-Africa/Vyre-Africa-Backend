@@ -6,6 +6,7 @@ import prisma from '../config/prisma.config';
 import axios from "axios";
 import { UserBank } from "@prisma/client";
 import { generateRefCode } from "../utils";
+import logger from "../config/logger";
 const Flutterwave = require('flutterwave-node-v3');
 
 const qorepayAxios = axios.create({
@@ -84,78 +85,76 @@ class QorepayService {
         return paymentDetails
     }
 
-    async deposit_via_Bank(payload:{
-      currency: string,
-      amount: number, 
-      email: string,
-      userId: string,
-      walletId: string
-    })
-    {
-        const { currency, amount, email, userId, walletId } = payload
-        
+    async deposit_via_Bank(payload: {
+      currency: string;
+      amount: number;
+      email: string;
+      userId: string;
+      walletId: string;
+    }) {
+      const { currency, amount, email, userId, walletId } = payload;
+
+      try {
+        // Step 1: Create purchase
         const data = {
-              client: {
-                email
-              },
-              purchase: {
-                currency,
-                products: [
-                  {
-                    name: "Deposit",
-                    quantity: 1,
-                    price: amount * 100
-                  }
-                ]
-              },
-              brand_id: config.QOREPAY_BRAND_ID
-        }
-        const response = await qorepayAxios.post(`/api/v1/purchases/`, data)
-        console.log(response.data)
-        const result = response.data
+          client: { email },
+          purchase: {
+            currency,
+            products: [{
+              name: "Deposit",
+              quantity: 1,
+              price: amount * 100
+            }]
+          },
+          brand_id: config.QOREPAY_BRAND_ID
+        };
 
-        if(!result){
-          throw new Error('Could not initialize payment');
-        }
+        const response = await qorepayAxios.post('/api/v1/purchases/', data);
+        const result = response.data;
 
+        if (!result) throw new Error('Could not initialize payment');
+
+        // Step 2 & 3: Create transaction record AND fetch bank details in parallel
         const formData = new FormData();
         formData.append('s2s', 'true');
         formData.append('pm', 'sarepay_bank_transfer');
 
-        // get bank details
-        const account = await qorepayServer.post(`/p/${result.id}/`, formData);
-
-        console.log(account.data)
-        const bankResult = account.data
-        const details = bankResult.data
-
-
-
-        // create transaction record
-        const transaction = await prisma.transaction.create({
-            data:{
-                id:result.id,
-                userId,
-                currency,
-                amount,
-                reference: result.id,
-                status: 'PENDING',
-                walletId,
-                type:'FIAT_DEPOSIT',
-                description:`${currency} deposit`
+        const [transaction, bankAccount] = await Promise.all([
+          // Create transaction record
+          prisma.transaction.create({
+            data: {
+              id: result.id,
+              userId,
+              currency,
+              amount,
+              reference: result.id,
+              status: 'PENDING',
+              walletId,
+              type: 'FIAT_DEPOSIT',
+              description: `${currency} deposit`
             }
-        })
-        const bankDetails ={
-            id: result.id,
-            account_number: details?.account_number,
-            account_name: details?.account_name,
-            bank: details?.bank,
-            status: details?.status,
-            type: details?.type,
-            expires_at: details?.expires_at,
-            validity_type: details?.validity_type
-        }
-        return bankDetails
+          }),
+          // Get bank details
+          qorepayServer.post(`/p/${result.id}/`, formData)
+        ]);
+
+        const details = bankAccount.data.data;
+
+        return {
+          id: result.id,
+          account_number: details?.account_number,
+          account_name: details?.account_name,
+          bank: details?.bank,
+          status: details?.status,
+          type: details?.type,
+          expires_at: details?.expires_at,
+          validity_type: details?.validity_type
+        };
+
+      } catch (error) {
+        logger.error('Bank deposit initialization failed:', error);
+        throw error;
+      }
     }
 
 
