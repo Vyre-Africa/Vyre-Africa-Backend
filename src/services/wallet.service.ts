@@ -163,14 +163,14 @@ class WalletService
     {
         const {userId, currencyId} = payload
 
-        const walletExists = await prisma.wallet.findFirst({
-            where: { 
-                userId,
-                currencyId
-            }
-        })
-        
-        if(walletExists)return
+        // const walletExists = await prisma.wallet.findFirst({
+        //     where: { 
+        //         userId,
+        //         currencyId
+        //     }
+        // })
+
+        // if(walletExists)return
 
         const currency = await prisma.currency.findUnique({
             where:{id:currencyId},
