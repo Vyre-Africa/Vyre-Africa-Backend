@@ -348,7 +348,7 @@ class AnonService {
     const { awaitingId } = jobData;
 
     try {
-      logger.info('Processing expiry', { awaitingId });
+      logger.info('Processing expiry', awaitingId );
 
       const awaiting = await prisma.awaiting.findUnique({
         where: { id: awaitingId },

@@ -433,8 +433,8 @@ class eventService {
     const { reference, event} = payload;
 
     // 1. Find and validate transaction
-    const transaction = await prisma.transaction.findFirst({
-        where: { reference },
+    const transaction = await prisma.transaction.findUnique({
+        where: { id: reference },
         include: { 
           wallet: {
             include: { currency: true }
