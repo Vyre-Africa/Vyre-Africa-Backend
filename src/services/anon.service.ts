@@ -275,7 +275,7 @@ class AnonService {
                 paymentDetails: paymentData
               }
             });
-            logger.info('Payment details updated async', { awaitingId: result.awaiting.id });
+            logger.info('Payment details updated async ', { awaitingId: result.awaiting.id });
           }
         }).catch(err => {
           logger.error('Failed to update payment details', err);
