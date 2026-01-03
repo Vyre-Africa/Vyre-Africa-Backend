@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma.config';
 import config from '../config/env.config';
+import { Wallet } from '@prisma/client';
 import axios, { AxiosInstance } from "axios";
 // import {Currency,walletType} from '@prisma/client';
 // import { currency as baseCurrency } from '../globals';
@@ -32,10 +33,10 @@ import chainService from './chain.service';
     }
 
     interface WalletCreationResult {
-    id: string;
-    depositAddress: string;
-    subscriptionId: string;
-    derivationKey: number;
+        id: string;
+        depositAddress: string;
+        subscriptionId: string;
+        derivationKey: number;
     }
 
     type AllSupportedChains = 'ETHEREUM' | 'TRON' | 'BASE' | 'BSC' | 'ARBITRUM' | 'OPTIMISM' | 'POLYGON';
@@ -90,7 +91,7 @@ class stableCoinService
         return response.data;
         } catch (error) {
         logger.error('Failed to generate address:', error);
-        throw new Error('Failed to generate deposit address');
+          throw new Error('Failed to generate deposit address');
         }
     }
 
@@ -109,7 +110,7 @@ class stableCoinService
         return response.data;
         } catch (error) {
         logger.error('Failed to subscribe address:', error);
-        throw new Error('Failed to subscribe to address events');
+          throw new Error('Failed to subscribe to address events');
         }
     }
 
@@ -123,7 +124,7 @@ class stableCoinService
         chain: AllSupportedChains,
         userId: string,
         currencyId: string
-    ): Promise<WalletCreationResult> {
+    ): Promise<Wallet> {
         try {
         // Validate chain support
         if (!chainService.isChainSupported(stablecoin, chain)) {
@@ -176,16 +177,11 @@ class stableCoinService
             address: wallet.depositAddress 
         });
 
-        return {
-            id: wallet.id,
-            depositAddress: wallet.depositAddress!,
-            subscriptionId: wallet.subscriptionId!,
-            derivationKey: wallet.derivationKey!
-        };
+        return wallet
 
         } catch (error) {
-        logger.error(`Failed to create ${stablecoin} wallet on ${chain}:`, error);
-        throw error;
+            logger.error(`Failed to create ${stablecoin} wallet on ${chain}:`, error);
+            throw error;
         }
     }
 

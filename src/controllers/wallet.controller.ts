@@ -82,20 +82,20 @@ class WalletController {
           });
       }
   
-      const walletExists = await prisma.wallet.findFirst({
-        where: { 
-          userId: user.id,
-          currencyId
-        }
-      })
+      // const walletExists = await prisma.wallet.findFirst({
+      //   where: { 
+      //     userId: user.id,
+      //     currencyId
+      //   }
+      // })
   
-      if(walletExists){
-        return res.status(400)
-          .json({
-            msg: `${currency?.name} wallet already exists`,
-            success: false,
-          });
-      }
+      // if(walletExists){
+      //   return res.status(400)
+      //     .json({
+      //       msg: `${currency?.name} wallet already exists`,
+      //       success: false,
+      //     });
+      // }
 
       const result = await walletService.createWallet({
         userId:user.id, 

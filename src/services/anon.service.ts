@@ -44,7 +44,43 @@ class AnonService {
   }
 
   // ============================================
-  // OPTIMIZED USER SETUP (Parallel Operations)
+  // HELPER: Retry with exponential backoff
+  // ============================================
+  private async retryOperation<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<T> {
+    let lastError: any;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await operation();
+        if (attempt > 1) {
+          logger.info(`${operationName} succeeded on attempt ${attempt}`);
+        }
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        logger.warn(`${operationName} failed on attempt ${attempt}/${maxRetries}`, {
+          error: error.message,
+          code: error.code
+        });
+        
+        if (attempt < maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff
+          logger.info(`Retrying ${operationName} in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    
+    throw lastError;
+  }
+
+  // ============================================
+  // ROBUST USER SETUP (Simplified - Service is Idempotent)
   // ============================================
   async setUpUser(payload: {
     firstName: string;
@@ -56,60 +92,138 @@ class AnonService {
     const { firstName, lastName, phoneNumber, email, orderId } = payload;
 
     try {
-      // Fetch order and pair in parallel
-      const [order, existingUser] = await Promise.all([
-        prisma.order.findUnique({
-          where: { id: orderId },
-          include: {
-            pair: {
-              include: {
-                quoteCurrency: {
-                  select: { id: true, ISO: true, tatumChain: true }
-                },
-                baseCurrency: {
-                  select: { id: true, ISO: true, tatumChain: true }
+      logger.info('Starting user setup', { email, orderId });
+
+      // ============================================
+      // STEP 1: Fetch order and user with retry
+      // ============================================
+      const [order, existingUser] = await this.retryOperation(
+        async () => {
+          return await Promise.all([
+            prisma.order.findUnique({
+              where: { id: orderId },
+              select: {
+                id: true,
+                type: true,
+                pair: {
+                  select: {
+                    id: true,
+                    baseCurrency: {
+                      select: { id: true, ISO: true, tatumChain: true }
+                    },
+                    quoteCurrency: {
+                      select: { id: true, ISO: true, tatumChain: true }
+                    }
+                  }
                 }
               }
-            }
-          }
-        }),
-        prisma.user.findUnique({ where: { email } })
-      ]);
+            }),
+            prisma.user.findUnique({ 
+              where: { email },
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                phoneNumber: true
+              }
+            })
+          ]);
+        },
+        'Fetch order and user',
+        3,
+        1500
+      );
 
-      if (!order) throw new Error('Order not found');
+      if (!order) {
+        throw new Error('Order not found');
+      }
 
       const pair = order.pair;
+      if (!pair) {
+        throw new Error('Order pair not found');
+      }
 
-      // Create user if doesn't exist
+      // ============================================
+      // STEP 2: Create or get user with retry
+      // ============================================
       let user = existingUser;
       if (!user) {
-        user = await prisma.user.create({
-          data: { firstName, lastName, phoneNumber, email }
-        });
+        user = await this.retryOperation(
+          async () => {
+            return await prisma.user.create({
+              data: { firstName, lastName, phoneNumber, email },
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                phoneNumber: true
+              }
+            });
+          },
+          'Create user',
+          3,
+          1500
+        );
         logger.info('New user created', { userId: user.id, email });
       } else {
         logger.info('Existing user found', { userId: user.id, email });
       }
 
-      // Create wallets in parallel
-      const [baseWallet, quoteWallet] = await Promise.all([
-        walletService.createWallet({
-          userId: user.id,
-          currencyId: pair?.baseCurrency?.id as string
-        }),
-        walletService.createWallet({
-          userId: user.id,
-          currencyId: pair?.quoteCurrency?.id as string
-        })
-      ]);
+      // ============================================
+      // STEP 3: Create wallets SEQUENTIALLY (not parallel)
+      // Wallet service is idempotent, so safe to retry
+      // ============================================
+      
+      // Create base wallet with retry
+      const baseWallet = await this.retryOperation(
+        async () => {
+          return await walletService.createWallet({
+            userId: user.id,
+            currencyId: pair?.baseCurrency?.id as string
+          });
+        },
+        'Create base wallet',
+        3,
+        2000 // Longer delay for external service calls
+      );
 
-      if (!baseWallet || !quoteWallet) {
-        throw new Error('Wallet creation failed');
+      if (!baseWallet) {
+        throw new Error('Base wallet creation failed');
+      }
+      
+      logger.info('Base wallet ready', { 
+        walletId: baseWallet.id,
+        currency: pair?.baseCurrency?.ISO 
+      });
+
+      // Create quote wallet with retry
+      const quoteWallet = await this.retryOperation(
+        async () => {
+          return await walletService.createWallet({
+            userId: user.id,
+            currencyId: pair?.quoteCurrency?.id as string
+          });
+        },
+        'Create quote wallet',
+        3,
+        2000
+      );
+
+      if (!quoteWallet) {
+        throw new Error('Quote wallet creation failed');
       }
 
-      logger.info('Wallets created', {
-        baseWallet: baseWallet.id,
-        quoteWallet: quoteWallet.id
+      logger.info('Quote wallet ready', { 
+        walletId: quoteWallet.id,
+        currency: pair?.quoteCurrency?.ISO 
+      });
+
+      logger.info('User setup completed successfully', {
+        userId: user.id,
+        baseWalletId: baseWallet.id,
+        quoteWalletId: quoteWallet.id
       });
 
       return {
@@ -120,8 +234,13 @@ class AnonService {
         pair
       };
 
-    } catch (error) {
-      logger.error('User setup failed:', error);
+    } catch (error: any) {
+      logger.error('User setup failed completely', {
+        email,
+        orderId,
+        error: error.message,
+        stack: error.stack
+      });
       throw error;
     }
   }
@@ -139,10 +258,23 @@ class AnonService {
       const expiryDuration = moment().add(1, 'hour').toDate();
 
       // Fetch order and currency in parallel
-      const [order, currency] = await Promise.all([
-        prisma.order.findUnique({ where: { id: orderId } }),
-        prisma.currency.findUnique({ where: { id: currencyId } })
-      ]);
+      const [order, currency] = await this.retryOperation(
+        async () => {
+          return await Promise.all([
+            prisma.order.findUnique({ 
+              where: { id: orderId },
+              select: { id: true, type: true }
+            }),
+            prisma.currency.findUnique({ 
+              where: { id: currencyId },
+              select: { id: true, ISO: true, chain: true }
+            })
+          ]);
+        },
+        'Fetch order and currency',
+        3,
+        1500
+      );
 
       if (!order) throw new Error('Order not found');
       if (!currency) throw new Error('Currency not found');
@@ -173,16 +305,25 @@ class AnonService {
 
         // Start payment initialization but DON'T wait for it
         // We'll handle it asynchronously
-        paymentPromise = walletService.getPaymentMethod({
-          currency: currency.ISO,
-          amount: parseFloat(amount),
-          email: user.email,
-          userId: user.id,
-          walletId: quoteWallet.id,
-          method: paymentMethod
-        }).catch(err => {
-          logger.error('Payment initialization failed', err);
-          return null; // Don't fail the whole request
+        paymentPromise = this.retryOperation(
+          async () => {
+            return await walletService.getPaymentMethod({
+              currency: currency.ISO,
+              amount: parseFloat(amount),
+              email: user.email,
+              userId: user.id,
+              walletId: quoteWallet.id,
+              method: paymentMethod
+            });
+          },
+          'Initialize payment',
+          2, // Only 2 retries for payment
+          2000
+        ).catch(err => {
+          logger.error('Payment initialization failed after retries', { 
+            error: err.message 
+          });
+          return null;
         });
 
         // Only wait if it's a bank transfer (required for awaiting)
@@ -209,55 +350,63 @@ class AnonService {
       }
 
       // Create awaiting and postDetails in single transaction
-      const result = await prisma.$transaction(async (tx) => {
-        const awaiting = await tx.awaiting.create({
-          data: {
-            triggerAddress: order.type === 'BUY' 
-              ? baseWallet.depositAddress 
-              : quoteWallet.depositAddress,
-            walletId: order.type === 'BUY' ? baseWallet.id : quoteWallet.id,
-            userId: user.id,
-            orderId,
-            amount,
-            orderType: order.type as OrderType,
-            currencyId,
-            method: paymentMethod,
-            duration: expiryDuration,
+      const result = await this.retryOperation(
+        async () => {
+          return await prisma.$transaction(
+            async (tx) => {
+              const awaiting = await tx.awaiting.create({
+                data: {
+                  triggerAddress: order.type === 'BUY' 
+                    ? baseWallet.depositAddress 
+                    : quoteWallet.depositAddress,
+                  walletId: order.type === 'BUY' ? baseWallet.id : quoteWallet.id,
+                  userId: user.id,
+                  orderId,
+                  amount,
+                  orderType: order.type as OrderType,
+                  currencyId,
+                  method: paymentMethod,
+                  duration: expiryDuration,
+                  reference: payments?.id,
+                  bank_Name: payments?.bank,
+                  bank_Account_Number: payments?.account_number,
+                  bank_Account_Name: payments?.account_name,
+                  bank_expires_At: payments?.expires_at 
+                    ? new Date(payments.expires_at.replace(' ', 'T')).toISOString() 
+                    : null,
+                  paymentDetails: payments
+                }
+              });
 
-            // Payment details (may be null if async)
-            reference: payments?.id,
-            bank_Name: payments?.bank,
-            bank_Account_Number: payments?.account_number,
-            bank_Account_Name: payments?.account_name,
-            bank_expires_At: payments?.expires_at 
-              ? new Date(payments.expires_at.replace(' ', 'T')).toISOString() 
-              : null,
-            paymentDetails: payments
-          }
-        });
+              const postDetails = await tx.postDetails.create({
+                data: {
+                  awaitingId: awaiting.id,
+                  walletId: order.type === 'BUY' ? quoteWallet.id : baseWallet.id,
+                  userId: user.id,
+                  orderId,
+                  amount,
+                  currencyId,
+                  bankCode: bank?.bank_code,
+                  accountNumber: bank?.accountNumber,
+                  recipient_Name: bank?.recipient,
+                  chain: currency?.chain,
+                  address: crypto.address
+                }
+              });
 
-        const postDetails = await tx.postDetails.create({
-          data: {
-            awaitingId: awaiting.id,
-            walletId: order.type === 'BUY' ? quoteWallet.id : baseWallet.id,
-            userId: user.id,
-            orderId,
-            amount,
-            currencyId,
-            bankCode: bank?.bank_code,
-            accountNumber: bank?.accountNumber,
-            recipient_Name: bank?.recipient,
-            chain: currency?.chain,
-            address: crypto.address
-          }
-        });
-
-        return { awaiting, postDetails };
-      },{
-        maxWait: 10000,   // 10 seconds to get connection
-        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
-        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
-      });
+              return { awaiting, postDetails };
+            },
+            {
+              maxWait: 10000,
+              timeout: 30000,
+              isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+            }
+          );
+        },
+       'Create awaiting transaction',
+       2, // Only 2 retries for transaction
+       3000
+      );
 
       // ============================================
       // UPDATE PAYMENT DETAILS ASYNC (If needed)
@@ -267,23 +416,39 @@ class AnonService {
       if (paymentPromise && !payments) {
         paymentPromise.then(async (paymentData) => {
           if (paymentData) {
-            await prisma.awaiting.update({
-              where: { id: result.awaiting.id },
-              data: {
-                reference: paymentData.id,
-                bank_Name: paymentData.bank,
-                bank_Account_Number: paymentData.account_number,
-                bank_Account_Name: paymentData.account_name,
-                bank_expires_At: paymentData.expires_at 
-                  ? new Date(paymentData.expires_at.replace(' ', 'T')).toISOString() 
-                  : null,
-                paymentDetails: paymentData
-              }
-            });
-            logger.info('Payment details updated async ', { awaitingId: result.awaiting.id });
+            try {
+              await this.retryOperation(
+                async () => {
+                  return await prisma.awaiting.update({
+                    where: { id: result.awaiting.id },
+                    data: {
+                      reference: paymentData.id,
+                      bank_Name: paymentData.bank,
+                      bank_Account_Number: paymentData.account_number,
+                      bank_Account_Name: paymentData.account_name,
+                      bank_expires_At: paymentData.expires_at 
+                        ? new Date(paymentData.expires_at.replace(' ', 'T')).toISOString() 
+                        : null,
+                      paymentDetails: paymentData
+                    }
+                  });
+                },
+                'Update payment details async',
+                3,
+                2000
+              );
+              logger.info('Payment details updated async', { 
+                awaitingId: result.awaiting.id 
+              });
+            } catch (err: any) {
+              logger.error('Failed to update payment details after retries', {
+                awaitingId: result.awaiting.id,
+                error: err.message
+              });
+            }
           }
         }).catch(err => {
-          logger.error('Failed to update payment details', err);
+          logger.error('Payment promise failed', { error: err.message });
         });
       }
 
