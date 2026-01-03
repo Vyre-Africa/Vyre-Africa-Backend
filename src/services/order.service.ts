@@ -103,7 +103,11 @@ class OrderService {
             }
           });
         },
-        { timeout: 30000 }
+        {
+          maxWait: 10000,   // 10 seconds to get connection
+          timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
+        }
       );
 
       await notificationService.queue({
@@ -160,11 +164,15 @@ class OrderService {
 
       const canceledOrder = await prisma.$transaction(async (tx) => {
         await walletService.unblock_Amount(order.blockId!);
-          return await tx.order.update({
-            where: { id: order.id },
-            data: { status: 'CANCELED' }
-          });
+        return await tx.order.update({
+          where: { id: order.id },
+          data: { status: 'CANCELED' }
         });
+      },{
+        maxWait: 10000,   // 10 seconds to get connection
+        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
+      });
 
         const currencyISO = order.type === 'SELL'
           ? order.pair.baseCurrency?.ISO
@@ -494,8 +502,9 @@ class OrderService {
           };
         },
         {
-          timeout: 15000,
-          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted
+          maxWait: 10000,   // 10 seconds to get connection
+          timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
         }
       );
     }

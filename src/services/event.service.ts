@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma.config';
 import { OrderType, AwaitingStatus, Awaiting, Wallet, Currency } from '@prisma/client';
 import walletService from './wallet.service';
@@ -162,7 +163,7 @@ class eventService {
       }
 
       // FOR FIAT WITHDRAWALS
-      
+
       if(event === 'payout'){
 
         if(eventType === 'payout.created'){
@@ -329,7 +330,11 @@ class eventService {
         throw new Error(`Unable to determine transfer type.`);
       }
 
-    });
+    },{
+        maxWait: 10000,   // 10 seconds to get connection
+        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
+      });
 
       // if(transferType === 'CREDIT'){
 
@@ -867,6 +872,10 @@ class eventService {
           postDetails: updated_PostDetails
         }
       
+      }, {
+        maxWait: 10000,   // 10 seconds to get connection
+        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
       });
 
       await ablyService.awaiting_Order_Update(awaitingId);
@@ -934,6 +943,10 @@ class eventService {
           postDetails: updated_PostDetails
         }
       
+      },{
+        maxWait: 10000,   // 10 seconds to get connection
+        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
       });
 
       await ablyService.awaiting_Order_Update(awaitingId);
@@ -1125,6 +1138,10 @@ class eventService {
           postDetails: updated_PostDetails
         }
       
+      },{
+        maxWait: 10000,   // 10 seconds to get connection
+        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
       });
 
       // 10. Trigger Ably update

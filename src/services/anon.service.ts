@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma.config';
 import { OrderType } from '@prisma/client';
 import walletService from './wallet.service';
@@ -252,6 +253,10 @@ class AnonService {
         });
 
         return { awaiting, postDetails };
+      },{
+        maxWait: 10000,   // 10 seconds to get connection
+        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
       });
 
       // ============================================
@@ -378,6 +383,10 @@ class AnonService {
           where: { awaitingId, userId: awaiting.userId },
           data: { status: 'EXPIRED' }
         });
+      },{
+        maxWait: 10000,   // 10 seconds to get connection
+        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
       });
 
       logger.info('Awaiting marked as expired', { awaitingId });
