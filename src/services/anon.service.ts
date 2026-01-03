@@ -201,7 +201,7 @@ class AnonService {
         // Wait for payment with timeout
         payments = await Promise.race([
           paymentPromise,
-          this.timeoutPromise(30000, 'Payment initialization timeout')
+          this.timeoutPromise(45000, 'Payment initialization timeout')
         ]).catch(err => {
           logger.warn('Payment init slow/failed, proceeding without details', err);
           return null;
