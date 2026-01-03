@@ -162,6 +162,7 @@ class eventService {
       }
 
       // FOR FIAT WITHDRAWALS
+      
       if(event === 'payout'){
 
         if(eventType === 'payout.created'){
