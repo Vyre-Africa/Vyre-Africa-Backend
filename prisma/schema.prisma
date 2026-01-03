@@ -266,6 +266,14 @@ model User {
   Awaiting    Awaiting[]
   postDetails postDetails[]
   OrderLog    OrderLog[]
+  
+  // 🚀 PERFORMANCE INDEXES - ADD THESE
+  @@index([userStatus])                // Fast status lookups
+  @@index([type])                      // Fast type lookups
+  @@index([emailVerified])             // For verification checks
+  @@index([accountVerified])           // For verification checks
+  @@index([createdAt])                 // For time-based queries
+  @@index([phoneNumber])               // For phone lookups
 }
 
 model UserKyc {
@@ -434,6 +442,16 @@ model Transaction {
   description String
   createdAt   DateTime          @default(now())
   metadata    Json?
+  
+  // 🚀 PERFORMANCE INDEXES - ADD THESE
+  @@index([userId])                    // Fast user lookups
+  @@index([walletId])                  // Fast wallet lookups
+  @@index([status])                    // Fast status lookups
+  @@index([type])                      // Fast type lookups
+  @@index([reference])                 // For reference lookups
+  @@index([userId, status])            // Compound for user transactions
+  @@index([createdAt])                 // For time-based queries
+  @@index([userId, createdAt(sort: Desc)]) // For recent user transactions
 }
 
 model Currency {
@@ -456,7 +474,14 @@ model Currency {
   quotePairs   Pair[]        @relation("quoteCurrency")
   Awaiting     Awaiting[]
   postDetails  postDetails[]
+  
+  // 🚀 PERFORMANCE INDEXES - ADD THESE
+  @@index([ISO])                       // Fast ISO lookups
+  @@index([type])                      // Fast type lookups
+  @@index([chain])                     // For chain-based queries
+  @@index([isStablecoin])              // For filtering stablecoins
 }
+
 
 model Wallet {
   id String @id @default(cuid())
@@ -482,11 +507,19 @@ model Wallet {
 
   Transaction Transaction[]
   Block       Block[]
-  basePairs   Pair[]        @relation("BaseWallet") // Reverse relation for `baseWallet`
-  quotePairs  Pair[]        @relation("QuoteWallet") // Reverse relation for `quoteWallet`
+  basePairs   Pair[]        @relation("BaseWallet")
+  quotePairs  Pair[]        @relation("QuoteWallet")
   Awaiting    Awaiting[]
   postDetails postDetails[]
+  
+  // 🚀 PERFORMANCE INDEXES - ADD THESE
+  @@index([userId])                    // Fast user lookups
+  @@index([currencyId])                // Fast currency lookups
+  @@index([depositAddress])            // For deposit tracking
+  @@index([userId, currencyId])        // Compound for user wallets
+  @@index([frozen])                    // For filtering frozen wallets
 }
+
 
 model Order {
   id                  String      @id @default(cuid())
@@ -494,20 +527,29 @@ model Order {
   blockId             String?
   userId              String?
   pairId              String
-  amountMinimum       Float       @default(0.00) // minimum amount required for to place a sell order
+  amountMinimum       Float       @default(0.00)
   user                User?       @relation(fields: [userId], references: [id])
   pair                Pair        @relation(fields: [pairId], references: [id])
   block               Block?      @relation(fields: [blockId], references: [id])
   amount              Float
   version             Int         @default(0)
-  amountProcessed     Float       @default(0.0) // Amount of the order that has been filled
-  percentageProcessed Float       @default(0.0) // Percentage of the order that has been filled
+  amountProcessed     Float       @default(0.0)
+  percentageProcessed Float       @default(0.0)
   price               Float
   status              OrderStatus @default(OPEN)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
   Awaiting            Awaiting[]
   OrderLog            OrderLog[]
+  
+  // 🚀 PERFORMANCE INDEXES - ADD THESE
+  @@index([userId])                    // Fast user lookups
+  @@index([pairId])                    // Fast pair lookups
+  @@index([status])                    // Fast status lookups
+  @@index([type])                      // Fast type lookups
+  @@index([userId, status])            // Compound for user orders
+  @@index([pairId, status])            // For pair-based queries
+  @@index([createdAt])                 // For time-based queries
 }
 
 model OrderLog {
@@ -608,6 +650,18 @@ model Awaiting {
   duration    DateTime      @default(now())
   postDetails postDetails[]
   metadata    Json?
+  
+  // 🚀 PERFORMANCE INDEXES - ADD THESE
+  @@index([status])                    // Fast status lookups
+  @@index([userId])                    // Fast user lookups
+  @@index([orderId])                   // Fast order lookups
+  @@index([walletId])                  // Fast wallet lookups
+  @@index([status, userId])            // Compound for common queries
+  @@index([status, orderId])           // For order status checks
+  @@index([createdAt])                 // For time-based queries
+  @@index([duration])                  // For expiry checks
+  @@index([triggerAddress])            // For webhook lookups
+  @@index([reference])                 // For payment reference lookups
 }
 
 model postDetails {
@@ -636,6 +690,14 @@ model postDetails {
   wallet   Wallet?   @relation(fields: [walletId], references: [id])
 
   createdAt DateTime @default(now())
+  
+  // 🚀 PERFORMANCE INDEXES - ADD THESE
+  @@index([awaitingId])                // Fast awaiting lookups
+  @@index([userId])                    // Fast user lookups
+  @@index([status])                    // Fast status lookups
+  @@index([awaitingId, userId])        // Compound for your updateMany query
+  @@index([awaitingId, status])        // For status-based awaiting queries
+  @@index([createdAt])                 // For time-based queries
 }
 
 model Card {
