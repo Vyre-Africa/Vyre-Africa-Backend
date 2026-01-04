@@ -487,7 +487,7 @@ class OrderService {
         if (order.type === 'BUY') {
           await Promise.all([
             walletService.unblock_Transfer(
-              amountToProcess.toNumber(), // Convert for wallet service
+              String(amountToProcess), // Convert for wallet service
               order.blockId, 
               userQuoteWallet.id
             ),
@@ -501,7 +501,7 @@ class OrderService {
         } else {
           await Promise.all([
             walletService.unblock_Transfer(
-              amountToProcess.toNumber(), // Convert for wallet service
+              String(amountToProcess), // Convert for wallet service
               order.blockId, 
               userBaseWallet.id
             ),

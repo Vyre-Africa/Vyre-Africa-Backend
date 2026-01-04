@@ -396,6 +396,12 @@ class WalletService
         const paymentData = response.data
         console.log(paymentData)
 
+        // sync both wallets
+        await Promise.all([
+            this.getAccount(user_Wallet?.id),
+            this.getAccount(receipient_Wallet?.id)
+        ]);
+
         // create transactions for both parties
         const transactions = await prisma.transaction.createMany({
             data:[
@@ -736,7 +742,7 @@ class WalletService
         
     }
 
-    async unblock_Transfer(amount:number, blockId:string, recipientAccountId:string){
+    async unblock_Transfer(amount:number | string, blockId:string, recipientAccountId:string){
 
         const data = {
             recipientAccountId,
@@ -749,6 +755,9 @@ class WalletService
         const responseData = response.data
         console.log(responseData.reference)
 
+        // sync wallet 
+        const wallet = await this.getAccount(recipientAccountId)
+
         // const record = await prisma.block.create({
         //     data:{
         //         id: responseData.id,
@@ -760,7 +769,7 @@ class WalletService
 
         console.log('amount transferred')
 
-        return responseData.reference
+        return wallet
         
     }
 
