@@ -198,7 +198,7 @@ class OrderController {
     }
 
     // check for single minimum amount required per trade
-    if(!amountSufficient(amount, order?.amountMinimum as number)){
+    if(!amountSufficient(amount, Number(order?.amountMinimum))){
       return res.status(400)
         .json({
           msg: 'Minimum Order Amount not sufficient',
@@ -215,9 +215,6 @@ class OrderController {
         userBaseWallet,
         userQuoteWallet
       })
-
-
-
 
       return res
         .status(200)

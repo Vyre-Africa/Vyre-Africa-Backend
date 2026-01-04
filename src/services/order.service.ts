@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma.config';
 import walletService from '../services/wallet.service';
 import config from '../config/env.config';
+import Decimal from 'decimal.js';
 // import { OrderStatus } from '@prisma/client'
 import { Wallet, Pair, OrderType } from '@prisma/client';
 import {hasSufficientBalance,amountSufficient} from '../utils'
@@ -64,63 +65,94 @@ class OrderService {
 
       if (!pair) throw new Error('Trading pair not found');
 
-      if (orderType === 'SELL' && !hasSufficientBalance(baseWallet.availableBalance, amount)) {
+      // ✅ Convert to Decimal for calculations
+      const amountDecimal = new Decimal(amount);
+      const baseBalance = new Decimal(baseWallet.availableBalance);
+      const quoteBalance = new Decimal(quoteWallet.availableBalance);
+
+      // ✅ Balance checks with Decimal
+      if (orderType === 'SELL' && baseBalance.lessThan(amountDecimal)) {
         throw new Error('Insufficient base balance');
       }
-      if (orderType === 'BUY' && !hasSufficientBalance(quoteWallet.availableBalance, amount)) {
+      if (orderType === 'BUY' && quoteBalance.lessThan(amountDecimal)) {
         throw new Error('Insufficient quote balance');
       }
 
-      const fee = amount * 0.012;
-      const adjustedAmount = amount - fee;
+      // ✅ Fee calculation with Decimal (1.2% fee)
+      const feeRate = new Decimal('0.012');
+      const fee = amountDecimal.times(feeRate);
+      const adjustedAmount = amountDecimal.minus(fee);
+
+      logger.info('Fee calculation', {
+        amount: amountDecimal.toString(),
+        fee: fee.toString(),
+        adjustedAmount: adjustedAmount.toString()
+      });
 
       const result = await prisma.$transaction(
         async (tx) => {
+          // Transfer fee to admin (if not admin creating the order)
           if (config.Admin_Id !== userId) {
             await walletService.offchain_Transfer({
               userId,
               receipientId: config.Admin_Id,
-              currencyId: orderType === 'SELL'? pair?.baseCurrency?.id as string : pair?.quoteCurrency?.id as string,
-              amount: fee
+              currencyId: orderType === 'SELL' 
+                ? pair?.baseCurrency?.id as string 
+                : pair?.quoteCurrency?.id as string,
+              amount: fee.toNumber() // ✅ Convert for wallet service
             });
           }
 
+          // Block the adjusted amount
           const blockId = await walletService.block_Amount(
-            adjustedAmount,
+            adjustedAmount.toNumber(), // ✅ Convert for wallet service
             orderType === 'SELL' ? baseWallet.id : quoteWallet.id
           );
 
+          // Create order with Decimal values
           return await tx.order.create({
             data: {
               userId,
               blockId,
-              amountMinimum: minimumAmount,
-              amount,
+              amountMinimum: minimumAmount, // ✅ Prisma accepts number or Decimal
+              amount: amount,               // ✅ Prisma accepts number or Decimal
               type: orderType,
               pairId,
-              price: rate,
+              price: rate,                  // ✅ Prisma accepts number or Decimal
               version: 0
             }
           });
         },
         {
-          maxWait: 10000,   // 10 seconds to get connection
-          timeout: 30000,   // 30 seconds for transaction (increased from 5s)
-          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
+          maxWait: 10000,
+          timeout: 30000,
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
         }
       );
 
+      // Notification with formatted amount
       await notificationService.queue({
         userId,
         title: 'Order is Live!',
         type: 'GENERAL',
-        content: `Your <strong>${orderType}</strong> order for <strong>${amount} ${pair.baseCurrency?.ISO}</strong> is now active.`
+        content: `Your <strong>${orderType}</strong> order for <strong>${amountDecimal.toFixed(8)} ${pair.baseCurrency?.ISO}</strong> is now active.`
+      });
+
+      logger.info('Order created successfully', {
+        orderId: result.id,
+        adjustedAmount: adjustedAmount.toString(),
+        fee: fee.toString()
       });
 
       return result;
 
-    } catch (error) {
-      logger.error('Order creation failed:', error);
+    } catch (error: any) {
+      logger.error('Order creation failed:', {
+        error: error.message,
+        userId,
+        orderType,
+        amount
+      });
       throw error;
     }
   }
@@ -206,30 +238,45 @@ class OrderService {
       throw new Error(`Order is ${order.status.toLowerCase()}`);
     }
 
-    const remainingAmount = order.amount - order.amountProcessed;
-    if (remainingAmount <= 0) {
+    // ✅ Convert to Decimal
+    const orderAmount = new Decimal(order.amount);
+    const orderAmountProcessed = new Decimal(order.amountProcessed || 0);
+    const orderPrice = new Decimal(order.price);
+    const amountDecimal = new Decimal(amount);
+
+    const remainingAmount = orderAmount.minus(orderAmountProcessed);
+    
+    if (remainingAmount.lessThanOrEqualTo(0)) {
       throw new Error('Order fully processed');
     }
 
     const maxAmount = order.type === 'BUY'
-      ? remainingAmount / order.price
-      : remainingAmount * order.price;
+      ? remainingAmount.dividedBy(orderPrice)
+      : remainingAmount.times(orderPrice);
 
-    if (amount > maxAmount) {
+    if (amountDecimal.greaterThan(maxAmount)) {
       throw new Error(
-        `Max available: ${maxAmount.toFixed(8)}, requested: ${amount.toFixed(8)}`
+        `Max available: ${maxAmount.toFixed(8)}, requested: ${amountDecimal.toFixed(8)}`
       );
     }
 
-    if (order.type === 'BUY' && !hasSufficientBalance(userBaseWallet.availableBalance, amount)) {
+    // ✅ Convert wallet balances to Decimal
+    const baseBalance = new Decimal(userBaseWallet.availableBalance);
+    const quoteBalance = new Decimal(userQuoteWallet.availableBalance);
+
+    if (order.type === 'BUY' && baseBalance.lessThan(amountDecimal)) {
       throw new Error('Insufficient base balance');
     }
 
-    if (order.type === 'SELL' && !hasSufficientBalance(userQuoteWallet.availableBalance, amount)) {
+    if (order.type === 'SELL' && quoteBalance.lessThan(amountDecimal)) {
       throw new Error('Insufficient quote balance');
     }
 
-    return { remainingAmount, maxAmount, isValid: true };
+    return { 
+      remainingAmount: remainingAmount.toNumber(), // Convert back for compatibility
+      maxAmount: maxAmount.toNumber(), 
+      isValid: true 
+    };
   }
 
 
@@ -305,209 +352,214 @@ class OrderService {
   // DIRECT PROCESSING WITH EARLY VERSION CHECK
   // ============================================
 
-    private async attemptDirectProcessing(payload: {
-      userId: string;
-      orderId: string;
-      amount: number;
-      userBaseWallet: Wallet;
-      userQuoteWallet: Wallet;
-    }) {
-      const { userId, orderId, amount, userBaseWallet, userQuoteWallet } = payload;
+  private async attemptDirectProcessing(payload: {
+    userId: string;
+    orderId: string;
+    amount: number;
+    userBaseWallet: Wallet;
+    userQuoteWallet: Wallet;
+  }) {
+    const { userId, orderId, amount, userBaseWallet, userQuoteWallet } = payload;
 
-      return await prisma.$transaction(
-        async (tx) => {
-          // ============================================
-          // STEP 1: LOCK ORDER & CHECK VERSION (CRITICAL!)
-          // ============================================
-          // Use SELECT FOR UPDATE to lock the row
-          // This prevents other transactions from reading stale data
-          const [orderRow] = await tx.$queryRaw<any[]>`
-            SELECT * FROM "Order" 
-            WHERE id = ${orderId}
-            FOR UPDATE
-          `;
+    return await prisma.$transaction(
+      async (tx) => {
+        // ============================================
+        // STEP 1: LOCK ORDER & CHECK VERSION
+        // ============================================
+        const [orderRow] = await tx.$queryRaw<any[]>`
+          SELECT * FROM "Order" 
+          WHERE id = ${orderId}
+          FOR UPDATE
+        `;
 
-          if (!orderRow) {
-            throw new Error('Order not found');
-          }
+        if (!orderRow) {
+          throw new Error('Order not found');
+        }
 
-          // Store the current version we're working with
-          const currentVersion = orderRow.version;
-          const order = orderRow;
+        const currentVersion = orderRow.version;
+        const order = orderRow;
 
-          logger.info('Order locked', { 
-            orderId, 
-            version: currentVersion,
-            amountProcessed: order.amountProcessed 
-          });
+        logger.info('Order locked', { 
+          orderId, 
+          version: currentVersion,
+          amountProcessed: order.amountProcessed 
+        });
 
-          // ============================================
-          // STEP 2: VALIDATE (EARLY FAIL)
-          // ============================================
-          // Get order pair info
-          const pair = await tx.pair.findUnique({
-            where: { id: order.pairId },
-            include: {
-              quoteCurrency:{
-                select:{
-                  id:true,
-                  ISO:true  
-                },
-              },
-              baseCurrency:{
-                select:{
-                  id:true,
-                  ISO:true  
-                },
-              },
-              quoteWallet:true,
-              baseWallet:true,
-            }
-          });
-
-          if (!pair) throw new Error('Trading pair not found');
-
-          // Validate order can be processed
-          this.validateOrderProcessing(order, amount, userBaseWallet, userQuoteWallet);
-
-          // Get order owner wallets
-          const [orderBaseWallet, orderQuoteWallet] = await Promise.all([
-            tx.wallet.findFirst({
-              where: { currencyId: pair.baseCurrency?.id, userId: order.userId }
-            }),
-            tx.wallet.findFirst({
-              where: { currencyId: pair.quoteCurrency?.id, userId: order.userId }
-            })
-          ]);
-
-          if (!orderBaseWallet || !orderQuoteWallet) {
-            throw new Error('Order owner wallets not found');
-          }
-
-          // ============================================
-          // STEP 3: CALCULATE AMOUNTS
-          // ============================================
-          const amountToProcess = order.type === 'BUY'
-            ? amount * order.price
-            : amount / order.price;
-
-          const newAmountProcessed = order.amountProcessed + amountToProcess;
-          const newPercentage = (newAmountProcessed / order.amount) * 100;
-          const newStatus = newAmountProcessed >= order.amount ? 'CLOSED' : 'OPEN';
-
-          logger.info('Amounts calculated', {
-            orderId,
-            amountToProcess,
-            newAmountProcessed,
-            newStatus
-          });
-
-          // ============================================
-          // STEP 4: UPDATE ORDER FIRST (RESERVE OUR SPOT)
-          // ============================================
-          // Update the order NOW before any transfers
-          // This claims our "reservation" on this amount
-          const updateResult = await tx.order.updateMany({
-            where: {
-              id: orderId,
-              version: currentVersion // Only update if version still matches
+        // ============================================
+        // STEP 2: VALIDATE
+        // ============================================
+        const pair = await tx.pair.findUnique({
+          where: { id: order.pairId },
+          include: {
+            quoteCurrency: {
+              select: { id: true, ISO: true },
             },
-            data: {
-              amountProcessed: newAmountProcessed,
-              percentageProcessed: newPercentage,
-              status: newStatus,
-              version: currentVersion + 1
-            }
-          });
-
-          // If count is 0, someone else updated it between our SELECT and UPDATE
-          if (updateResult.count === 0) {
-            logger.warn('Version conflict during update', { 
-              orderId, 
-              expectedVersion: currentVersion 
-            });
-            throw new Error('VERSION_CONFLICT: Order was modified by another transaction');
+            baseCurrency: {
+              select: { id: true, ISO: true },
+            },
+            quoteWallet: true,
+            baseWallet: true,
           }
+        });
 
-          logger.info('Order updated successfully', { 
-            orderId, 
-            newVersion: currentVersion + 1,
-            newAmountProcessed 
-          });
+        if (!pair) throw new Error('Trading pair not found');
 
-          // ============================================
-          // STEP 5: EXECUTE TRANSFERS (SAFE NOW)
-          // ============================================
-          // Now we can safely execute transfers
-          // If anything fails here, the whole transaction rolls back
-          // including our order update
-          if (order.type === 'BUY') {
-            await Promise.all([
-              walletService.unblock_Transfer(amountToProcess, order.blockId, userQuoteWallet.id),
-              walletService.offchain_Transfer({
-                userId,
-                receipientId: order.userId,
-                currencyId: pair?.baseCurrency?.id as string,
-                amount
-              })
-            ]);
+        this.validateOrderProcessing(order, amount, userBaseWallet, userQuoteWallet);
 
-          } else {
-            await Promise.all([
-              walletService.unblock_Transfer(amountToProcess, order.blockId, userBaseWallet.id),
-              walletService.offchain_Transfer({
-                userId,
-                receipientId: order.userId,
-                currencyId: pair?.quoteCurrency?.id as string,
-                amount
-              })
-            ]);
+        const [orderBaseWallet, orderQuoteWallet] = await Promise.all([
+          tx.wallet.findFirst({
+            where: { currencyId: pair.baseCurrency?.id, userId: order.userId }
+          }),
+          tx.wallet.findFirst({
+            where: { currencyId: pair.quoteCurrency?.id, userId: order.userId }
+          })
+        ]);
 
-          }
+        if (!orderBaseWallet || !orderQuoteWallet) {
+          throw new Error('Order owner wallets not found');
+        }
 
-          logger.info('Transfers completed', { orderId });
+        // ============================================
+        // STEP 3: CALCULATE AMOUNTS WITH DECIMAL
+        // ============================================
+        const amountDecimal = new Decimal(amount);
+        const priceDecimal = new Decimal(order.price);
+        const orderAmountDecimal = new Decimal(order.amount);
+        const orderAmountProcessedDecimal = new Decimal(order.amountProcessed || 0);
 
-          // ============================================
-          // STEP 6: LOG TRANSACTION
-          // ============================================
-          await tx.orderLog.create({
-            data: {
-              userId,
-              orderId,
-              baseAmount: order.type === 'BUY' ? amount : amountToProcess,
-              quoteAmount: order.type === 'BUY' ? amountToProcess : amount,
-              rate: order.price,
-              orderType: order.type
-            }
-          });
+        // Calculate amount to process
+        const amountToProcess = order.type === 'BUY'
+          ? amountDecimal.times(priceDecimal)      // base * price = quote
+          : amountDecimal.dividedBy(priceDecimal); // quote / price = base
 
-          // ============================================
-          // STEP 7: NOTIFICATION (ASYNC)
-          // ============================================
-          this.sendOrderSuccessNotification({
-            userId,
-            orderId,
-            amount,
-            baseCurrency: pair?.baseCurrency?.ISO,
-            quoteCurrency: pair?.quoteCurrency?.ISO
-          }).catch(err => logger.error('Notification failed', err));
+        // Calculate new totals
+        const newAmountProcessed = orderAmountProcessedDecimal.plus(amountToProcess);
+        const newPercentage = newAmountProcessed
+          .dividedBy(orderAmountDecimal)
+          .times(100)
+          .toDecimalPlaces(2);
 
+        const newStatus = newAmountProcessed.greaterThanOrEqualTo(orderAmountDecimal) 
+          ? 'CLOSED' 
+          : 'OPEN';
 
-          return {
-            id: order.id,
-            amountProcessed: newAmountProcessed,
-            percentageProcessed: newPercentage,
+        logger.info('Amounts calculated', {
+          orderId,
+          amountToProcess: amountToProcess.toString(),
+          newAmountProcessed: newAmountProcessed.toString(),
+          newPercentage: newPercentage.toString(),
+          newStatus
+        });
+
+        // ============================================
+        // STEP 4: UPDATE ORDER
+        // ============================================
+        const updateResult = await tx.order.updateMany({
+          where: {
+            id: orderId,
+            version: currentVersion
+          },
+          data: {
+            amountProcessed: newAmountProcessed,           // Prisma accepts Decimal
+            percentageProcessed: newPercentage.toNumber(), // Convert to number for float field
             status: newStatus,
             version: currentVersion + 1
-          };
-        },
-        {
-          maxWait: 10000,   // 10 seconds to get connection
-          timeout: 30000,   // 30 seconds for transaction (increased from 5s)
-          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
+          }
+        });
+
+        if (updateResult.count === 0) {
+          logger.warn('Version conflict during update', { 
+            orderId, 
+            expectedVersion: currentVersion 
+          });
+          throw new Error('VERSION_CONFLICT: Order was modified by another transaction');
         }
-      );
-    }
+
+        logger.info('Order updated successfully', { 
+          orderId, 
+          newVersion: currentVersion + 1,
+          newAmountProcessed: newAmountProcessed.toString()
+        });
+
+        // ============================================
+        // STEP 5: EXECUTE TRANSFERS
+        // ============================================
+        if (order.type === 'BUY') {
+          await Promise.all([
+            walletService.unblock_Transfer(
+              amountToProcess.toNumber(), // Convert for wallet service
+              order.blockId, 
+              userQuoteWallet.id
+            ),
+            walletService.offchain_Transfer({
+              userId,
+              receipientId: order.userId,
+              currencyId: pair?.baseCurrency?.id as string,
+              amount // Original amount (base currency)
+            })
+          ]);
+        } else {
+          await Promise.all([
+            walletService.unblock_Transfer(
+              amountToProcess.toNumber(), // Convert for wallet service
+              order.blockId, 
+              userBaseWallet.id
+            ),
+            walletService.offchain_Transfer({
+              userId,
+              receipientId: order.userId,
+              currencyId: pair?.quoteCurrency?.id as string,
+              amount // Original amount (quote currency)
+            })
+          ]);
+        }
+
+        logger.info('Transfers completed', { orderId });
+
+        // ============================================
+        // STEP 6: LOG TRANSACTION
+        // ============================================
+        await tx.orderLog.create({
+          data: {
+            userId,
+            orderId,
+            baseAmount: order.type === 'BUY' 
+              ? amount 
+              : amountToProcess.toNumber(),
+            quoteAmount: order.type === 'BUY' 
+              ? amountToProcess.toNumber() 
+              : amount,
+            rate: order.price, // Prisma accepts Decimal
+            orderType: order.type
+          }
+        });
+
+        // ============================================
+        // STEP 7: NOTIFICATION
+        // ============================================
+        this.sendOrderSuccessNotification({
+          userId,
+          orderId,
+          amount,
+          baseCurrency: pair?.baseCurrency?.ISO,
+          quoteCurrency: pair?.quoteCurrency?.ISO
+        }).catch(err => logger.error('Notification failed', err));
+
+        return {
+          id: order.id,
+          amountProcessed: newAmountProcessed.toNumber(), // Convert for response
+          percentageProcessed: newPercentage.toNumber(),
+          status: newStatus,
+          version: currentVersion + 1
+        };
+      },
+      {
+        maxWait: 10000,
+        timeout: 30000,
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      }
+    );
+  }
 
     // ============================================
     // HELPER METHODS
@@ -538,9 +590,23 @@ class OrderService {
 
       if (!order) return;
 
-      const amountProcessed = order.type === 'BUY'
-        ? amount * order.price
-        : amount / order.price;
+      // const amountProcessed = order.type === 'BUY'
+      //   ? amount * order.price
+      //   : amount / order.price;
+      let amountProcessed;
+
+      // Convert inputs to Decimal
+      const amountDecimal = new Decimal(amount);
+      const priceDecimal = new Decimal(order.price);
+      
+          
+      if (order?.type === "BUY") {
+        // User is sending base, calculate quote amount
+        amountProcessed = amountDecimal.times(priceDecimal);
+      } else {
+        // User is sending quote, calculate base amount
+        amountProcessed = amountDecimal.dividedBy(priceDecimal);
+      }
 
       const baseAmount = order.type === 'BUY' ? amount : amountProcessed;
       const quoteAmount = order.type === 'BUY' ? amountProcessed : amount;
@@ -555,7 +621,13 @@ class OrderService {
             <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0;">
               <p><strong>You ${order.type === 'BUY' ? 'Sent' : 'Received'}:</strong> ${baseAmount.toFixed(8)} ${baseCurrency}</p>
               <p><strong>You ${order.type === 'BUY' ? 'Received' : 'Sent'}:</strong> ${quoteAmount.toFixed(8)} ${quoteCurrency}</p>
-              <p><strong>Rate:</strong> ${order.price.toLocaleString('en-US')} ${quoteCurrency}</p>
+              <p><strong>Rate:</strong> ${Number(order.price)?.toLocaleString('en-US', {
+                style: 'currency',
+                currency: quoteCurrency,
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+              })}
+              </p>
             </div>
           </div>
         `

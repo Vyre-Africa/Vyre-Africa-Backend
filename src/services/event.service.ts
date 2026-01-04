@@ -1182,11 +1182,19 @@ class eventService {
       return 
     }
 
-    let amountProcessed: number;
+    let amountProcessed;
+    // Convert inputs to Decimal
+    const amountDecimal = new Decimal(amount);
+    const priceDecimal = new Decimal(order.price);
 
-    amountProcessed = order?.type === "BUY"
-      ? amount * order.price // User is sending base, calculate quote amount
-      : amount / order.price; // User is sending quote, calculate base amount
+    
+    if (order?.type === "BUY") {
+      // User is sending base, calculate quote amount
+      amountProcessed = amountDecimal.times(priceDecimal);
+    } else {
+      // User is sending quote, calculate base amount
+      amountProcessed = amountDecimal.dividedBy(priceDecimal);
+    }
 
 
     const baseAmount = order?.type === "BUY" ? amount : amountProcessed;
@@ -1203,7 +1211,7 @@ class eventService {
             <p style="margin: 5px 0;"><strong>Order Type:</strong> BUY ${baseCurrency}</p>
             <p style="margin: 5px 0;"><strong>Amount Sold:</strong> ${baseAmount} ${baseCurrency}</p>
             <p style="margin: 5px 0;"><strong>Amount Received:</strong> ${quoteAmount} ${quoteCurrency}</p>
-            <p style="margin: 5px 0;"><strong>Exchange Rate:</strong> ${order.price?.toLocaleString('en-US')} ${quoteCurrency}</p>
+            <p style="margin: 5px 0;"><strong>Exchange Rate:</strong> ${Number(order.price).toLocaleString('en-US')} ${quoteCurrency}</p>
             <p style="margin: 5px 0;"><strong>Order ID:</strong> <code>${orderId}</code></p>
           </div>
 
@@ -1225,7 +1233,7 @@ class eventService {
             <p style="margin: 5px 0;"><strong>Order Type:</strong> SELL ${baseCurrency}</p>
             <p style="margin: 5px 0;"><strong>Amount Paid:</strong> ${quoteAmount} ${quoteCurrency}</p>
             <p style="margin: 5px 0;"><strong>Amount Received:</strong> ${baseAmount} ${baseCurrency}</p>
-            <p style="margin: 5px 0;"><strong>Exchange Rate:</strong> ${order.price?.toLocaleString('en-US')} ${quoteCurrency}</p>
+            <p style="margin: 5px 0;"><strong>Exchange Rate:</strong> ${Number(order.price).toLocaleString('en-US')} ${quoteCurrency}</p>
             <p style="margin: 5px 0;"><strong>Order ID:</strong> <code>${orderId}</code></p>
           </div>
 

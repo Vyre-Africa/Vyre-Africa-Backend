@@ -255,7 +255,7 @@ class AnonService {
 
     try {
       // Calculate expiry upfront
-      const expiryDuration = moment().add(1, 'hour').toDate();
+      const expiryDuration = moment().add(30, 'minutes').toDate();
 
       // Fetch order and currency in parallel
       const [order, currency] = await this.retryOperation(
@@ -457,7 +457,7 @@ class AnonService {
         'expire-awaiting',
         { awaitingId: result.awaiting.id },
         {
-          delay: 60 * 60 * 1000,
+          delay:  30 * 60 * 1000,
           jobId: `awaiting-expiry-${result.awaiting.id}`
         }
       );
