@@ -305,24 +305,36 @@ class AnonService {
 
         // Start payment initialization but DON'T wait for it
         // We'll handle it asynchronously
-        paymentPromise = this.retryOperation(
-          async () => {
-            return await walletService.getPaymentMethod({
-              currency: currency.ISO,
-              amount: parseFloat(amount),
-              email: user.email,
-              userId: user.id,
-              walletId: quoteWallet.id,
-              method: paymentMethod
-            });
-          },
-          'Initialize payment',
-          2, // Only 2 retries for payment
-          2000
-        ).catch(err => {
-          logger.error('Payment initialization failed after retries', { 
-            error: err.message 
-          });
+        // paymentPromise = this.retryOperation(
+        //   async () => {
+        //     return await walletService.getPaymentMethod({
+        //       currency: currency.ISO,
+        //       amount: parseFloat(amount),
+        //       email: user.email,
+        //       userId: user.id,
+        //       walletId: quoteWallet.id,
+        //       method: paymentMethod
+        //     });
+        //   },
+        //   'Initialize payment',
+        //   2, // Only 2 retries for payment
+        //   2000
+        // ).catch(err => {
+        //   logger.error('Payment initialization failed after retries', { 
+        //     error: err.message 
+        //   });
+        //   return null;
+        // });
+
+        paymentPromise = walletService.getPaymentMethod({
+          currency: currency.ISO,
+          amount: parseFloat(amount),
+          email: user.email,
+          userId: user.id,
+          walletId: quoteWallet.id,
+          method: paymentMethod
+        }).catch(err => {
+          logger.error('Payment initialization failed', { error: err.message });
           return null;
         });
 
@@ -342,7 +354,7 @@ class AnonService {
         // Wait for payment with timeout
         payments = await Promise.race([
           paymentPromise,
-          this.timeoutPromise(45000, 'Payment initialization timeout')
+          this.timeoutPromise(55000, 'Payment initialization timeout')
         ]).catch(err => {
           logger.warn('Payment init slow/failed, proceeding without details', err);
           return null;
