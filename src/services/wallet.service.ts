@@ -689,11 +689,15 @@ class WalletService
             amount:String(amount)
         };
 
+        console.log('crediting wallet', accountId)
+
         const response = await tatumAxios.put('/ledger/virtualCurrency/mint', data)
         const responseData = response.data
         console.log(responseData.reference)
+        // sync wallet
+        const wallet = await this.getAccount(accountId)
 
-        return responseData.reference
+        return wallet
     }
 
     // async handleFiatCredit(payload:{amount:number,accountId: string}){

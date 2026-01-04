@@ -437,6 +437,8 @@ class eventService {
     event: 'CREDIT'|'DEBIT'|'CREDIT_FAILED'|'DEBIT_FAILED'
   }) {
     const { reference, event} = payload;
+    
+    console.log('event', event)
 
     // 1. Find and validate transaction
     const transaction = await prisma.transaction.findUnique({
@@ -476,6 +478,8 @@ class eventService {
     try {
 
       if(event === 'CREDIT'){
+
+        console.log('CREDIT TRANSACTION')
 
         // 2. Credit wallet for ALL successful transactions first
         await walletService.credit_Wallet(
@@ -840,7 +844,7 @@ class eventService {
       await this.orderProcessingQueue.add('process-post-action', {
         awaitingId
       });
-      
+
       logger.info(`order processed and queued for post action: ${result?.id}`);
 
       return { status: 'queued', action: 'process-post-action' };
