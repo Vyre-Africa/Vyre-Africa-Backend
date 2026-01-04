@@ -40,7 +40,7 @@ class AblyService
 
       this.orderChannel = this.ably.channels.get("ORDER")
 
-      await this.userChannel.publish(awaitingId,awaitingOrder)
+      await this.orderChannel.publish(awaitingId,awaitingOrder)
       // return 'done'
       return this.ably.connection.close();
 

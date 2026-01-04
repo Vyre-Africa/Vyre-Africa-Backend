@@ -348,10 +348,10 @@ model Swap {
   sourceCurrency      String
   destinationCurrency String
 
-  rate              Float?
-  sourceAmount      Float?
-  destinationAmount Float?
-  fee               Float?
+  rate              Decimal?
+  sourceAmount      Decimal?
+  destinationAmount Decimal?
+  fee               Decimal?
 }
 
 model Bank {
@@ -527,15 +527,15 @@ model Order {
   blockId             String?
   userId              String?
   pairId              String
-  amountMinimum       Float       @default(0.00)
+  amountMinimum       Decimal       @default(0.00)
   user                User?       @relation(fields: [userId], references: [id])
   pair                Pair        @relation(fields: [pairId], references: [id])
   block               Block?      @relation(fields: [blockId], references: [id])
-  amount              Float
+  amount              Decimal
   version             Int         @default(0)
-  amountProcessed     Float       @default(0.0)
-  percentageProcessed Float       @default(0.0)
-  price               Float
+  amountProcessed     Decimal       @default(0.0)
+  percentageProcessed Decimal       @default(0.0)
+  price               Decimal
   status              OrderStatus @default(OPEN)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
@@ -557,9 +557,9 @@ model OrderLog {
   userId     String?
   orderId    String?
 
-  baseAmount  Float
-  quoteAmount Float
-  rate        Float
+  baseAmount  Decimal
+  quoteAmount Decimal
+  rate        Decimal
 
   orderType OrderType
 
@@ -602,7 +602,7 @@ model Block {
   active      Boolean  @default(true)
   walletId    String?
   wallet      Wallet?  @relation(fields: [walletId], references: [id])
-  amount      Float
+  amount      Decimal
   description String
   createdAt   DateTime @default(now())
   Order       Order[]
@@ -613,8 +613,8 @@ model PendingActivity {
   type        ActivityType   @default(REFERRAL)
   userId      String?
   user        User?          @relation(fields: [userId], references: [id])
-  amount      Float?
-  orderAmount Float?
+  amount      Decimal?
+  orderAmount Decimal?
   status      ActivityStatus @default(OPEN)
   createdAt   DateTime       @default(now())
   executedAt  DateTime
