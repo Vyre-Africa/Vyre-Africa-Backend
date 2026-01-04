@@ -840,6 +840,7 @@ class eventService {
       await this.orderProcessingQueue.add('process-post-action', {
         awaitingId
       });
+      
       logger.info(`order processed and queued for post action: ${result?.id}`);
 
       return { status: 'queued', action: 'process-post-action' };
