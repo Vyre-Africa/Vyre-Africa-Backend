@@ -293,75 +293,80 @@ class AnonService {
       const { user, baseWallet, quoteWallet } = userSetup;
 
       // ============================================
-      // CRITICAL OPTIMIZATION: ASYNC PAYMENT INIT
+      // CRITICAL: PAYMENT INITIALIZATION FOR SELL ORDERS
       // ============================================
       
-      let paymentPromise: Promise<any> | null = null;
-      let shouldWaitForPayment = false;
+      let payments: any = null;
 
-      // For SELL orders (user pays fiat), initialize payment
+      // For SELL orders (user pays fiat), initialize payment FIRST
       if (order.type === 'SELL') {
         if (!quoteWallet) throw new Error('Quote wallet not created');
 
-        // Start payment initialization but DON'T wait for it
-        // We'll handle it asynchronously
-        // paymentPromise = this.retryOperation(
-        //   async () => {
-        //     return await walletService.getPaymentMethod({
-        //       currency: currency.ISO,
-        //       amount: parseFloat(amount),
-        //       email: user.email,
-        //       userId: user.id,
-        //       walletId: quoteWallet.id,
-        //       method: paymentMethod
-        //     });
-        //   },
-        //   'Initialize payment',
-        //   2, // Only 2 retries for payment
-        //   2000
-        // ).catch(err => {
-        //   logger.error('Payment initialization failed after retries', { 
-        //     error: err.message 
-        //   });
-        //   return null;
-        // });
-
-        paymentPromise = walletService.getPaymentMethod({
+        logger.info('Initializing payment for SELL order', { 
+          orderId, 
           currency: currency.ISO,
-          amount: parseFloat(amount),
-          email: user.email,
-          userId: user.id,
-          walletId: quoteWallet.id,
-          method: paymentMethod
-        }).catch(err => {
-          logger.error('Payment initialization failed', { error: err.message });
-          return null;
+          method: paymentMethod 
         });
 
-        // Only wait if it's a bank transfer (required for awaiting)
-        shouldWaitForPayment = paymentMethod === 'BANK_TRANSFER' || !paymentMethod;
+        try {
+          // Wait for payment initialization with timeout
+          payments = await Promise.race([
+            this.retryOperation(
+              async () => {
+                return await walletService.getPaymentMethod({
+                  currency: currency.ISO,
+                  amount: parseFloat(amount),
+                  email: user.email,
+                  userId: user.id,
+                  walletId: quoteWallet.id,
+                  method: paymentMethod
+                });
+              },
+              'Initialize payment method',
+              3, // 3 retries
+              2000 // 2 second delay between retries
+            ),
+            this.timeoutPromise(45000, 'Payment initialization timeout')
+          ]);
+
+          if (!payments) {
+            throw new Error('Payment initialization returned null');
+          }
+
+          logger.info('Payment initialized successfully', {
+            reference: payments.id,
+            bank: payments.bank,
+            accountNumber: payments.account_number
+          });
+
+        } catch (paymentError: any) {
+          logger.error('Payment initialization failed completely', {
+            orderId,
+            currency: currency.ISO,
+            error: paymentError.message,
+            stack: paymentError.stack
+          });
+
+          // Determine error message based on error type
+          let errorMessage = 'Failed to initialize payment. Please try again.';
+          
+          if (paymentError.message.includes('timeout')) {
+            errorMessage = 'Payment initialization timed out. Please check your network connection and try again.';
+          } else if (paymentError.message.includes('network') || paymentError.code === 'ECONNREFUSED') {
+            errorMessage = 'Network error. Please check your internet connection and try again.';
+          } else if (paymentError.message.includes('Bank') || paymentError.message.includes('account')) {
+            errorMessage = 'Unable to generate bank account details. Please contact support.';
+          }
+
+          // Throw error to stop the flow
+          throw new Error(errorMessage);
+        }
       }
 
       // ============================================
-      // CREATE AWAITING RECORD (Fast Path)
+      // CREATE AWAITING RECORD (Only if payment initialized or BUY order)
       // ============================================
 
-      let payments: any = null;
-
-      // If we need payment details, wait for them
-      // Otherwise, create awaiting immediately
-      if (shouldWaitForPayment && paymentPromise) {
-        // Wait for payment with timeout
-        payments = await Promise.race([
-          paymentPromise,
-          this.timeoutPromise(55000, 'Payment initialization timeout')
-        ]).catch(err => {
-          logger.warn('Payment init slow/failed, proceeding without details', err);
-          return null;
-        });
-      }
-
-      // Create awaiting and postDetails in single transaction
       const result = await this.retryOperation(
         async () => {
           return await prisma.$transaction(
@@ -415,76 +420,53 @@ class AnonService {
             }
           );
         },
-       'Create awaiting transaction',
-       2, // Only 2 retries for transaction
-       3000
+        'Create awaiting transaction',
+        2,
+        3000
       );
-
-      // ============================================
-      // UPDATE PAYMENT DETAILS ASYNC (If needed)
-      // ============================================
-      
-      // If payment is still initializing, update awaiting when ready
-      if (paymentPromise && !payments) {
-        paymentPromise.then(async (paymentData) => {
-          if (paymentData) {
-            try {
-              await this.retryOperation(
-                async () => {
-                  return await prisma.awaiting.update({
-                    where: { id: result.awaiting.id },
-                    data: {
-                      reference: paymentData.id,
-                      bank_Name: paymentData.bank,
-                      bank_Account_Number: paymentData.account_number,
-                      bank_Account_Name: paymentData.account_name,
-                      bank_expires_At: paymentData.expires_at 
-                        ? new Date(paymentData.expires_at.replace(' ', 'T')).toISOString() 
-                        : null,
-                      paymentDetails: paymentData
-                    }
-                  });
-                },
-                'Update payment details async',
-                3,
-                2000
-              );
-              logger.info('Payment details updated async', { 
-                awaitingId: result.awaiting.id 
-              });
-            } catch (err: any) {
-              logger.error('Failed to update payment details after retries', {
-                awaitingId: result.awaiting.id,
-                error: err.message
-              });
-            }
-          }
-        }).catch(err => {
-          logger.error('Payment promise failed', { error: err.message });
-        });
-      }
 
       // Schedule expiry job
-      await this.awaitingQueue.add(
-        'expire-awaiting',
-        { awaitingId: result.awaiting.id },
-        {
-          delay:  30 * 60 * 1000,
-          jobId: `awaiting-expiry-${result.awaiting.id}`
-        }
-      );
+      try {
+        await this.retryOperation(
+          async () => {
+            return await this.awaitingQueue.add(
+              'expire-awaiting',
+              { awaitingId: result.awaiting.id },
+              {
+                delay: 30 * 60 * 1000,
+                jobId: `awaiting-expiry-${result.awaiting.id}`
+              }
+            );
+          },
+          'Schedule expiry job',
+          3,
+          2000
+        );
+      } catch (jobError: any) {
+        logger.error('Failed to schedule expiry job', {
+          awaitingId: result.awaiting.id,
+          error: jobError.message
+        });
+        // Don't fail the whole operation if job scheduling fails
+      }
 
       const duration = Date.now() - startTime;
-      logger.info('PreActions completed', { 
-        awaitingId: result.awaiting.id, 
+      logger.info('PreActions completed successfully', { 
+        awaitingId: result.awaiting.id,
+        orderType: order.type,
+        hasPaymentDetails: !!payments,
         duration: `${duration}ms` 
       });
 
       return result.awaiting;
 
-    } catch (error) {
+    } catch (error: any) {
       const duration = Date.now() - startTime;
-      logger.error('PreActions failed', { error, duration: `${duration}ms` });
+      logger.error('PreActions failed', { 
+        error: error.message,
+        stack: error.stack,
+        duration: `${duration}ms` 
+      });
       throw error;
     }
   }
