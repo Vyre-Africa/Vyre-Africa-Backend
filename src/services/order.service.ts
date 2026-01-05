@@ -554,8 +554,8 @@ class OrderService {
         };
       },
       {
-        maxWait: 10000,
-        timeout: 30000,
+        maxWait: 15000,
+        timeout: 50000,
         isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
       }
     );
