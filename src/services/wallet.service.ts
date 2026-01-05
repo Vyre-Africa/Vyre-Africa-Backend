@@ -14,6 +14,7 @@ import notificationService from './notification.service';
 import IORedis from 'ioredis';
 import connection from '../config/redis.config';
 import { currency } from '../globals';
+import Decimal from 'decimal.js';
 import logger from '../config/logger';
 
 // import connection from '../config/redis.config';
@@ -223,7 +224,7 @@ class WalletService
     async blockchain_Transfer(payload:{
         userId: string, 
         currencyId:string,
-        amount: number,
+        amount: string,
         address: string,
         destination_Tag?: number
     })
@@ -262,7 +263,7 @@ class WalletService
 
         if(currency.isStablecoin){
 
-            const isvalid = transferfeeService.isValidWithdrawal(currency?.chain as any,amount)
+            const isvalid = transferfeeService.isValidWithdrawal(currency?.chain as any,Number(amount))
 
             if(!isvalid){
                 const error = new Error('Withdrawal amount below minimum');
@@ -325,111 +326,209 @@ class WalletService
     
     }
 
-    async offchain_Transfer(payload:{
-        userId: string,
-        receipientId: string,
-        currencyId: string, 
-        amount: number
-    })
-    {
-        const {userId,receipientId,currencyId,amount} = payload
+    async offchain_Transfer(payload: {
+        userId: string;
+        receipientId: string;
+        currencyId: string;
+        amount: string; // ✅ Changed to string
+    }) {
+        const { userId, receipientId, currencyId, amount } = payload;
 
-        let receipient_Wallet: any;
-        let user_Wallet: any;
+        try {
+            // ✅ Convert amount to Decimal immediately
+            const amountDecimal = new Decimal(amount);
 
-        const currency = await prisma.currency.findUnique({
-            where:{id:currencyId},
-            select:{
-              id: true,
-              type: true,
-              name: true,
-              ISO: true,
-              chain: true 
+            // Validate amount
+            if (amountDecimal.lessThanOrEqualTo(0)) {
+                throw new Error('Transfer amount must be greater than 0');
             }
-              
-        })
 
-        if(!currency){
-            const error = new Error('currency not found');
-            error.name = 'CurrencyNotFoundError';
+            logger.info('Offchain transfer initiated', {
+                userId,
+                receipientId,
+                currencyId,
+                amount: amountDecimal.toString()
+            });
+
+            // Fetch currency details
+            const currency = await prisma.currency.findUnique({
+                where: { id: currencyId },
+                select: {
+                    id: true,
+                    type: true,
+                    name: true,
+                    ISO: true,
+                    chain: true
+                }
+            });
+
+            if (!currency) {
+                const error = new Error('Currency not found');
+                error.name = 'CurrencyNotFoundError';
+                throw error;
+            }
+
+            let receipient_Wallet:any;
+            
+            // Fetch or create recipient wallet
+            receipient_Wallet = await prisma.wallet.findFirst({
+                where: {
+                    userId: receipientId,
+                    currencyId
+                },
+                select: {
+                    id: true,
+                    userId: true,
+                    currencyId: true,
+                    availableBalance: true,
+                    accountBalance: true
+                }
+            });
+
+            if (!receipient_Wallet) {
+                logger.info('Creating recipient wallet', { receipientId, currencyId });
+                receipient_Wallet = await this.createWallet({
+                    userId: receipientId,
+                    currencyId: currencyId as string
+                });
+            }
+
+            // Fetch user wallet
+            const user_Wallet = await prisma.wallet.findFirst({
+                where: {
+                    userId,
+                    currencyId
+                },
+                select: {
+                    id: true,
+                    userId: true,
+                    currencyId: true,
+                    availableBalance: true,
+                    accountBalance: true
+                }
+            });
+
+            if (!user_Wallet) {
+                throw new Error('User wallet not found');
+            }
+
+            // ✅ Check balance with Decimal comparison
+            const availableBalance = new Decimal(user_Wallet.availableBalance);
+
+            logger.info('Balance check for offchain transfer', {
+                userId,
+                availableBalance: availableBalance.toString(),
+                requestedAmount: amountDecimal.toString(),
+                currency: currency.ISO
+            });
+
+            if (availableBalance.lessThan(amountDecimal)) {
+                throw new Error(
+                    `Insufficient balance for offchain transfer. Available: ${availableBalance.toFixed(8)} ${currency.ISO}, Required: ${amountDecimal.toFixed(8)} ${currency.ISO}`
+                );
+            }
+
+            // Prepare transfer data
+            const data = {
+                senderAccountId: user_Wallet.id,
+                recipientAccountId: receipient_Wallet.id,
+                amount: amountDecimal.toString(), // ✅ String for API
+                anonymous: false,
+                compliant: false
+            };
+
+            logger.info('Executing offchain transfer', {
+                from: user_Wallet.id,
+                to: receipient_Wallet.id,
+                amount: amountDecimal.toString(),
+                currency: currency.ISO
+            });
+
+            // Execute transfer
+            const response = await tatumAxios.post('/ledger/transaction', data);
+            const paymentData = response.data;
+
+            logger.info('Offchain transfer response', {
+                reference: paymentData.reference,
+                status: paymentData.status
+            });
+
+            // Sync both wallets in parallel
+            await Promise.all([
+                this.getAccount(user_Wallet.id),
+                this.getAccount(receipient_Wallet.id)
+            ]);
+
+            logger.info('Wallets synced after transfer');
+
+            // ✅ Create transaction records for both parties
+            const transactions = await prisma.transaction.createMany({
+                data: [
+                    // Debit transaction for sender
+                    {
+                        userId: userId,
+                        currency: currency.ISO,
+                        amount: amountDecimal.negated(), // ✅ Negative for debit (Prisma accepts Decimal)
+                        reference: paymentData.reference,
+                        status: 'SUCCESSFUL',
+                        walletId: user_Wallet.id,
+                        type: 'DEBIT_PAYMENT',
+                        description: `${currency.name} transfer to ${receipientId.slice(0, 8)}`,
+                        metadata: {
+                            recipientId: receipientId,
+                            recipientWalletId: receipient_Wallet.id,
+                            currency: currency.ISO,
+                            transferType: 'offchain'
+                        }
+                    },
+                    // Credit transaction for recipient
+                    {
+                        userId: receipientId, // ✅ Fixed: was using sender's userId
+                        currency: currency.ISO,
+                        amount: amountDecimal, // ✅ Positive for credit (Prisma accepts Decimal)
+                        reference: paymentData.reference,
+                        status: 'SUCCESSFUL',
+                        walletId: receipient_Wallet.id, // ✅ Fixed: was using sender's wallet
+                        type: 'CREDIT_PAYMENT',
+                        description: `${currency.name} transfer from ${userId.slice(0, 8)}`,
+                        metadata: {
+                            senderId: userId,
+                            senderWalletId: user_Wallet.id,
+                            currency: currency.ISO,
+                            transferType: 'offchain'
+                        }
+                    }
+                ]
+            });
+
+            logger.info('Offchain transfer completed successfully', {
+                transactionCount: transactions.count,
+                reference: paymentData.reference,
+                amount: amountDecimal.toString(),
+                currency: currency.ISO
+            });
+
+            return {
+                success: true,
+                reference: paymentData.reference,
+                amount: amountDecimal.toString(),
+                currency: currency.ISO,
+                transactionCount: transactions.count,
+                senderWallet: user_Wallet.id,
+                recipientWallet: receipient_Wallet.id
+            };
+
+        } catch (error: any) {
+            logger.error('Offchain transfer failed', {
+                error: error.message,
+                userId,
+                receipientId,
+                currencyId,
+                amount,
+                stack: error.stack
+            });
             throw error;
         }
-
-        console.log('transfer data passed',
-            userId,
-            receipientId,
-            currencyId, 
-            amount
-        )
-
-        receipient_Wallet = await prisma.wallet.findFirst({
-            where:{
-                userId: receipientId,
-                currencyId
-            }
-        })
-
-        //check if receipient has currency wallet created else we create it
-        if(!receipient_Wallet){
-            receipient_Wallet = await this.createWallet({userId:receipientId, currencyId: currencyId as string})
-        }
-
-        user_Wallet = await prisma.wallet.findFirst({
-            where:{
-                userId,
-                currencyId
-            }
-        })
-
-        // check if user balance is sufficient enough
-        if(!hasSufficientBalance(user_Wallet?.availableBalance,amount))return
-
-        const data = {
-            senderAccountId: user_Wallet?.id!,
-            recipientAccountId: receipient_Wallet?.id!,
-            amount: String(amount),
-            anonymous: false,
-            compliant: false
-        };
-        console.log('transfer Data',data)
-        const response = await tatumAxios.post('/ledger/transaction', data)
-        const paymentData = response.data
-        console.log(paymentData)
-
-        // sync both wallets
-        await Promise.all([
-            this.getAccount(user_Wallet?.id),
-            this.getAccount(receipient_Wallet?.id)
-        ]);
-
-        // create transactions for both parties
-        const transactions = await prisma.transaction.createMany({
-            data:[
-                {
-                userId: userId,
-                currency: currency.ISO,
-                amount: -amount,
-                reference: paymentData.reference,
-                status: 'SUCCESSFUL',
-                walletId: user_Wallet?.id!,
-                type:'DEBIT_PAYMENT',
-                description:`${currency} transfer`
-               },
-               {
-                userId: userId,
-                currency: currency.ISO,
-                amount: amount,
-                reference: paymentData.reference,
-                status: 'SUCCESSFUL',
-                walletId: user_Wallet?.id!,
-                type:'CREDIT_PAYMENT',
-                description:`${currency} transfer`
-               }
-            ]
-        })
-
-        return  transactions
-    
     }
 
     async bank_Transfer(payload:{
@@ -466,7 +565,7 @@ class WalletService
         userId:string,
         currencyId:string,
 
-        amount:number,
+        amount:string,
         email:string, 
         phone:string,
      

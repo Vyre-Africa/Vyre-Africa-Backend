@@ -3,6 +3,7 @@ import prisma from '../config/prisma.config';
 import config from '../config/env.config';
 import { Wallet } from '@prisma/client';
 import axios, { AxiosInstance } from "axios";
+import Decimal from 'decimal.js';
 // import {Currency,walletType} from '@prisma/client';
 // import { currency as baseCurrency } from '../globals';
 import { hasSufficientBalance } from '../utils';
@@ -28,7 +29,7 @@ import chainService from './chain.service';
     userId: string;
     walletId: string;
     address: string;
-    amount: number;
+    amount: string;
     index?: number;
     }
 
@@ -195,147 +196,313 @@ class stableCoinService
         payload: TransferPayload
     ) {
         try {
-        const { userId, walletId, address, amount, index = 1 } = payload;
+            const { userId, walletId, address, amount, index = 1 } = payload;
 
-        // Validate inputs
-        if (amount <= 0) {
-            throw new Error('Transfer amount must be greater than 0');
-        }
+            // ✅ Convert amount to Decimal immediately
+            const amountDecimal = new Decimal(amount);
 
-        const chainConfig = chainService.getChainConfig(stablecoin, chain);
-        const withdrawalFee = transferfeeService.calculateFee(chain);
-        const netAmount = amount - withdrawalFee;
-
-        if (netAmount <= 0) {
-            throw new Error(`Amount too small to cover network fee of $${withdrawalFee}`);
-        }
-
-        logger.info(`Initiating ${stablecoin} transfer on ${chain}`, {
-            userId,
-            grossAmount: amount,
-            fee: withdrawalFee,
-            netAmount,
-            address
-        });
-
-        // Get user wallet and check balance
-        const userWallet = await prisma.wallet.findUnique({
-            where: { id: walletId },
-            select: { currencyId: true, availableBalance: true, accountBalance: true }
-        });
-
-        if (!userWallet) {
-            throw new Error('Wallet not found');
-        }
-
-        console.log('balance check', userWallet.availableBalance)
-        console.log('wallet total balance check', userWallet.accountBalance)
-        console.log('intending amount to transfer', amount)
-
-        if (!hasSufficientBalance(userWallet.availableBalance, amount)) {
-            throw new Error('Insufficient balance');
-        }
-
-        let transferData;
-
-        // Handle admin vs user transfers
-        if (config.Admin_Id !== userId) {
-            // Transfer to admin first
-            const adminWallet = await prisma.wallet.findFirst({
-            where: {
-                userId: config.Admin_Id,
-                currencyId: userWallet.currencyId
-            },
-            select: {
-                id: true,
-                derivationKey: true
-            }
-            });
-
-            if (!adminWallet) {
-            throw new Error('Admin wallet not found');
+            // Validate inputs
+            if (amountDecimal.lessThanOrEqualTo(0)) {
+                throw new Error('Transfer amount must be greater than 0');
             }
 
-            // Internal transfer to admin
-            await this.offchainTransfer({
+            const chainConfig = chainService.getChainConfig(stablecoin, chain);
+            const withdrawalFeeDecimal = new Decimal(transferfeeService.calculateFee(chain));
+            const netAmountDecimal = amountDecimal.minus(withdrawalFeeDecimal);
+
+            if (netAmountDecimal.lessThanOrEqualTo(0)) {
+                throw new Error(`Amount too small to cover network fee of $${withdrawalFeeDecimal.toString()}`);
+            }
+
+            logger.info(`Initiating ${stablecoin} transfer on ${chain}`, {
                 userId,
-                receipientId: config.Admin_Id,
-                currencyId: userWallet.currencyId as string,
-                amount
+                grossAmount: amountDecimal.toString(),
+                fee: withdrawalFeeDecimal.toString(),
+                netAmount: netAmountDecimal.toString(),
+                address
             });
 
-            transferData = {
-                senderAccountId: adminWallet.id,
-                mnemonic: chainConfig.mnemonic,
-                index: adminWallet.derivationKey || 1,
-                address,
-                amount: String(netAmount)
-            };
-        } else {
-            transferData = {
-                senderAccountId: walletId,
-                mnemonic: chainConfig.mnemonic,
-                index,
-                address,
-                amount: String(netAmount)
-            };
-        }
+            // Get user wallet and check balance
+            const userWallet = await prisma.wallet.findUnique({
+                where: { id: walletId },
+                select: { currencyId: true, availableBalance: true, accountBalance: true }
+            });
 
-        // Execute blockchain transfer
-        const response = await this.tatumAxios.post(chainConfig.tatumEndpoint, transferData);
-        const result = response.data;
+            if (!userWallet) {
+                throw new Error('Wallet not found');
+            }
 
-        // Create transaction record
-        let transaction = await prisma.transaction.create({
-            data: {
-                id: result.id,
-                userId,
-                currency: `${stablecoin} ${chain}`,
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                reference: result.txId,
-                walletId,
-                type: 'DEBIT_PAYMENT',
-                description: `${stablecoin} ${chain} transfer`,
-                metadata: {
-                    grossAmount: amount,
-                    fee: withdrawalFee,
-                    netAmount,
-                    recipientAddress: address,
-                    chain: chainConfig.displayName
+            // ✅ Convert wallet balance to Decimal
+            const availableBalance = new Decimal(userWallet.availableBalance);
+            const accountBalance = new Decimal(userWallet.accountBalance);
+
+            logger.info('Balance verification', {
+                availableBalance: availableBalance.toString(),
+                accountBalance: accountBalance.toString(),
+                requestedAmount: amountDecimal.toString(),
+                hasSufficient: availableBalance.greaterThanOrEqualTo(amountDecimal)
+            });
+
+            // ✅ Use Decimal comparison
+            if (availableBalance.lessThan(amountDecimal)) {
+                throw new Error(
+                    `Insufficient balance. Available: ${availableBalance.toFixed(8)}, Required: ${amountDecimal.toFixed(8)}`
+                );
+            }
+
+            let transferData;
+
+            // Handle admin vs user transfers
+            if (config.Admin_Id !== userId) {
+                // Transfer to admin first
+                const adminWallet = await prisma.wallet.findFirst({
+                    where: {
+                        userId: config.Admin_Id,
+                        currencyId: userWallet.currencyId
+                    },
+                    select: {
+                        id: true,
+                        derivationKey: true
+                    }
+                });
+
+                if (!adminWallet) {
+                    throw new Error('Admin wallet not found');
                 }
+
+                // Internal transfer to admin (convert to number if service requires it)
+                await this.offchainTransfer({
+                    userId,
+                    receipientId: config.Admin_Id,
+                    currencyId: userWallet.currencyId as string,
+                    amount:  amountDecimal.toString() // Convert for service
+                });
+
+                transferData = {
+                    senderAccountId: adminWallet.id,
+                    mnemonic: chainConfig.mnemonic,
+                    index: adminWallet.derivationKey || 1,
+                    address,
+                    amount: netAmountDecimal.toString() // Use string for precision
+                };
+            } else {
+                transferData = {
+                    senderAccountId: walletId,
+                    mnemonic: chainConfig.mnemonic,
+                    index,
+                    address,
+                    amount: netAmountDecimal.toString() // Use string for precision
+                };
             }
-        });
 
-        // Complete withdrawal if pending
-        if (!result.completed) {
-            transaction = await this.completeWithdrawal(result.id, result.txId);
-        }
+            // Execute blockchain transfer
+            const response = await this.tatumAxios.post(chainConfig.tatumEndpoint, transferData);
+            const result = response.data;
 
-        // Send notification
-        await this.sendTransferNotification({
-            userId,
-            stablecoin,
-            chain: chainConfig.displayName,
-            grossAmount: amount,
-            fee: withdrawalFee,
-            netAmount,
-            address,
-            status: result.completed ? 'Completed' : 'Processing'
-        });
+            // Create transaction record
+            let transaction = await prisma.transaction.create({
+                data: {
+                    id: result.id,
+                    userId,
+                    currency: `${stablecoin} ${chain}`,
+                    amount: amountDecimal, // Prisma accepts Decimal
+                    status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+                    reference: result.txId,
+                    walletId,
+                    type: 'DEBIT_PAYMENT',
+                    description: `${stablecoin} ${chain} transfer`,
+                    metadata: {
+                        grossAmount: amountDecimal.toString(),
+                        fee: withdrawalFeeDecimal.toString(),
+                        netAmount: netAmountDecimal.toString(),
+                        recipientAddress: address,
+                        chain: chainConfig.displayName
+                    }
+                }
+            });
 
-        logger.info(`Transfer completed successfully`, { 
-            transactionId: transaction.id,
-            txId: result.txId 
-        });
+            // Complete withdrawal if pending
+            if (!result.completed) {
+                transaction = await this.completeWithdrawal(result.id, result.txId);
+            }
 
-        return transaction;
+            // Send notification
+            await this.sendTransferNotification({
+                userId,
+                stablecoin,
+                chain: chainConfig.displayName,
+                grossAmount: amountDecimal.toNumber(), // Convert for notification
+                fee: withdrawalFeeDecimal.toNumber(),
+                netAmount: netAmountDecimal.toNumber(),
+                address,
+                status: result.completed ? 'Completed' : 'Processing'
+            });
 
-        } catch (error) {
-         logger.error(`Transfer failed:`, error);
-         throw error;
+            logger.info(`Transfer completed successfully`, { 
+                transactionId: transaction.id,
+                txId: result.txId,
+                grossAmount: amountDecimal.toString(),
+                netAmount: netAmountDecimal.toString()
+            });
+
+            return transaction;
+
+        } catch (error: any) {
+            logger.error(`Transfer failed:`, {
+                error: error.message,
+                stack: error.stack
+            });
+            throw error;
         }
     }
+
+    // private async executeTransfer(
+    //     stablecoin: StablecoinType,
+    //     chain: AllSupportedChains,
+    //     payload: TransferPayload
+    // ) {
+    //     try {
+    //     const { userId, walletId, address, amount, index = 1 } = payload;
+
+    //     // Validate inputs
+    //     if (amount <= 0) {
+    //         throw new Error('Transfer amount must be greater than 0');
+    //     }
+
+    //     const chainConfig = chainService.getChainConfig(stablecoin, chain);
+    //     const withdrawalFee = transferfeeService.calculateFee(chain);
+    //     const netAmount = amount - withdrawalFee;
+
+    //     if (netAmount <= 0) {
+    //         throw new Error(`Amount too small to cover network fee of $${withdrawalFee}`);
+    //     }
+
+    //     logger.info(`Initiating ${stablecoin} transfer on ${chain}`, {
+    //         userId,
+    //         grossAmount: amount,
+    //         fee: withdrawalFee,
+    //         netAmount,
+    //         address
+    //     });
+
+    //     // Get user wallet and check balance
+    //     const userWallet = await prisma.wallet.findUnique({
+    //         where: { id: walletId },
+    //         select: { currencyId: true, availableBalance: true, accountBalance: true }
+    //     });
+
+    //     if (!userWallet) {
+    //         throw new Error('Wallet not found');
+    //     }
+
+    //     console.log('balance check', userWallet.availableBalance)
+    //     console.log('wallet total balance check', userWallet.accountBalance)
+    //     console.log('intending amount to transfer', amount)
+
+    //     if (!hasSufficientBalance(userWallet.availableBalance, amount)) {
+    //         throw new Error('Insufficient balance');
+    //     }
+
+    //     let transferData;
+
+    //     // Handle admin vs user transfers
+    //     if (config.Admin_Id !== userId) {
+    //         // Transfer to admin first
+    //         const adminWallet = await prisma.wallet.findFirst({
+    //         where: {
+    //             userId: config.Admin_Id,
+    //             currencyId: userWallet.currencyId
+    //         },
+    //         select: {
+    //             id: true,
+    //             derivationKey: true
+    //         }
+    //         });
+
+    //         if (!adminWallet) {
+    //         throw new Error('Admin wallet not found');
+    //         }
+
+    //         // Internal transfer to admin
+    //         await this.offchainTransfer({
+    //             userId,
+    //             receipientId: config.Admin_Id,
+    //             currencyId: userWallet.currencyId as string,
+    //             amount
+    //         });
+
+    //         transferData = {
+    //             senderAccountId: adminWallet.id,
+    //             mnemonic: chainConfig.mnemonic,
+    //             index: adminWallet.derivationKey || 1,
+    //             address,
+    //             amount: String(netAmount)
+    //         };
+    //     } else {
+    //         transferData = {
+    //             senderAccountId: walletId,
+    //             mnemonic: chainConfig.mnemonic,
+    //             index,
+    //             address,
+    //             amount: String(netAmount)
+    //         };
+    //     }
+
+    //     // Execute blockchain transfer
+    //     const response = await this.tatumAxios.post(chainConfig.tatumEndpoint, transferData);
+    //     const result = response.data;
+
+    //     // Create transaction record
+    //     let transaction = await prisma.transaction.create({
+    //         data: {
+    //             id: result.id,
+    //             userId,
+    //             currency: `${stablecoin} ${chain}`,
+    //             amount,
+    //             status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+    //             reference: result.txId,
+    //             walletId,
+    //             type: 'DEBIT_PAYMENT',
+    //             description: `${stablecoin} ${chain} transfer`,
+    //             metadata: {
+    //                 grossAmount: amount,
+    //                 fee: withdrawalFee,
+    //                 netAmount,
+    //                 recipientAddress: address,
+    //                 chain: chainConfig.displayName
+    //             }
+    //         }
+    //     });
+
+    //     // Complete withdrawal if pending
+    //     if (!result.completed) {
+    //         transaction = await this.completeWithdrawal(result.id, result.txId);
+    //     }
+
+    //     // Send notification
+    //     await this.sendTransferNotification({
+    //         userId,
+    //         stablecoin,
+    //         chain: chainConfig.displayName,
+    //         grossAmount: amount,
+    //         fee: withdrawalFee,
+    //         netAmount,
+    //         address,
+    //         status: result.completed ? 'Completed' : 'Processing'
+    //     });
+
+    //     logger.info(`Transfer completed successfully`, { 
+    //         transactionId: transaction.id,
+    //         txId: result.txId 
+    //     });
+
+    //     return transaction;
+
+    //     } catch (error) {
+    //      logger.error(`Transfer failed:`, error);
+    //      throw error;
+    //     }
+    // }
 
 
     // ============================================
@@ -346,42 +513,89 @@ class stableCoinService
         userId: string;
         receipientId: string;
         currencyId: string;
-        amount: number;
+        amount: string; // ✅ Keep as string
     }) {
         const { userId, receipientId, currencyId, amount } = payload;
 
         try {
-        const [recipientWallet, userWallet] = await Promise.all([
-            prisma.wallet.findFirst({
-              where: { userId: receipientId, currencyId }
-            }),
-            prisma.wallet.findFirst({
-              where: { userId, currencyId }
-            })
-        ]);
+            // ✅ Convert to Decimal immediately
+            const amountDecimal = new Decimal(amount);
 
-        if (!recipientWallet || !userWallet) {
-            throw new Error('Wallet not found for offchain transfer');
-        }
+            if (amountDecimal.lessThanOrEqualTo(0)) {
+                throw new Error('Transfer amount must be greater than 0');
+            }
 
-        if (!hasSufficientBalance(userWallet.availableBalance, amount)) {
-            throw new Error('Insufficient balance for offchain transfer');
-        }
+            const [recipientWallet, userWallet] = await Promise.all([
+                prisma.wallet.findFirst({
+                    where: { userId: receipientId, currencyId },
+                    select: {
+                        id: true,
+                        availableBalance: true,
+                        accountBalance: true
+                    }
+                }),
+                prisma.wallet.findFirst({
+                    where: { userId, currencyId },
+                    select: {
+                        id: true,
+                        availableBalance: true,
+                        accountBalance: true
+                    }
+                })
+            ]);
 
-        const data = {
-            senderAccountId: userWallet.id,
-            recipientAccountId: recipientWallet.id,
-            amount: String(amount),
-            anonymous: false,
-            compliant: false
-        };
+            if (!recipientWallet || !userWallet) {
+                throw new Error('Wallet not found for offchain transfer');
+            }
 
-        const response = await this.tatumAxios.post('/ledger/transaction', data);
-        return response.data;
+            // ✅ Convert wallet balance to Decimal and compare
+            const availableBalance = new Decimal(userWallet.availableBalance);
 
-        } catch (error) {
-          logger.error('Offchain transfer failed:', error);
-          throw error;
+            logger.info('Offchain transfer balance check', {
+                userId,
+                availableBalance: availableBalance.toString(),
+                requestedAmount: amountDecimal.toString(),
+                hasSufficient: availableBalance.greaterThanOrEqualTo(amountDecimal)
+            });
+
+            if (availableBalance.lessThan(amountDecimal)) {
+                throw new Error(
+                    `Insufficient balance for offchain transfer. Available: ${availableBalance.toFixed(8)}, Required: ${amountDecimal.toFixed(8)}`
+                );
+            }
+
+            const data = {
+                senderAccountId: userWallet.id,
+                recipientAccountId: recipientWallet.id,
+                amount: amount, // ✅ Keep as string for API - Tatum accepts strings
+                anonymous: false,
+                compliant: false
+            };
+
+            logger.info('Executing offchain transfer', {
+                from: userWallet.id,
+                to: recipientWallet.id,
+                amount: amountDecimal.toString()
+            });
+
+            const response = await this.tatumAxios.post('/ledger/transaction', data);
+            
+            logger.info('Offchain transfer successful', {
+                transactionId: response.data.id,
+                reference: response.data.reference
+            });
+
+            return response.data;
+
+        } catch (error: any) {
+            logger.error('Offchain transfer failed:', {
+                error: error.message,
+                userId,
+                receipientId,
+                amount,
+                stack: error.stack
+            });
+            throw error;
         }
     }
 
@@ -466,7 +680,7 @@ class stableCoinService
         chain: string;
         userId: string;
         walletId: string;
-        amount: number;
+        amount: string;
         index: number;
         address: string;
     }) {
@@ -478,7 +692,7 @@ class stableCoinService
         chain: string;
         userId: string;
         walletId: string;
-        amount: number;
+        amount: string;
         index: number;
         address: string;
     }) {

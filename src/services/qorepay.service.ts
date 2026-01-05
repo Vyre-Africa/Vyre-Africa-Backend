@@ -161,7 +161,7 @@ class QorepayService {
     async bank_Transfer(payload:{
        userId:string,
        currency: string,
-       amount:number,
+       amount:string,
        email:string, 
        phone:string,
 
@@ -180,7 +180,7 @@ class QorepayService {
                 phone
               },
               payment: {
-                amount: amount * 100,
+                amount: (Number(amount)) * 100,
                 currency,
                 description: `${currency} withdrawal `,
               },

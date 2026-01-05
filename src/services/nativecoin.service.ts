@@ -5,6 +5,7 @@ import axios, { AxiosInstance } from "axios";
 // import {Currency,walletType} from '@prisma/client';
 // import { currency as baseCurrency } from '../globals';
 import { hasSufficientBalance } from '../utils';
+import Decimal from 'decimal.js';
 import logger from '../config/logger';
 
   type SupportedCoin = 'BTC' | 'ETH' | 'LTC' | 'TRON' | 'BNB' | 'XRP' | 'NGN' | 'USD';
@@ -24,7 +25,7 @@ import logger from '../config/logger';
     userId: string;
     walletId: string;
     address: string;
-    amount: number;
+    amount: string;
     index?: number;
     destinationTag?: number;
    }
@@ -397,139 +398,180 @@ class nativeCoinService
         payload: TransferPayload
     ) {
         try {
-        const { userId, walletId, address, amount, index = 1, destinationTag } = payload;
+            const { userId, walletId, address, amount, index = 1, destinationTag } = payload;
 
-        // Validate
-        if (!CoinConfigurations.isSupported(coin)) {
-            throw new Error(`Coin ${coin} not supported`);
-        }
-
-        if (!CoinConfigurations.isCrypto(coin)) {
-            throw new Error(`${coin} is not a cryptocurrency - use fiat transfer methods`);
-        }
-
-        if (amount <= 0) {
-            throw new Error('Transfer amount must be greater than 0');
-        }
-
-        const coinConfig = CoinConfigurations.getConfig(coin);
-
-        logger.info(`Initiating ${coin} transfer`, {
-            userId,
-            walletId,
-            amount,
-            address
-        });
-
-        // Check wallet balance
-        const wallet = await prisma.wallet.findUnique({
-            where: { id: walletId },
-            select: { availableBalance: true }
-        });
-
-        if (!wallet) {
-            throw new Error('Wallet not found');
-        }
-
-        if (!hasSufficientBalance(wallet.availableBalance, amount)) {
-            throw new Error('Insufficient balance');
-        }
-
-        // Build transfer data
-        const transferData: any = {
-            senderAccountId: walletId,
-            address,
-            amount: String(amount),
-            ...AuthenticationHelper.getAuthConfig(coin, index)
-        };
-
-        // Add destination tag for XRP
-        if (coin === 'XRP' && destinationTag) {
-            transferData.attr = destinationTag;
-        }
-
-        // Execute transfer
-        const response = await this.tatumAxios.post(coinConfig.transferEndpoint, transferData);
-        const result = response.data;
-
-        // Create transaction record
-        let transaction = await prisma.transaction.create({
-            data: {
-                id: result.id,
-                userId,
-                currency: coin,
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                reference: result.txId,
-                walletId,
-                type: 'DEBIT_PAYMENT',
-                description: `${coinConfig.displayName} transfer`,
-                metadata: {
-                    recipientAddress: address,
-                    destinationTag: destinationTag || null,
-                    txId: result.txId
-                }
+            // Validate coin support
+            if (!CoinConfigurations.isSupported(coin)) {
+                throw new Error(`Coin ${coin} not supported`);
             }
-        });
 
-        // Complete withdrawal if pending
-        if (!result.completed) {
-            transaction = await this.completeWithdrawal(result.id, result.txId);
-        }
+            if (!CoinConfigurations.isCrypto(coin)) {
+                throw new Error(`${coin} is not a cryptocurrency - use fiat transfer methods`);
+            }
 
-        logger.info(`${coin} transfer completed`, {
-            transactionId: transaction.id,
-            txId: result.txId
-        });
+            // ✅ Convert amount to Decimal
+            const amountDecimal = new Decimal(amount);
 
-        return transaction;
+            // Validate amount
+            if (amountDecimal.lessThanOrEqualTo(0)) {
+                throw new Error('Transfer amount must be greater than 0');
+            }
 
-        } catch (error) {
-            logger.error(`${coin} transfer failed:`, error);
+            const coinConfig = CoinConfigurations.getConfig(coin);
+
+            logger.info(`Initiating ${coin} transfer`, {
+                userId,
+                walletId,
+                amount: amountDecimal.toString(),
+                address
+            });
+
+            // Check wallet balance
+            const wallet = await prisma.wallet.findUnique({
+                where: { id: walletId },
+                select: { 
+                    availableBalance: true,
+                    accountBalance: true,
+                    currencyId: true
+                }
+            });
+
+            if (!wallet) {
+                throw new Error('Wallet not found');
+            }
+
+            // ✅ Convert wallet balance to Decimal and compare
+            const availableBalance = new Decimal(wallet.availableBalance);
+
+            logger.info('Balance verification', {
+                coin,
+                availableBalance: availableBalance.toString(),
+                requestedAmount: amountDecimal.toString(),
+                hasSufficient: availableBalance.greaterThanOrEqualTo(amountDecimal)
+            });
+
+            if (availableBalance.lessThan(amountDecimal)) {
+                throw new Error(
+                    `Insufficient balance. Available: ${availableBalance.toFixed(8)} ${coin}, Required: ${amountDecimal.toFixed(8)} ${coin}`
+                );
+            }
+
+            // Build transfer data
+            const transferData: any = {
+                senderAccountId: walletId,
+                address,
+                amount: amountDecimal.toString(), // ✅ Use string for API
+                ...AuthenticationHelper.getAuthConfig(coin, index)
+            };
+
+            // Add destination tag for XRP
+            if (coin === 'XRP' && destinationTag) {
+                transferData.attr = destinationTag;
+            }
+
+            logger.info('Executing blockchain transfer', {
+                coin,
+                endpoint: coinConfig.transferEndpoint,
+                amount: amountDecimal.toString(),
+                address
+            });
+
+            // Execute transfer
+            const response = await this.tatumAxios.post(coinConfig.transferEndpoint, transferData);
+            const result = response.data;
+
+            // Create transaction record
+            let transaction = await prisma.transaction.create({
+                data: {
+                    id: result.id,
+                    userId,
+                    currency: coin,
+                    amount: amountDecimal, // ✅ Prisma accepts Decimal
+                    status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+                    reference: result.txId,
+                    walletId,
+                    type: 'DEBIT_PAYMENT',
+                    description: `${coinConfig.displayName} transfer`,
+                    metadata: {
+                        recipientAddress: address,
+                        destinationTag: destinationTag || null,
+                        txId: result.txId,
+                        amount: amountDecimal.toString(), // ✅ Store string in metadata for precision
+                        coin: coinConfig.displayName
+                    }
+                }
+            });
+
+            // Complete withdrawal if pending
+            if (!result.completed) {
+                logger.info('Completing pending withdrawal', {
+                    withdrawalId: result.id,
+                    txId: result.txId
+                });
+                transaction = await this.completeWithdrawal(result.id, result.txId);
+            }
+
+            logger.info(`${coin} transfer completed successfully`, {
+                transactionId: transaction.id,
+                txId: result.txId,
+                amount: amountDecimal.toString(),
+                status: transaction.status
+            });
+
+            return transaction;
+
+        } catch (error: any) {
+            logger.error(`${coin} transfer failed:`, {
+                error: error.message,
+                coin,
+                userId: payload.userId,
+                amount: payload.amount,
+                stack: error.stack
+            });
             throw error;
         }
     }
 
 
-    // ============================================
-    // PUBLIC API METHODS (Legacy Compatibility)
-    // ============================================
+        // ============================================
+        // PUBLIC API METHODS (Legacy Compatibility)
+        // ============================================
 
-    // Single entry point for wallet creation
-    async createWalletByISO(ISO: string, userId: string, currencyId: string) {
-        if (!CoinConfigurations.isSupported(ISO)) {
-        throw new Error(`Currency ${ISO} not supported`);
-        }
-        return this.createWallet(ISO as SupportedCoin, userId, currencyId);
-    }
-
-    // Single entry point for transfers
-    async blockchain_Transfer(payload: {
-        ISO: string;
-        userId: string;
-        walletId: string;
-        amount: number;
-        address: string;
-        index?: number;
-        destination_Tag?: number;
-    }) {
-        const { ISO, userId, walletId, amount, address, index, destination_Tag } = payload;
-
-        if (!CoinConfigurations.isSupported(ISO)) {
-        throw new Error(`Currency ${ISO} not supported`);
+        // Single entry point for wallet creation
+        async createWalletByISO(ISO: string, userId: string, currencyId: string) {
+            if (!CoinConfigurations.isSupported(ISO)) {
+            throw new Error(`Currency ${ISO} not supported`);
+            }
+            return this.createWallet(ISO as SupportedCoin, userId, currencyId);
         }
 
-        return this.blockchainTransfer(ISO as SupportedCoin, {
-        userId,
-        walletId,
-        address,
-        amount,
-        index,
-        destinationTag: destination_Tag
-        });
-    }
+        // Single entry point for transfers
+        async blockchain_Transfer(payload: {
+            ISO: string;
+            userId: string;
+            walletId: string;
+            amount: string;
+            address: string;
+            index?: number;
+            destination_Tag?: number;
+        }) {
+            const { ISO, userId, walletId, amount, address, index, destination_Tag } = payload;
 
-}
+            if (!CoinConfigurations.isSupported(ISO)) {
+            throw new Error(`Currency ${ISO} not supported`);
+            }
+
+            return this.blockchainTransfer(ISO as SupportedCoin, {
+            userId,
+            walletId,
+            address,
+            amount,
+            index,
+            destinationTag: destination_Tag
+            });
+        }
+
+    }
 
 
 

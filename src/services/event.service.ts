@@ -915,7 +915,7 @@ class eventService {
         await walletService.blockchain_Transfer({
           userId: awaiting?.userId as string,
           currencyId: awaiting?.currencyId as string,
-          amount: Number(awaiting.wallet?.availableBalance),
+          amount: awaiting.wallet?.availableBalance.toString() as string,
           address: senderAddress
         });
       } else {
@@ -971,7 +971,7 @@ class eventService {
     const { awaitingId } = jobData;
 
     try {
-
+      // 1. Fetch awaiting record with all relations
       const awaiting = await prisma.awaiting.findUnique({
         where: { id: awaitingId },
         include: {
@@ -989,7 +989,6 @@ class eventService {
         }
       });
 
-
       if (!awaiting) {
         throw new Error(`Awaiting record ${awaitingId} not found`);
       }
@@ -997,12 +996,23 @@ class eventService {
       // 2. Validate awaiting status
       if (awaiting.status !== 'PROCESSING') {
         logger.warn(`Awaiting ${awaitingId} is not in PROCESSING state: ${awaiting.status}`);
-        return { status: 'skipped', reason: 'invalid_status', currentStatus: awaiting.status };
+        return { 
+          status: 'skipped', 
+          reason: 'invalid_status', 
+          currentStatus: awaiting.status 
+        };
       }
 
       // 3. Fetch user details
       const user = await prisma.user.findUnique({
-        where: { id: awaiting.userId as string }
+        where: { id: awaiting.userId as string },
+        select: {
+          id: true,
+          email: true,
+          phoneNumber: true,
+          firstName: true,
+          lastName: true
+        }
       });
 
       if (!user) {
@@ -1017,84 +1027,102 @@ class eventService {
         }
       });
 
-      if (!postDetails || postDetails?.status !== 'PENDING') {
-        throw new Error(`Post details not found for awaiting ${awaitingId} or already processed`);
+      if (!postDetails || postDetails.status !== 'PENDING') {
+        throw new Error(
+          `Post details not found for awaiting ${awaitingId} or already processed. Status: ${postDetails?.status || 'NOT_FOUND'}`
+        );
       }
 
       // 5. Fetch wallet with currency details
       const wallet = await prisma.wallet.findUnique({
-        where:{id: postDetails?.walletId as string},
-        include:{
+        where: { id: postDetails.walletId as string },
+        include: {
           currency: {
-            select:{
+            select: {
+              id: true,
               ISO: true,
-              isStablecoin:true
+              isStablecoin: true,
+              type: true
             }
           }
         }
-      })
+      });
 
       if (!wallet) {
         throw new Error(`Wallet ${postDetails.walletId} not found`);
       }
 
-      //   // 6. Validate wallet has sufficient balance
-      // if (!wallet.availableBalance || wallet.availableBalance <= 0) {
-      //   throw new Error(`Insufficient balance in wallet ${wallet.id}`);
-      // }
+      // ✅ Convert wallet balance to Decimal
+      const availableBalance = new Decimal(wallet.availableBalance);
+      const accountBalance = new Decimal(wallet.accountBalance);
+
+      // ✅ Validate balance is greater than 0
+      if (availableBalance.lessThanOrEqualTo(0)) {
+        throw new Error(
+          `Insufficient balance in wallet. Available: ${availableBalance.toString()} ${wallet.currency?.ISO}`
+        );
+      }
 
       logger.info(`Processing post action for awaiting ${awaitingId}`, {
         orderType: awaiting.order?.type,
-        amount: wallet.availableBalance.toString(),
-        currency: wallet?.currency?.ISO as string
+        availableBalance: availableBalance.toString(),
+        accountBalance: accountBalance.toString(),
+        currency: wallet.currency?.ISO as string,
+        walletId: wallet.id
       });
 
       // 7. Execute transfer based on order type
       let transferResult;
-      const transferAmount = Number(wallet.availableBalance);
 
-
-      if(awaiting?.order?.type === 'BUY' ){
-
+      if (awaiting.order?.type === 'BUY') {
+        // BUY order: Send fiat to user's bank account
+        
         if (!postDetails.accountNumber || !postDetails.bankCode || !postDetails.recipient_Name) {
           throw new Error('Missing bank details for fiat transfer');
         }
 
         logger.info(`Initiating bank transfer for awaiting ${awaitingId}`, {
-          amount: transferAmount,
-          currency: wallet?.currency?.ISO,
-          recipient: postDetails.recipient_Name
+          amount: availableBalance.toString(),
+          currency: wallet.currency?.ISO,
+          recipient: postDetails.recipient_Name,
+          accountNumber: postDetails.accountNumber,
+          bankCode: postDetails.bankCode
         });
 
         transferResult = await walletService.direct_bank_Transfer({
           userId: awaiting.userId as string,
-          currencyId: wallet?.currencyId as string,
-          amount: transferAmount,
-          email: user?.email as string, 
-          phone: user?.phoneNumber as string,
-      
-          account_number: postDetails?.accountNumber as string,
-          bank_code: postDetails?.bankCode as string, 
-          recipient_name: postDetails?.recipient_Name as string
-        })
+          currencyId: wallet.currencyId as string,
+          amount: availableBalance.toString(), // ✅ Pass as string
+          email: user.email as string,
+          phone: user.phoneNumber as string,
+          account_number: postDetails.accountNumber as string,
+          bank_code: postDetails.bankCode as string,
+          recipient_name: postDetails.recipient_Name as string
+        });
 
       } else if (awaiting.order?.type === 'SELL') {
-
+        // SELL order: Send crypto to user's wallet address
+        
         if (!postDetails.address) {
           throw new Error('Missing crypto address for blockchain transfer');
         }
 
+        // if (!postDetails.chain) {
+        //   throw new Error('Missing blockchain network/chain information');
+        // }
+
         logger.info(`Initiating blockchain transfer for awaiting ${awaitingId}`, {
-          amount: transferAmount,
-          currency: wallet?.currency?.ISO,
+          amount: availableBalance.toString(),
+          currency: wallet.currency?.ISO,
+          chain: postDetails.chain,
           address: postDetails.address
         });
 
         transferResult = await walletService.blockchain_Transfer({
-          userId: wallet?.userId as string,
-          currencyId: wallet?.currencyId as string,
-          amount: transferAmount,
-          address: postDetails?.address as string
+          userId: wallet.userId as string,
+          currencyId: wallet.currencyId as string,
+          amount: availableBalance.toString(), // ✅ Pass as string
+          address: postDetails.address as string,
         });
 
       } else {
@@ -1103,66 +1131,127 @@ class eventService {
 
       // 8. Verify transfer was successful
       if (!transferResult) {
-        throw new Error(`Transfer failed: ${transferResult || 'Unknown error'}`);
+        throw new Error('Transfer failed: No result returned from transfer service');
       }
 
       logger.info(`Transfer successful for awaiting ${awaitingId}`, {
-        currency: wallet?.currencyId,
-        amount: transferAmount,
+        currency: wallet.currency?.ISO,
+        amount: availableBalance.toString(),
+        transferId: transferResult.id,
+        orderType: awaiting.order?.type
       });
 
-      // Use database transaction for atomicity
-      const updated = await prisma.$transaction(async (tx) => {
-        // Update status to SUCCESS
-        const updated_Awaiting = await prisma.awaiting.update({
+      // 9. Update database records atomically
+      const updated = await prisma.$transaction(
+        async (tx) => {
+          // Update awaiting status to SUCCESS
+          const updated_Awaiting = await tx.awaiting.update({
+            where: { id: awaitingId },
+            data: {
+              status: 'SUCCESS',
+              metadata: {
+                transferCompleted: true,
+                transferId: transferResult?.id || null,
+                transferReference: transferResult?.reference || null,
+                transferAmount: availableBalance.toString(),
+                completedAt: new Date().toISOString(),
+                orderType: awaiting.order?.type
+              }
+            }
+          });
+
+          // Update postDetails status to SUCCESS
+          const updated_PostDetails = await tx.postDetails.updateMany({
+            where: {
+              awaitingId,
+              userId: awaiting.userId
+            },
+            data: {
+              status: 'SUCCESS'
+            }
+          });
+
+          return {
+            awaiting: updated_Awaiting,
+            postDetails: updated_PostDetails
+          };
+        },
+        {
+          maxWait: 10000,
+          timeout: 30000,
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+        }
+      );
+
+      logger.info(`Post action completed successfully`, {
+        awaitingId,
+        awaitingStatus: updated.awaiting.status,
+        postDetailsUpdated: updated.postDetails.count
+      });
+
+      // 10. Trigger Ably real-time update
+      try {
+        await ablyService.awaiting_Order_Update(awaitingId);
+        logger.info(`Ably notification sent for awaiting ${awaitingId}`);
+      } catch (ablyError) {
+        logger.error(`Failed to send Ably notification for ${awaitingId}`, {
+          error: ablyError
+        });
+        // Don't fail the whole job if notification fails
+      }
+
+      // 11. Send user notification
+      // try {
+      //   await notificationService.queue({
+      //     userId: awaiting.userId as string,
+      //     title: awaiting.order?.type === 'BUY' 
+      //       ? 'Payment Sent!' 
+      //       : 'Crypto Transfer Complete!',
+      //     type: 'ORDER',
+      //     content: awaiting.order?.type === 'BUY'
+      //       ? `Your payment of ${wallet.currency?.ISO} ${availableBalance.toFixed(2)} has been sent to your bank account.`
+      //       : `Your ${wallet.currency?.ISO} ${availableBalance.toFixed(8)} has been sent to your wallet.`
+      //   });
+      // } catch (notifError) {
+      //   logger.error(`Failed to queue notification for ${awaitingId}`, {
+      //     error: notifError
+      //   });
+      //   // Don't fail the job if notification fails
+      // }
+
+      return {
+        status: 'success',
+        awaitingId,
+        transferAmount: availableBalance.toString(),
+        currency: wallet.currency?.ISO,
+        orderType: awaiting.order?.type
+      };
+
+    } catch (error: any) {
+      logger.error(`Post action failed for ${awaitingId}`, {
+        error: error.message,
+        stack: error.stack
+      });
+      
+      // Update awaiting to FAILED status
+      try {
+        await prisma.awaiting.update({
           where: { id: awaitingId },
           data: {
-            status: 'SUCCESS',
+            status: 'FAILED',
             metadata: {
-              transferCompleted: true,
-              // transferId: transferResult.id,
-              // transferReference: transferResult.reference,
-              completedAt: new Date().toISOString()
+              error: error.message,
+              failedAt: new Date().toISOString()
             }
           }
         });
-
-        // Update postDetails status to SUCCESS
-        const updated_PostDetails = await tx.postDetails.updateMany({
-          where:{
-            awaitingId,
-            userId: awaiting.userId
-          },
-          data:{
-            status: 'SUCCESS'
-          }
+      } catch (updateError) {
+        logger.error(`Failed to update awaiting status to FAILED`, {
+          awaitingId,
+          error: updateError
         });
-
-        return {
-          awaiting: updated_Awaiting,
-          postDetails: updated_PostDetails
-        }
+      }
       
-      },{
-        maxWait: 10000,   // 10 seconds to get connection
-        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
-        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
-      });
-
-      // 10. Trigger Ably update
-      await ablyService.awaiting_Order_Update(awaitingId);
-
-
-
-      // await notificationService.queue({
-      //   userId: postDetails?.userId as string,
-      //   title: 'Order Notification',
-      //   type: 'GENERAL',
-      //   content: `Transfer of <strong></strong> was successful. Thanks for choosing Vyre.`
-      // });
-
-    } catch (error) {
-      console.error(`postAction failed for ${awaitingId}:`, error);
       throw error;
     }
   }

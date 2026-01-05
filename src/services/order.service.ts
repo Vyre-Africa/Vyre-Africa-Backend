@@ -99,7 +99,7 @@ class OrderService {
               currencyId: orderType === 'SELL' 
                 ? pair?.baseCurrency?.id as string 
                 : pair?.quoteCurrency?.id as string,
-              amount: fee.toNumber() // ✅ Convert for wallet service
+              amount: fee.toString() // ✅ Convert for wallet service
             });
           }
 
@@ -496,7 +496,7 @@ class OrderService {
               userId,
               receipientId: order.userId,
               currencyId: pair?.baseCurrency?.id as string,
-              amount // Original amount (base currency)
+              amount: amountDecimal.toString() // Original amount (base currency)
             })
           ]);
         } else {
@@ -510,7 +510,7 @@ class OrderService {
               userId,
               receipientId: order.userId,
               currencyId: pair?.quoteCurrency?.id as string,
-              amount // Original amount (quote currency)
+              amount: amountDecimal.toString() // Original amount (quote currency)
             })
           ]);
         }
