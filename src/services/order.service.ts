@@ -344,6 +344,7 @@ class OrderService {
 
       logger.error('Order processing failed', { orderId, error: error.message, duration });
       throw error;
+      
     }
   }
 
