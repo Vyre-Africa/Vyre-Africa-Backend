@@ -221,12 +221,16 @@ class stableCoinService
         // Get user wallet and check balance
         const userWallet = await prisma.wallet.findUnique({
             where: { id: walletId },
-            select: { currencyId: true, availableBalance: true }
+            select: { currencyId: true, availableBalance: true, accountBalance: true }
         });
 
         if (!userWallet) {
             throw new Error('Wallet not found');
         }
+
+        console.log('balance check', userWallet.availableBalance)
+        console.log('wallet total balance check', userWallet.accountBalance)
+        console.log('intending amount to transfer', amount)
 
         if (!hasSufficientBalance(userWallet.availableBalance, amount)) {
             throw new Error('Insufficient balance');
