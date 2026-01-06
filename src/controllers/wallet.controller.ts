@@ -16,6 +16,7 @@ import { subMinutes } from 'date-fns';
 import * as crypto from 'crypto';
 import {createHmac} from 'node:crypto';
 import { generateRefCode, generateSignature, isValidSignature } from '../utils';
+import Decimal from 'decimal.js';
 import transactionService from '../services/transaction.service';
 import fernService from '../services/fern.service';
 
@@ -308,7 +309,12 @@ class WalletController {
           });
       }
 
-      if(amount > walletExists.availableBalance){
+      // ✅ Convert amount to Decimal immediately
+      const amountDecimal = new Decimal(amount);
+      // ✅ Check balance with Decimal comparison
+      const availableBalance = new Decimal(walletExists.availableBalance);
+
+      if(availableBalance.lessThan(amountDecimal)){
         return res.status(400)
           .json({
             msg: 'Available balance not sufficient',
@@ -389,7 +395,12 @@ class WalletController {
           });
       }
 
-      if(amount > walletExists.availableBalance){
+      // ✅ Convert amount to Decimal immediately
+      const amountDecimal = new Decimal(amount);
+      // ✅ Check balance with Decimal comparison
+      const availableBalance = new Decimal(walletExists.availableBalance);
+
+      if(availableBalance.lessThan(amountDecimal)){
         return res.status(400)
           .json({
             msg: 'Available balance not sufficient',
