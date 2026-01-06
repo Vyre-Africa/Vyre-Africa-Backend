@@ -42,6 +42,7 @@ import chainService from './chain.service';
 
     type AllSupportedChains = 'ETHEREUM' | 'TRON' | 'BASE' | 'BSC' | 'ARBITRUM' | 'OPTIMISM' | 'POLYGON';
     type StablecoinType = 'USDC' | 'USDT';
+    const BLOCKCHAIN_DECIMALS = 8;
 
     const tatumAxios = axios.create({
         baseURL: 'https://api.tatum.io/v3',
@@ -85,6 +86,11 @@ class stableCoinService
     // ============================================
     // CORE WALLET OPERATIONS
     // ============================================
+
+    private roundForBlockchain(amount: Decimal | string | number): string {
+        const amountDecimal = new Decimal(amount);
+        return amountDecimal.toDecimalPlaces(BLOCKCHAIN_DECIMALS, Decimal.ROUND_DOWN).toString();
+    }
 
     private async generateAddress(accountId: string) {
         try {
@@ -283,7 +289,7 @@ class stableCoinService
                     mnemonic: chainConfig.mnemonic,
                     index: adminWallet.derivationKey || 1,
                     address,
-                    amount: netAmountDecimal.toString() // Use string for precision
+                    amount: this.roundForBlockchain(netAmountDecimal) // rounded amount in string
                 };
             } else {
                 transferData = {
@@ -291,7 +297,7 @@ class stableCoinService
                     mnemonic: chainConfig.mnemonic,
                     index,
                     address,
-                    amount: netAmountDecimal.toString() // Use string for precision
+                    amount: this.roundForBlockchain(netAmountDecimal) // rounded amount in string
                 };
             }
 

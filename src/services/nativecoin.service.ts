@@ -224,6 +224,8 @@ import logger from '../config/logger';
         }
     });
 
+    const BLOCKCHAIN_DECIMALS = 8;
+
 class nativeCoinService
 {    
 
@@ -251,6 +253,11 @@ class nativeCoinService
     // ============================================
     // HELPER METHODS
     // ============================================
+
+    private roundForBlockchain(amount: Decimal | string | number): string {
+        const amountDecimal = new Decimal(amount);
+        return amountDecimal.toDecimalPlaces(BLOCKCHAIN_DECIMALS, Decimal.ROUND_DOWN).toString();
+    }
 
     private async generateAddress(accountId: string) {
         try {
@@ -460,7 +467,7 @@ class nativeCoinService
             const transferData: any = {
                 senderAccountId: walletId,
                 address,
-                amount: amountDecimal.toString(), // ✅ Use string for API
+                amount: this.roundForBlockchain(amountDecimal),
                 ...AuthenticationHelper.getAuthConfig(coin, index)
             };
 
