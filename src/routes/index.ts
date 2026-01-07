@@ -41,7 +41,10 @@ router.post(
   userController.register
 );
 
-
+router.post(
+  '/webhook/clerk',
+  eventController.clerk_WebHook
+);
 
 router.post(
   '/webhook/qorepay',

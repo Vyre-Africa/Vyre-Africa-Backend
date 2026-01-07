@@ -24,6 +24,7 @@
     "dependencies": {
         "@casl/ability": "^6.7.1",
         "@casl/prisma": "^1.4.1",
+        "@clerk/express": "^1.7.60",
         "@prisma/client": "^5.22.0",
         "@supabase/supabase-js": "^2.43.4",
         "@types/winston": "^2.4.4",

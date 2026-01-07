@@ -10,10 +10,49 @@ import {createHmac} from 'node:crypto';
 import { generateRefCode, generateSignature, isValidSignature } from '../utils';
 import fernService from '../services/fern.service';
 import eventService from '../services/event.service';
+import { verifyWebhook } from '@clerk/express/webhooks'
+import clerkService from '../services/clerk.service';
+import logger from '../config/logger';
+
 
 
 class EventController {
 
+  async clerk_WebHook(req: Request | any, res: Response) {
+      try {
+          const evt = await verifyWebhook(req, { signingSecret: config.clerk.SIGNING_SECRET as string });
+
+          const { id } = evt.data;
+          const eventType = evt.type;
+
+          console.log(`Received webhook with ID ${id} and event type of ${eventType}`);
+
+          // ✅ RESPOND IMMEDIATELY to Clerk
+          res.status(200).json({
+              msg: 'Webhook received',
+              success: true,
+              eventId: id,
+              eventType: eventType
+          });
+
+          // ✅ Process webhook asynchronously (don't await)
+          clerkService.processEvent(evt).catch(error => {
+              logger.error('Webhook processing failed', {
+                  eventId: id,
+                  eventType,
+                  error: error.message,
+                  stack: error.stack
+              });
+          });
+
+      } catch (error) {
+          console.error('Error verifying webhook:', error);
+          return res.status(400).json({ 
+              error: 'Webhook verification failed', 
+              message: (error as Error).message 
+          });
+      }
+  }
 
   async fern_WebHook(req: Request | any, res: Response) {
 

@@ -34,7 +34,8 @@ const config = {
 
     clerk: {
         jwtPublicKey: process.env.clerk_JWT_PUBLICKEY || '',
-        PEM_PUBLICKEY: process.env.PEM_PUBLICKEY || ''
+        PEM_PUBLICKEY: process.env.PEM_PUBLICKEY || '',
+        SIGNING_SECRET: process.env.CLERK_WEBHOOK_SIGNING_SECRET || ''
     },
 
     refreshJwt: {
