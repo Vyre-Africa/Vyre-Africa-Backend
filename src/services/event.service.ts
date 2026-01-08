@@ -201,8 +201,8 @@ class eventService {
 
     const {address, amount, subscriptionId, type, txId, senderAddress } = payload;
 
-    const parseAmount = parseFloat(amount);
-    console.log('parseAmount', parseAmount)
+    // const parseAmount = parseFloat(amount);
+    // console.log('parseAmount', parseAmount)
 
 
     try {
@@ -213,7 +213,7 @@ class eventService {
       const result = await this.handleCryptoEvent({
         address,
         subscriptionId,
-        amount: Math.abs(parseAmount),
+        amount,
         sender: senderAddress,
         txId
       })
@@ -232,7 +232,7 @@ class eventService {
   public async handleCryptoEvent(payload: {
     address: string;
     subscriptionId: string;
-    amount: number;
+    amount: string;
     sender: string;
     txId: string;
   }) {
@@ -240,42 +240,114 @@ class eventService {
 
     try {
 
-      // 1. Find wallet with relations
-      const wallet = await prisma.wallet.findFirst({
-        where: {
-          depositAddress: address,
-          subscriptionId
-        },
-        include: {
-          currency: true,
-          user: true
-        }
+      logger.info('Received crypto webhook event', {
+        address,
+        amount,
+        sender,
+        txId
       });
 
-      if(!wallet){
-        return { status: 'ignored', message: 'No matching wallet' };
+      // ✅ CRITICAL: Check for zero or invalid amount FIRST
+      const amountDecimal = new Decimal(amount);
+
+      if (amountDecimal.lessThanOrEqualTo(0)) {
+          logger.warn('Ignoring zero or negative amount transaction', {
+            address,
+            amount: amountDecimal.toString(),
+            txId
+          });
+          return { 
+            status: 'ignored', 
+            reason: 'zero_amount',
+            message: 'Transaction amount is zero or negative' 
+          };
       }
+
+      logger.info('Valid amount detected', {
+          amount: amountDecimal.toString(),
+          txId
+      });
+
+      // 1. Find wallet with relations
+      const wallet = await prisma.wallet.findFirst({
+          where: {
+            depositAddress: address,
+            subscriptionId
+          },
+          include: {
+            currency: {
+              select: {
+                id: true,
+                ISO: true,
+                name: true,
+                type: true,
+                chain: true
+              }
+            },
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          }
+      });
+
+      if (!wallet) {
+          logger.warn('No matching wallet found', {
+            address,
+            subscriptionId,
+            txId
+          });
+          return { 
+            status: 'ignored', 
+            reason: 'wallet_not_found',
+            message: 'No matching wallet' 
+          };
+      }
+
+      logger.info('Wallet found', {
+          walletId: wallet.id,
+          currency: wallet.currency?.ISO,
+          userId: wallet.userId
+      });
 
       // 2. Check for duplicate transaction (IDEMPOTENCY)
       const existingTx = await prisma.transaction.findFirst({
-        where: {
-          reference: txId,
-          walletId: wallet.id
-        }
+          where: {
+            reference: txId,
+            walletId: wallet.id
+          }
       });
 
       if (existingTx) {
-        console.log(`Duplicate transaction detected: ${txId}`);
-        return { status: 'ignored', message: 'Duplicate transaction' };
+        logger.info('Duplicate transaction detected', {
+          txId,
+          existingTxId: existingTx.id,
+          walletId: wallet.id
+        });
+        return { 
+          status: 'ignored', 
+          reason: 'duplicate',
+          message: 'Duplicate transaction' 
+        };
       }
 
-
       // 3. Sync current blockchain balance
+      logger.info('Syncing wallet balance', { walletId: wallet.id });
+        
       const syncedWallet = await walletService.getAccount(wallet.id);
         
       if (!syncedWallet) {
         throw new Error(`Failed to sync wallet ${wallet.id}`);
       }
+
+      logger.info('Wallet synced', {
+        walletId: wallet.id,
+        newBalance: syncedWallet.accountBalance?.toString()
+      });
 
       // 4. Find awaiting payment
       const awaiting = await prisma.awaiting.findFirst({
@@ -285,141 +357,85 @@ class eventService {
         },
         include: {
           currency: true,
-          wallet: true
+          wallet: true,
+          order: true
         }
       });
 
-      console.log('awaiting', awaiting)
-
-      // Determine transfer type by comparing with stored balance
-      const previousBalance = wallet.accountBalance;
-      const currentBalance = syncedWallet.accountBalance;
-      const receivedAmount = amount;
-      const transferType = DecimalUtil.isGreaterThan(currentBalance.toString(), previousBalance.toString()) ? 'CREDIT' : 'DEBIT';
-
-      console.log('Transfer Analysis:', {
-        previousBalance,
-        currentBalance,
-        receivedAmount,
-        transferType
-      })
-
-
-    // 6. Use database transaction for atomicity
-    return await prisma.$transaction(async (tx) => {
-      if (transferType === 'CREDIT') {
-        return await this.handleCreditTransaction({
-          tx,
-          wallet,
-          syncedWallet,
-          amount,
-          sender,
-          awaiting,
-          txId,
-          receivedAmount
-        });
-      } else if (transferType === 'DEBIT') {
-        return await this.handleDebitTransaction({
-          tx,
-          wallet,
-          syncedWallet,
-          amount,
-          txId
-        });
-      } else {
-        throw new Error(`Unable to determine transfer type.`);
-      }
-
-    },{
-        maxWait: 10000,   // 10 seconds to get connection
-        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
-        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
+      logger.info('Awaiting payment check', {
+        found: !!awaiting,
+        awaitingId: awaiting?.id,
+        expectedAmount: awaiting?.amount?.toString()
       });
 
-      // if(transferType === 'CREDIT'){
+      // 5. Determine transfer type by comparing balances
+      const previousBalance = new Decimal(wallet.accountBalance);
+      const currentBalance = new Decimal(syncedWallet.accountBalance);
+      const receivedAmount = amountDecimal;
 
-      //   await prisma.transaction.create({
-      //     data:{
-      //         userId: syncedWallet?.userId,
-      //         currency: syncedWallet?.currency?.ISO,
-      //         amount,
-      //         status: 'SUCCESSFUL',
-      //         reference: txId,
-      //         walletId: syncedWallet.id,
-      //         type:'CRYPTO_DEPOSIT',
-      //         description:`Wallet credited with ${amount}`
-      //       }
-      //   })
+      // ✅ More reliable transfer type detection
+      const balanceDifference = currentBalance.minus(previousBalance);
+      const transferType = balanceDifference.greaterThan(0) ? 'CREDIT' : 'DEBIT';
 
+      logger.info('Transfer analysis', {
+        previousBalance: previousBalance.toString(),
+        currentBalance: currentBalance.toString(),
+        balanceDifference: balanceDifference.toString(),
+        receivedAmount: receivedAmount.toString(),
+        transferType,
+        txId
+      });
 
-      //   if(awaiting){
+      // ✅ Additional validation for CREDIT transactions
+      if (transferType === 'CREDIT') {
+        // Verify the received amount makes sense
+        const expectedIncrease = receivedAmount;
+        const actualIncrease = balanceDifference;
 
-      //     // Verify payment amount
-      //     if (!amountSufficient(Number(syncedWallet.availableBalance), Number(awaiting.amount))) {
-      //       await this.orderProcessingQueue.add('initiate-refund', {
-      //         awaitingId: awaiting.id,
-      //         senderAddress: sender,
-      //         currencyType: awaiting?.currency?.type
-      //       });
-      //       return { status: 'queued', action: 'refund' };
-      //     }
+        // Allow small discrepancy (gas fees, rounding)
+        const discrepancy = actualIncrease.minus(expectedIncrease).abs();
+        const maxDiscrepancy = new Decimal('0.00001'); // 0.00001 tolerance
 
-      //     // Queue order processing
-      //     await this.orderProcessingQueue.add('process-order', {
-      //       awaitingId: awaiting.id
-      //     });
-
-      //     // Cancel the scheduled expiry
-      //     await anonService.cancelAwaitingExpiry(awaiting.id);
-
-      //     return { status: 'queued', action: 'order-processing' };
-
-      //   }
-
-      //   await notificationService.queue({
-      //       userId: syncedWallet?.userId as string,
-      //       title: 'Transaction Notification',
-      //       type: 'GENERAL',
-      //       content: `<strong>${amount} ${syncedWallet?.currency?.ISO}</strong> was sent to you and available in your wallet. Thanks for choosing Vyre.`
-      //   });
-
-      //   return { status: 'success', action: 'credit-completed' };
-        
-        
-      // }
-
-      // if(transferType === 'DEBIT'){
-
-      //   await prisma.transaction.create({
-      //     data:{
-      //         userId: syncedWallet?.userId,
-      //         currency: syncedWallet?.currency?.ISO,
-      //         amount,
-      //         status: 'SUCCESSFUL',
-      //         reference: txId,
-      //         walletId: syncedWallet.id,
-      //         type:'CRYPTO_WITHDRAWAL',
-      //         description:`Wallet debited`
-      //       }
-      //   })
+        if (discrepancy.greaterThan(maxDiscrepancy)) {
+          logger.warn('Balance increase mismatch', {
+            expected: expectedIncrease.toString(),
+            actual: actualIncrease.toString(),
+            discrepancy: discrepancy.toString(),
+            txId
+          });
+        }
+      }
 
 
-      //   if(config.Admin_Id !== syncedWallet?.userId){
+      // 6. Use database transaction for atomicity
+      return await prisma.$transaction(async (tx) => {
+        if (transferType === 'CREDIT') {
+          return await this.handleCreditTransaction({
+            tx,
+            wallet,
+            syncedWallet,
+            amount: DecimalUtil.roundForStorage(receivedAmount,wallet.currency?.ISO as string).toString(),
+            sender,
+            awaiting,
+            txId,
+          });
+        } else if (transferType === 'DEBIT') {
+          return await this.handleDebitTransaction({
+            tx,
+            wallet,
+            syncedWallet,
+            amount: DecimalUtil.roundForStorage(receivedAmount,wallet.currency?.ISO as string).toString(),
+            txId
+          });
+        } else {
+          throw new Error(`Unable to determine transfer type.`);
+        }
 
-      //     await notificationService.queue({
-      //       userId: syncedWallet?.userId as string,
-      //         title: 'Transaction Notification',
-      //         type: 'GENERAL',
-      //         content: `Transfer of <strong>${amount} ${syncedWallet?.currency?.ISO}</strong> was successful. Thanks for choosing Vyre.`
-      //     });
-
-      //   }
-
-       
-
-      //   return { status: 'success', action: 'debit-completed' };
-
-      // }
+      },{
+          maxWait: 10000,   // 10 seconds to get connection
+          timeout: 30000,   // 30 seconds for transaction (increased from 5s)
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
+      });
 
 
     } catch (error) {
@@ -624,20 +640,19 @@ class eventService {
     tx: any;
     wallet: any;
     syncedWallet: any;
-    amount: number;
+    amount: string;
     sender: string;
     awaiting: any;
     txId: string;
-    receivedAmount: number;
   }) {
-    const { tx, wallet, syncedWallet, amount, sender, awaiting, txId, receivedAmount } = params;
+    const { tx, wallet, syncedWallet, sender, awaiting, txId, amount} = params;
 
     // 1. Create transaction record
     const transaction = await tx.transaction.create({
       data: {
         userId: wallet.userId,
         currency: wallet.currency.ISO,
-        amount,
+        amount: DecimalUtil.roundForStorage(amount,wallet.currency?.ISO as string),
         status: 'SUCCESSFUL',
         reference: txId,
         walletId: wallet.id,
@@ -655,16 +670,28 @@ class eventService {
     if (awaiting) {
       
       const expectedAmount = new Decimal(awaiting.amount.toString());
-      const received = new Decimal(receivedAmount.toString());
+      const availableBalance = new Decimal(syncedWallet.availableBalance);
+      const received = amount
       
       console.log('Amount Verification:', {
         expected: expectedAmount.toString(),
-        received: received.toString(),
+        received,
         walletBalance: syncedWallet.availableBalance.toString(),
       });
 
-      // Verify available updated wallet balance against awaiting amount
-      if (!amountSufficient(Number(syncedWallet.availableBalance), Number(awaiting.amount))) {
+      // Verify available balance on updated wallet balance against awaiting amount
+      if (availableBalance.lessThan(expectedAmount)) {
+        const shortfall = expectedAmount.minus(availableBalance);
+
+        logger.warn('Insufficient payment received - queueing refund', {
+          awaitingId: awaiting.id,
+          availableBalance: availableBalance.toString(),
+          expectedAmount: expectedAmount.toString(),
+          receivedAmount: received.toString(),
+          shortfall: shortfall.toString(),
+          currency: awaiting.currency?.ISO
+        });
+
         // Queue refund for insufficient payment
         await this.orderProcessingQueue.add('initiate-refund', {
           awaitingId: awaiting.id,
@@ -711,6 +738,7 @@ class eventService {
         awaitingId: awaiting.id,
         transactionId: transaction.id
       };
+
     }
 
     // 3. No awaiting order - just notify user
@@ -718,7 +746,7 @@ class eventService {
       userId: wallet.userId,
       title: 'Transaction Notification',
       type: 'GENERAL',
-      content: `<strong>${amount} ${wallet.currency.ISO}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
+      content: `<strong>${DecimalUtil.formatWithCurrency(amount,wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
     });
 
     return { 
@@ -732,7 +760,7 @@ class eventService {
     tx: any;
     wallet: any;
     syncedWallet: any;
-    amount: number;
+    amount: string;
     txId: string;
   }) {
     const { tx, wallet, syncedWallet, amount, txId } = params;
@@ -742,7 +770,7 @@ class eventService {
       data: {
         userId: wallet.userId,
         currency: wallet.currency.ISO,
-        amount,
+        amount: DecimalUtil.roundForStorage(amount,wallet.currency?.ISO as string),
         status: 'SUCCESSFUL',
         reference: txId,
         walletId: wallet.id,
@@ -761,7 +789,7 @@ class eventService {
         userId: wallet.userId,
         title: 'Transaction Notification',
         type: 'GENERAL',
-        content: `Transfer of <strong>${amount} ${wallet.currency.ISO}</strong> was successful. Thanks for choosing Vyre.`
+        content: `Transfer of <strong>${DecimalUtil.formatWithCurrency(amount,wallet.currency?.ISO as string)}</strong> was successful. Thanks for choosing Vyre.`
       });
     }
 
@@ -919,7 +947,7 @@ class eventService {
           address: senderAddress
         });
       } else {
-        // FIAT refund logic would go here
+        // FIAT refund logic would go here, already handled by service provider:QOREPAY 
       }
 
       // Use database transaction for atomicity

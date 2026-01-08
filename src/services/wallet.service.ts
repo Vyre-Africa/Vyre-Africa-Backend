@@ -16,6 +16,7 @@ import connection from '../config/redis.config';
 import { currency } from '../globals';
 import Decimal from 'decimal.js';
 import logger from '../config/logger';
+import { DecimalUtil } from './decimal.util';
 
 // import connection from '../config/redis.config';
 
@@ -369,7 +370,7 @@ class WalletService
             }
 
             let receipient_Wallet:any;
-            
+
             // Fetch or create recipient wallet
             receipient_Wallet = await prisma.wallet.findFirst({
                 where: {
@@ -432,7 +433,7 @@ class WalletService
             const data = {
                 senderAccountId: user_Wallet.id,
                 recipientAccountId: receipient_Wallet.id,
-                amount: amountDecimal.toString(), // ✅ String for API
+                amount: DecimalUtil.roundForDisplay(amountDecimal,currency.ISO), // ✅ String for API
                 anonymous: false,
                 compliant: false
             };

@@ -12,6 +12,7 @@ import { Queue } from 'bullmq'; // Using BullMQ for job queue
 // import connection from '../config/redis.config';
 import connection from '../config/redis.config';
 import logger from '../config/logger';
+import { DecimalUtil } from './decimal.util';
 
 interface ProcessOrderPayload {
   userId: string;
@@ -115,7 +116,7 @@ class OrderService {
               userId,
               blockId,
               amountMinimum: minimumAmount, // ✅ Prisma accepts number or Decimal
-              amount: amount,               // ✅ Prisma accepts number or Decimal
+              amount: adjustedAmount,               // ✅ Prisma accepts number or Decimal
               type: orderType,
               pairId,
               price: rate,                  // ✅ Prisma accepts number or Decimal
@@ -135,7 +136,7 @@ class OrderService {
         userId,
         title: 'Order is Live!',
         type: 'GENERAL',
-        content: `Your <strong>${orderType}</strong> order for <strong>${amountDecimal.toFixed(8)} ${pair.baseCurrency?.ISO}</strong> is now active.`
+        content: `Your <strong>${orderType}</strong> order for <strong>${DecimalUtil.formatWithCurrency(amountDecimal,pair.baseCurrency?.ISO as string)}</strong> is now active.`
       });
 
       logger.info('Order created successfully', {
@@ -214,7 +215,7 @@ class OrderService {
           userId: order.userId,
           title: 'Order Cancelled',
           type: 'GENERAL',
-          content: `Your <strong>${order.type}</strong> order for <strong>${order.amount} ${currencyISO}</strong> has been cancelled. Funds are now available.`
+          content: `Your <strong>${order.type}</strong> order for <strong>${DecimalUtil.formatWithCurrency(order.amount,currencyISO as string)}</strong> has been cancelled. Funds are now available.`
         });
 
         return canceledOrder;
@@ -461,7 +462,7 @@ class OrderService {
             version: currentVersion
           },
           data: {
-            amountProcessed: newAmountProcessed,           // Prisma accepts Decimal
+            amountProcessed: DecimalUtil.formatWithCurrency(newAmountProcessed, order.type === 'BUY' ? pair?.quoteCurrency?.ISO as string : pair?.baseCurrency?.ISO as string),    // Prisma accepts Decimal
             percentageProcessed: newPercentage.toNumber(), // Convert to number for float field
             status: newStatus,
             version: currentVersion + 1
@@ -620,8 +621,8 @@ class OrderService {
           <div style="font-family: Arial, sans-serif;">
             <h3 style="color: #112044;">Your ${order.type} order completed!</h3>
             <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0;">
-              <p><strong>You ${order.type === 'BUY' ? 'Sent' : 'Received'}:</strong> ${baseAmount.toFixed(8)} ${baseCurrency}</p>
-              <p><strong>You ${order.type === 'BUY' ? 'Received' : 'Sent'}:</strong> ${quoteAmount.toFixed(8)} ${quoteCurrency}</p>
+              <p><strong>You ${order.type === 'BUY' ? 'Sent' : 'Received'}:</strong> ${DecimalUtil.formatWithCurrency(baseAmount, baseCurrency as string)}</p>
+              <p><strong>You ${order.type === 'BUY' ? 'Received' : 'Sent'}:</strong> ${DecimalUtil.formatWithCurrency(quoteAmount, quoteCurrency as string)}</p>
               <p><strong>Rate:</strong> ${Number(order.price)?.toLocaleString('en-US', {
                 style: 'currency',
                 currency: quoteCurrency,

@@ -14,6 +14,7 @@ import notificationService from './notification.service';
 import { NotificationType } from '@prisma/client';
 import logger from '../config/logger';
 import chainService from './chain.service';
+import { DecimalUtil } from './decimal.util';
 
 
     interface ChainConfig {
@@ -289,7 +290,7 @@ class stableCoinService
                     mnemonic: chainConfig.mnemonic,
                     index: adminWallet.derivationKey || 1,
                     address,
-                    amount: this.roundForBlockchain(netAmountDecimal) // rounded amount in string
+                    amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin) // rounded amount in string
                 };
             } else {
                 transferData = {
@@ -297,7 +298,7 @@ class stableCoinService
                     mnemonic: chainConfig.mnemonic,
                     index,
                     address,
-                    amount: this.roundForBlockchain(netAmountDecimal) // rounded amount in string
+                    amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin) // rounded amount in string
                 };
             }
 
@@ -311,7 +312,7 @@ class stableCoinService
                     id: result.id,
                     userId,
                     currency: `${stablecoin} ${chain}`,
-                    amount: amountDecimal, // Prisma accepts Decimal
+                    amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin), // Prisma accepts Decimal
                     status: result.completed ? 'SUCCESSFUL' : 'PENDING',
                     reference: result.txId,
                     walletId,
@@ -337,9 +338,9 @@ class stableCoinService
                 userId,
                 stablecoin,
                 chain: chainConfig.displayName,
-                grossAmount: amountDecimal.toNumber(), // Convert for notification
-                fee: withdrawalFeeDecimal.toNumber(),
-                netAmount: netAmountDecimal.toNumber(),
+                grossAmount: DecimalUtil.roundForDisplay(amountDecimal,stablecoin),
+                fee: DecimalUtil.roundForDisplay(withdrawalFeeDecimal,stablecoin),
+                netAmount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin),
                 address,
                 status: result.completed ? 'Completed' : 'Processing'
             });
@@ -623,9 +624,9 @@ class stableCoinService
         userId: string;
         stablecoin: StablecoinType;
         chain: string;
-        grossAmount: number;
-        fee: number;
-        netAmount: number;
+        grossAmount: string;
+        fee: string;
+        netAmount: string;
         address: string;
         status: string;
     }) {
@@ -640,9 +641,9 @@ class stableCoinService
             We've successfully processed your ${stablecoin} transfer on ${chain} network.
 
             **Transaction Details:**
-            • **Amount Sent:** $${grossAmount} ${stablecoin}
-            • **Network Fee:** $${fee} ${stablecoin}
-            • **Recipient Received:** $${netAmount} ${stablecoin}
+            • **Amount Sent:** ${grossAmount} ${stablecoin}
+            • **Network Fee:** ${fee} ${stablecoin}
+            • **Recipient Received:** ${netAmount} ${stablecoin}
             • **Recipient Address:** ${address}
             • **Network:** ${chain}
             • **Status:** ${status}
