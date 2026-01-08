@@ -10,6 +10,7 @@ import orderService from './order.service';
 import orderValidator from '../validators/order.validator';
 import notificationService from './notification.service';
 import logger from '../config/logger';
+import orderslotService from './orderslot.service';
 
 interface PreAction {
   orderId: string;
@@ -254,6 +255,33 @@ class AnonService {
     const startTime = Date.now();
 
     try {
+
+      // ✅ CHECK AVAILABLE SLOT FIRST (before any setup)
+      logger.info('Checking order slot availability', { orderId, amount });
+
+      const slotCheck = await orderslotService.checkAvailableSlot(orderId, amount);
+
+      if (!slotCheck.hasAvailableSlot) {
+        logger.warn('Order slot check failed', {
+          orderId,
+          requestedAmount: amount,
+          availableAmount: slotCheck.availableAmount,
+          reason: slotCheck.reason
+        });
+
+        throw new Error(
+          slotCheck.reason || 
+          `Insufficient order capacity. Available: ${slotCheck.availableAmount}, Requested: ${amount}`
+        );
+      }
+
+      logger.info('Order slot check passed', {
+        orderId,
+        availableAmount: slotCheck.availableAmount,
+        requestedAmount: amount
+      });
+
+
       // Calculate expiry upfront
       const expiryDuration = moment().add(30, 'minutes').toDate();
 
