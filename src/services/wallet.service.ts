@@ -702,40 +702,75 @@ class WalletService
 
     /**
      * Sync and returns wallet data including balances
-     */
-    async getAccount(id: string)
-    {
-        const response = await tatumAxios.get(`/ledger/account/${id}`)
-        // console.log(response)
-        const result = response.data
+    */
+    async getAccount(id: string) {
+        try {
+            // ✅ Single query - fetch Tatum data with wallet info in one transaction
+            const [tatumResponse, wallet] = await Promise.all([
+                tatumAxios.get(`/ledger/account/${id}`),
+                prisma.wallet.findUnique({
+                    where: { id },
+                    select: {
+                        id: true,
+                        currency: {
+                            select: {
+                                ISO: true,
+                                isStablecoin: true
+                            }
+                        }
+                    }
+                })
+            ]);
 
-        const wallet = await prisma.wallet.update({
-            where: {
-              id
-            },
-            data:{
-              frozen: result.frozen,
-              accountBalance:result.balance.accountBalance,
-              availableBalance:result.balance.availableBalance
-            },
-            include:{
-                currency:{
-                    select:{
-                      id: true,
-                      name:true,
-                      ISO: true,
-                      type: true,
-                      imgUrl: true,
-                      chain: true,
-                      chainImgUrl: true,
-                      flagEmoji: true,
-                      isStablecoin: true
+            if (!wallet) throw new Error(`Wallet ${id} not found`);
+
+            const result = tatumResponse.data;
+            const currencyISO = wallet.currency?.ISO || 'BTC';
+
+            // ✅ Round balances (in-memory, fast)
+            const accountBalance = DecimalUtil.roundForDisplay(
+                result.balance?.accountBalance || 0,
+                currencyISO
+            );
+
+            const availableBalance = DecimalUtil.roundForDisplay(
+                result.balance?.availableBalance || 0,
+                currencyISO
+            );
+
+            // ✅ Single update with all data
+            return await prisma.wallet.update({
+                where: { id },
+                data: {
+                    frozen: result.frozen,
+                    accountBalance,
+                    availableBalance,
+                    updatedAt: new Date()
+                },
+                include: {
+                    currency: {
+                        select: {
+                            id: true,
+                            name: true,
+                            ISO: true,
+                            type: true,
+                            imgUrl: true,
+                            chain: true,
+                            chainImgUrl: true,
+                            flagEmoji: true,
+                            isStablecoin: true
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        return wallet
+        } catch (error: any) {
+            logger.error('Wallet sync failed', {
+                walletId: id,
+                error: error.message
+            });
+            throw error;
+        }
     }
 
     async authorize_Withdrawal(currency: string,amount:number, email:string, phone:string)
