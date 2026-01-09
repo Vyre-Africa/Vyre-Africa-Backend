@@ -535,6 +535,7 @@ class AnonService {
           logger.error('Failed to cleanup reservation', {
             awaitingId: reservationId,
             cleanupError: cleanupError.message
+            
           });
         }
       }
