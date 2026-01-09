@@ -14,6 +14,7 @@ import notificationService from './notification.service';
 import connection from '../config/redis.config';
 import anonService from './anon.service';
 import { DecimalUtil } from './decimal.util';
+import orderslotService from './orderslot.service';
 
 
   // {
@@ -867,6 +868,14 @@ class eventService {
         userQuoteWallet
       });
 
+      await prisma.awaiting.update({
+        where: { id: awaitingId },
+        data: {
+          status: 'SUCCESS',
+        }
+      });
+
+      await ablyService.awaiting_Order_Update(awaitingId);
 
       // Queue order for post Action processing
       await this.orderProcessingQueue.add('process-post-action', {
@@ -880,36 +889,10 @@ class eventService {
     } catch (error) {
       console.error(`Order processing failed for ${awaitingId}:`, error);
 
-      // Use database transaction for atomicity
-      const updated = await prisma.$transaction(async (tx) => {
-        // Update status to SUCCESS
-        const updated_Awaiting = await prisma.awaiting.update({
-          where: { id: awaitingId },
-          data: {
-            status: 'FAILED'
-          }
-        });
-
-        // Update postDetails status to SUCCESS
-        const updated_PostDetails = await tx.postDetails.updateMany({
-          where:{
-            awaitingId,
-          },
-          data:{
-            status: 'FAILED'
-          }
-        });
-
-        return {
-          awaiting: updated_Awaiting,
-          postDetails: updated_PostDetails
-        }
-      
-      }, {
-        maxWait: 10000,   // 10 seconds to get connection
-        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
-        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
-      });
+      await orderslotService.cancelAwaiting(
+        awaitingId,
+        `Order processing failed for ${awaitingId}:`
+      );
 
       await ablyService.awaiting_Order_Update(awaitingId);
       
@@ -950,37 +933,10 @@ class eventService {
         // FIAT refund logic would go here, already handled by service provider:QOREPAY 
       }
 
-      // Use database transaction for atomicity
-      const updated = await prisma.$transaction(async (tx) => {
-        // Update status to REFUNDED
-        const updated_Awaiting = await tx.awaiting.update({
-          where: { id: awaitingId },
-          data: {
-            status: 'REFUNDED',
-          }
-        });
-
-        // Update postDetails status to REFUNDED
-        const updated_PostDetails = await tx.postDetails.updateMany({
-          where:{
-            awaitingId,
-            userId: awaiting.userId
-          },
-          data:{
-            status: 'REFUNDED'
-          }
-        });
-
-        return {
-          awaiting: updated_Awaiting,
-          postDetails: updated_PostDetails
-        }
-      
-      },{
-        maxWait: 10000,   // 10 seconds to get connection
-        timeout: 30000,   // 30 seconds for transaction (increased from 5s)
-        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
-      });
+      await orderslotService.cancelAwaiting(
+        awaitingId,
+        `Amount refunded for ${awaitingId}:`
+      );
 
       await ablyService.awaiting_Order_Update(awaitingId);
 
@@ -1022,11 +978,11 @@ class eventService {
       }
 
       // 2. Validate awaiting status
-      if (awaiting.status !== 'PROCESSING') {
-        logger.warn(`Awaiting ${awaitingId} is not in PROCESSING state: ${awaiting.status}`);
+      if (awaiting.status !== 'SUCCESS') {
+        logger.warn(`Awaiting ${awaitingId} was not SUCCESSFUL: ${awaiting.status}`);
         return { 
           status: 'skipped', 
-          reason: 'invalid_status', 
+          reason: 'awaiting_status_not_successful', 
           currentStatus: awaiting.status 
         };
       }
@@ -1176,7 +1132,7 @@ class eventService {
           const updated_Awaiting = await tx.awaiting.update({
             where: { id: awaitingId },
             data: {
-              status: 'SUCCESS',
+              // status: 'SUCCESS',
               metadata: {
                 transferCompleted: true,
                 transferId: transferResult?.id || null,

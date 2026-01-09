@@ -227,8 +227,6 @@ class OrderService {
   }
 
 
-
-
   async validateOrderProcessing(
     order: any,
     amount: number,
@@ -368,24 +366,35 @@ class OrderService {
         // ============================================
         // STEP 1: LOCK ORDER & CHECK VERSION
         // ============================================
-        const [orderRow] = await tx.$queryRaw<any[]>`
-          SELECT * FROM "Order" 
-          WHERE id = ${orderId}
-          FOR UPDATE
-        `;
+        // const [orderRow] = await tx.$queryRaw<any[]>`
+        //   SELECT * FROM "Order" 
+        //   WHERE id = ${orderId}
+        //   FOR UPDATE
+        // `;
 
-        if (!orderRow) {
+        const order = await tx.order.findUnique({
+          where: { id: orderId }
+        });
+
+        if (!order) {
           throw new Error('Order not found');
         }
 
-        const currentVersion = orderRow.version;
-        const order = orderRow;
-
-        logger.info('Order locked', { 
+        logger.info('Order fetched (no lock)', { 
           orderId, 
-          version: currentVersion,
-          amountProcessed: order.amountProcessed 
+          version: order.version,
+          amountProcessed: order.amountProcessed,
+          amountReserved: order.amountReserved
         });
+
+        const currentVersion = order.version;
+        // const order = orderRow;
+
+        // logger.info('Order locked', { 
+        //   orderId, 
+        //   version: currentVersion,
+        //   amountProcessed: order.amountProcessed 
+        // });
 
         // ============================================
         // STEP 2: VALIDATE
@@ -428,6 +437,7 @@ class OrderService {
         const priceDecimal = new Decimal(order.price);
         const orderAmountDecimal = new Decimal(order.amount);
         const orderAmountProcessedDecimal = new Decimal(order.amountProcessed || 0);
+        const orderAmountReservedDecimal = new Decimal(order.amountReserved || 0);
 
         // Calculate amount to process
         const amountToProcess = order.type === 'BUY'
@@ -436,6 +446,8 @@ class OrderService {
 
         // Calculate new totals
         const newAmountProcessed = orderAmountProcessedDecimal.plus(amountToProcess);
+        //Release the reserved amount as we process it
+        const newAmountReserved = orderAmountReservedDecimal.minus(amountToProcess);
         const newPercentage = newAmountProcessed
           .dividedBy(orderAmountDecimal)
           .times(100)
@@ -449,6 +461,7 @@ class OrderService {
           orderId,
           amountToProcess: amountToProcess.toString(),
           newAmountProcessed: newAmountProcessed.toString(),
+          newAmountReserved: newAmountReserved.toString(),
           newPercentage: newPercentage.toString(),
           newStatus
         });
@@ -480,7 +493,8 @@ class OrderService {
         logger.info('Order updated successfully', { 
           orderId, 
           newVersion: currentVersion + 1,
-          newAmountProcessed: newAmountProcessed.toString()
+          newAmountProcessed: newAmountProcessed.toString(),
+          newAmountReserved: newAmountReserved.toString()
         });
 
         // ============================================
@@ -490,12 +504,12 @@ class OrderService {
           await Promise.all([
             walletService.unblock_Transfer(
               String(amountToProcess), // Convert for wallet service
-              order.blockId, 
+              order?.blockId as string, 
               userQuoteWallet.id
             ),
             walletService.offchain_Transfer({
               userId,
-              receipientId: order.userId,
+              receipientId: order.userId as string,
               currencyId: pair?.baseCurrency?.id as string,
               amount: amountDecimal.toString() // Original amount (base currency)
             })
@@ -504,12 +518,12 @@ class OrderService {
           await Promise.all([
             walletService.unblock_Transfer(
               String(amountToProcess), // Convert for wallet service
-              order.blockId, 
+              order.blockId as string, 
               userBaseWallet.id
             ),
             walletService.offchain_Transfer({
               userId,
-              receipientId: order.userId,
+              receipientId: order.userId as string,
               currencyId: pair?.quoteCurrency?.id as string,
               amount: amountDecimal.toString() // Original amount (quote currency)
             })

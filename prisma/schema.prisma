@@ -436,7 +436,7 @@ model Transaction {
   user        User?             @relation(fields: [userId], references: [id])
   wallet      Wallet?           @relation(fields: [walletId], references: [id])
   reference   String?
-  amount      Decimal
+  amount      Decimal           @db.Decimal(20, 8)
   status      TransactionStatus
   type        TransactionType
   description String
@@ -502,8 +502,8 @@ model Wallet {
   derivationKey  Int?
   frozen         Boolean
 
-  accountBalance   Decimal @default(0.00)
-  availableBalance Decimal @default(0.00)
+  accountBalance   Decimal @db.Decimal(20, 8) @default(0.00)
+  availableBalance Decimal @db.Decimal(20, 8) @default(0.00)
 
   Transaction Transaction[]
   Block       Block[]
@@ -527,15 +527,18 @@ model Order {
   blockId             String?
   userId              String?
   pairId              String
-  amountMinimum       Decimal       @default(0.00)
+  amountMinimum       Decimal     @db.Decimal(20, 8)  @default(0.00)
   user                User?       @relation(fields: [userId], references: [id])
   pair                Pair        @relation(fields: [pairId], references: [id])
   block               Block?      @relation(fields: [blockId], references: [id])
-  amount              Decimal
+  amount              Decimal     @db.Decimal(20, 8)
   version             Int         @default(0)
+
   amountProcessed     Decimal       @default(0.0)
-  percentageProcessed Decimal       @default(0.0)
-  price               Decimal
+  amountReserved      Decimal       @db.Decimal(20, 8) @default(0)
+
+  percentageProcessed Decimal       @db.Decimal(20, 2) @default(0.0)
+  price               Decimal       @db.Decimal(20, 8)
   status              OrderStatus @default(OPEN)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
@@ -557,9 +560,9 @@ model OrderLog {
   userId     String?
   orderId    String?
 
-  baseAmount  Decimal
-  quoteAmount Decimal
-  rate        Decimal
+  baseAmount  Decimal @db.Decimal(20, 8)
+  quoteAmount Decimal @db.Decimal(20, 8)
+  rate        Decimal @db.Decimal(20, 8)
 
   orderType OrderType
 
@@ -602,7 +605,7 @@ model Block {
   active      Boolean  @default(true)
   walletId    String?
   wallet      Wallet?  @relation(fields: [walletId], references: [id])
-  amount      Decimal
+  amount      Decimal   @db.Decimal(20, 8)
   description String
   createdAt   DateTime @default(now())
   Order       Order[]
@@ -613,8 +616,8 @@ model PendingActivity {
   type        ActivityType   @default(REFERRAL)
   userId      String?
   user        User?          @relation(fields: [userId], references: [id])
-  amount      Decimal?
-  orderAmount Decimal?
+  amount      Decimal?       @db.Decimal(20, 8)
+  orderAmount Decimal?       @db.Decimal(20, 8)
   status      ActivityStatus @default(OPEN)
   createdAt   DateTime       @default(now())
   executedAt  DateTime
@@ -627,7 +630,7 @@ model Awaiting {
   walletId       String?
   userId         String?
   orderId        String?
-  amount         Decimal
+  amount         Decimal        @db.Decimal(20, 8)
   orderType      OrderType
   status         AwaitingStatus @default(PENDING)
   currencyId     String?
@@ -670,7 +673,7 @@ model postDetails {
   walletId   String?
   userId     String?
   orderId    String?
-  amount     Decimal
+  amount     Decimal  @db.Decimal(20, 8)
   currencyId String?
 
   status PostDetailStatus @default(PENDING)

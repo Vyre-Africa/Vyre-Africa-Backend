@@ -15,11 +15,347 @@ interface OrderSlotCheck {
   reason?: string;
 }
 
+interface ReservationResult {
+  success: boolean;
+  awaitingId?: string;
+  availableAmount?: string;
+  requestedAmount: string;
+  orderAmount?: string;
+  amountProcessed?: string;
+  amountReserved?: string;
+  reason?: string;
+}
+
 /**
  * Order Slot Helper
  * Prevents overbooking by checking pending awaiting orders
  */
 class OrderSlotService {
+
+
+  /**
+   * Atomically reserve a slot on an order using database-level atomic operations.
+   * This approach handles 1000s of concurrent requests without queuing or race conditions.
+   */
+  async reserveOrderSlot(
+    orderId: string,
+    requestedAmount: string | number,
+  ): Promise<ReservationResult> {
+    try {
+      const requestedDecimal = new Decimal(requestedAmount);
+
+      logger.info('Starting atomic slot reservation', {
+        orderId,
+        requestedAmount: requestedDecimal.toString(),
+      });
+
+      // Step 1: Get order details to determine conversion logic
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: {
+          id: true,
+          type: true,
+          amount: true,
+          amountProcessed: true,
+          amountReserved: true,
+          status: true,
+          price: true
+        }
+      });
+
+      if (!order) {
+        return {
+          success: false,
+          requestedAmount: requestedDecimal.toString(),
+          reason: 'Order not found'
+        };
+      }
+
+      if (order.status !== 'OPEN') {
+        return {
+          success: false,
+          requestedAmount: requestedDecimal.toString(),
+          orderAmount: order.amount.toString(),
+          amountProcessed: order.amountProcessed.toString(),
+          amountReserved: order.amountReserved.toString(),
+          reason: `Order is ${order.status.toLowerCase()}`
+        };
+      }
+
+      const orderPrice = new Decimal(order.price);
+
+      // Step 2: Convert requested amount to order's base currency
+      // This is what we'll reserve on the order
+      let amountToReserve: Decimal;
+
+      if (order.type === 'SELL') {
+        // SELL: User sends QUOTE currency, order.amount is in BASE
+        // Pending amount is in QUOTE, convert to BASE for reservation
+        amountToReserve = requestedDecimal.dividedBy(orderPrice);
+      } else {
+        // BUY: User sends BASE currency, order.amount is in QUOTE
+        // Pending amount is in BASE, convert to QUOTE for reservation
+        amountToReserve = requestedDecimal.times(orderPrice);
+      }
+
+      logger.info('Calculated amount to reserve', {
+        orderId,
+        requestedAmount: requestedDecimal.toString(),
+        amountToReserve: amountToReserve.toString(),
+        orderType: order.type,
+        orderPrice: orderPrice.toString()
+      });
+
+
+      // Step 3: Atomic reservation using single UPDATE query
+      // This is the magic - no race conditions possible!
+      const updated = await prisma.$executeRaw`
+        UPDATE "Order"
+        SET "amountReserved" = "amountReserved" + ${amountToReserve.toString()}::numeric
+        WHERE id = ${orderId}
+          AND status = 'OPEN'
+          AND (amount - "amountProcessed" - "amountReserved") >= ${amountToReserve.toString()}::numeric
+      `;
+
+      // Step 4: Check if update succeeded
+      if (updated === 0) {
+        // Reservation failed - calculate why
+        const currentOrder = await prisma.order.findUnique({
+          where: { id: orderId },
+          select: {
+            amount: true,
+            amountProcessed: true,
+            amountReserved: true,
+            status: true
+          }
+        });
+
+        if (!currentOrder) {
+          return {
+            success: false,
+            requestedAmount: requestedDecimal.toString(),
+            reason: 'Order not found'
+          };
+        }
+
+        if (currentOrder.status !== 'OPEN') {
+          return {
+            success: false,
+            requestedAmount: requestedDecimal.toString(),
+            orderAmount: currentOrder.amount.toString(),
+            amountProcessed: currentOrder.amountProcessed.toString(),
+            amountReserved: currentOrder.amountReserved.toString(),
+            reason: `Order status changed to ${currentOrder.status.toLowerCase()}`
+          };
+        }
+
+        const available = new Decimal(currentOrder.amount)
+          .minus(currentOrder.amountProcessed)
+          .minus(currentOrder.amountReserved);
+
+        logger.warn('Insufficient amount for reservation', {
+          orderId,
+          available: available.toString(),
+          requestedAmount: requestedDecimal.toString(),
+          amountToReserve: amountToReserve.toString()
+        });
+
+        return {
+          success: false,
+          availableAmount: available.toString(),
+          requestedAmount: requestedDecimal.toString(),
+          orderAmount: currentOrder.amount.toString(),
+          amountProcessed: currentOrder.amountProcessed.toString(),
+          amountReserved: currentOrder.amountReserved.toString(),
+          reason: `Insufficient amount. Available: ${available.toFixed(8)}, Requested: ${amountToReserve.toFixed(8)}`
+        };
+      }
+
+      // Step 5: Reservation successful! Create awaiting record
+      const awaiting = await prisma.awaiting.create({
+        data: {
+          orderId,
+          amount: requestedDecimal,
+          status: 'PENDING',
+          orderType: order.type
+        }
+      });
+
+      logger.info('Slot reserved successfully', {
+        orderId,
+        awaitingId: awaiting.id,
+        requestedAmount: requestedDecimal.toString(),
+        amountReserved: amountToReserve.toString(),
+      });
+
+      // Step 6: Get final state for response
+      const updatedOrder = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: {
+          amount: true,
+          amountProcessed: true,
+          amountReserved: true
+        }
+      });
+
+      const finalAvailable = new Decimal(updatedOrder!.amount)
+        .minus(updatedOrder!.amountProcessed)
+        .minus(updatedOrder!.amountReserved);
+
+      return {
+        success: true,
+        awaitingId: awaiting.id,
+        availableAmount: finalAvailable.toString(),
+        requestedAmount: requestedDecimal.toString(),
+        orderAmount: updatedOrder!.amount.toString(),
+        amountProcessed: updatedOrder!.amountProcessed.toString(),
+        amountReserved: updatedOrder!.amountReserved.toString()
+      };
+
+    } catch (error: any) {
+      logger.error('Atomic slot reservation failed', {
+        orderId,
+        requestedAmount,
+        error: error.message,
+        stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Release a reservation when awaiting is cancelled, expired, or completed.
+   * This frees up the reserved amount for other requests.
+   */
+  async releaseReservation(
+    awaitingId: string
+  ): Promise<void> {
+    try {
+      // Get the awaiting record
+      const awaiting = await prisma.awaiting.findUnique({
+        where: { id: awaitingId },
+        select: {
+          id: true,
+          orderId: true,
+          amount: true,
+          status: true,
+          orderType: true,
+          order: {
+            select: {
+              price: true,
+              type: true
+            }
+          }
+        }
+      });
+
+      if (!awaiting) {
+        throw new Error('Awaiting not found');
+      }
+
+      // Only release if it was pending (not already completed/processed)
+      if (awaiting.status !== 'PENDING') {
+        logger.info('Awaiting not in PENDING status, skipping release', {
+          awaitingId,
+          status: awaiting.status
+        });
+        return;
+      }
+
+      // Calculate amount to release (convert back to order currency)
+      const awaitingAmount = new Decimal(awaiting.amount);
+      const orderPrice = new Decimal(awaiting.order?.price as Decimal);
+      
+      let amountToRelease: Decimal;
+
+      if (awaiting.order?.type === 'SELL') {
+        // SELL: awaiting.amount is in QUOTE, convert to BASE
+        amountToRelease = awaitingAmount.dividedBy(orderPrice);
+      } else {
+        // BUY: awaiting.amount is in BASE, convert to QUOTE
+        amountToRelease = awaitingAmount.times(orderPrice);
+      }
+
+      logger.info('Releasing reservation', {
+        awaitingId,
+        orderId: awaiting.orderId,
+        amountToRelease: amountToRelease.toString()
+      });
+
+      // Atomic release
+      await prisma.$executeRaw`
+        UPDATE "Order"
+        SET "amountReserved" = "amountReserved" - ${amountToRelease.toString()}::numeric
+        WHERE id = ${awaiting.orderId}
+          AND "amountReserved" >= ${amountToRelease.toString()}::numeric
+      `;
+
+      logger.info('Reservation released successfully', {
+        awaitingId,
+        orderId: awaiting.orderId,
+        amountReleased: amountToRelease.toString()
+      });
+
+    } catch (error: any) {
+      logger.error('Failed to release reservation', {
+        awaitingId,
+        error: error.message,
+        stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Cancel an awaiting and release its reservation.
+   */
+  async cancelAwaiting(
+    awaitingId: string,
+    reason?: string
+  ): Promise<void> {
+    try {
+      await prisma.$transaction(async (tx) => {
+
+        // Release the reservation
+        await this.releaseReservation(awaitingId);
+        // Update awaiting status
+
+        await tx.awaiting.update({
+          where: { id: awaitingId },
+          data: {
+            status: 'FAILED',
+            metadata:{
+              cancelledAt: new Date(),
+              cancellationReason: reason,
+            }
+          }
+        });
+
+        await tx.postDetails.updateMany({
+          where:{
+            awaitingId,
+          },
+          data:{
+            status: 'FAILED'
+          }
+        });
+
+      });
+
+      logger.info('Awaiting cancelled successfully', {
+        awaitingId,
+        reason
+      });
+
+    } catch (error: any) {
+      logger.error('Failed to cancel awaiting', {
+        awaitingId,
+        reason,
+        error: error.message
+      });
+      throw error;
+    }
+  }
   
   /**
    * Check if order has available slot for the requested amount

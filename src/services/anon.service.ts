@@ -253,34 +253,44 @@ class AnonService {
     const { orderId, currencyId, amount, userDetails, bank, crypto, paymentMethod } = payload;
 
     const startTime = Date.now();
+    let reservationId: string | undefined;
 
     try {
 
-      // ✅ CHECK AVAILABLE SLOT FIRST (before any setup)
-      logger.info('Checking order slot availability', { orderId, amount });
+      // ============================================
+      // STEP 1: ATOMICALLY RESERVE ORDER SLOT (BEFORE ANYTHING ELSE)
+      // ============================================
+      logger.info('Attempting to reserve order slot', { orderId, amount });
 
-      const slotCheck = await orderslotService.checkAvailableSlot(orderId, amount);
+      const reservation = await orderslotService.reserveOrderSlot(
+        orderId,
+        amount
+        // ✅ No userId needed! Much cleaner
+      );
 
-      if (!slotCheck.hasAvailableSlot) {
-        logger.warn('Order slot check failed', {
+      if (!reservation.success) {
+        logger.warn('Order slot reservation failed', {
           orderId,
           requestedAmount: amount,
-          availableAmount: slotCheck.availableAmount,
-          reason: slotCheck.reason
+          availableAmount: reservation.availableAmount,
+          reason: reservation.reason
         });
 
         throw new Error(
-          slotCheck.reason || 
-          `Insufficient order capacity. Available: ${slotCheck.availableAmount}, Requested: ${amount}`
+          reservation.reason || 
+          `Insufficient order capacity. Available: ${reservation.availableAmount}, Requested: ${amount}`
         );
       }
 
-      logger.info('Order slot check passed', {
+      // ✅ Track reservation for cleanup
+      reservationId = reservation.awaitingId;
+
+      logger.info('Order slot reserved successfully', {
         orderId,
-        availableAmount: slotCheck.availableAmount,
+        awaitingId: reservation.awaitingId,
+        availableAmount: reservation.availableAmount,
         requestedAmount: amount
       });
-
 
       // Calculate expiry upfront
       const expiryDuration = moment().add(30, 'minutes').toDate();
@@ -375,6 +385,23 @@ class AnonService {
             stack: paymentError.stack
           });
 
+          // ❌ Release the reservation
+          try {
+            await orderslotService.cancelAwaiting(
+              reservation.awaitingId!,
+              `Payment initialization failed: ${paymentError.message}`
+            );
+            logger.info('Reservation released after payment failure', {
+              awaitingId: reservation.awaitingId
+            });
+          } catch (releaseError: any) {
+            logger.error('Failed to release reservation', {
+              awaitingId: reservation.awaitingId,
+              error: releaseError.message
+            });
+          }
+
+
           // Determine error message based on error type
           let errorMessage = 'Failed to initialize payment. Please try again.';
           
@@ -392,23 +419,24 @@ class AnonService {
       }
 
       // ============================================
-      // CREATE AWAITING RECORD (Only if payment initialized or BUY order)
+      // STEP 5: UPDATE AWAITING WITH COMPLETE DETAILS
       // ============================================
 
       const result = await this.retryOperation(
         async () => {
           return await prisma.$transaction(
             async (tx) => {
-              const awaiting = await tx.awaiting.create({
+              const awaiting = await tx.awaiting.update({
+                where: { id: reservation.awaitingId },
                 data: {
+                  userId: user.id,
                   triggerAddress: order.type === 'BUY' 
                     ? baseWallet.depositAddress 
                     : quoteWallet.depositAddress,
                   walletId: order.type === 'BUY' ? baseWallet.id : quoteWallet.id,
-                  userId: user.id,
-                  orderId,
-                  amount,
-                  orderType: order.type as OrderType,
+                  // orderId,
+                  // amount,
+                  // orderType: order.type as OrderType,
                   currencyId,
                   method: paymentMethod,
                   duration: expiryDuration,
@@ -448,7 +476,7 @@ class AnonService {
             }
           );
         },
-        'Create awaiting transaction',
+        'Update awaiting with complete details',
         2,
         3000
       );
@@ -490,6 +518,27 @@ class AnonService {
 
     } catch (error: any) {
       const duration = Date.now() - startTime;
+
+      // ❌ Cleanup reservation if something failed
+      if (reservationId) {
+        logger.warn('Releasing reservation due to error', {
+          awaitingId: reservationId,
+          error: error.message
+        });
+
+        try {
+          await orderslotService.cancelAwaiting(
+            reservationId,
+            `PreActions failed: ${error.message}`
+          );
+        } catch (cleanupError: any) {
+          logger.error('Failed to cleanup reservation', {
+            awaitingId: reservationId,
+            cleanupError: cleanupError.message
+          });
+        }
+      }
+
       logger.error('PreActions failed', { 
         error: error.message,
         stack: error.stack,
@@ -561,6 +610,9 @@ class AnonService {
 
       // Update awaiting and postDetails in transaction
       await prisma.$transaction(async (tx) => {
+
+        await orderslotService.releaseReservation(awaitingId)
+
         await tx.awaiting.update({
           where: { id: awaitingId },
           data: { status: 'EXPIRED' }
