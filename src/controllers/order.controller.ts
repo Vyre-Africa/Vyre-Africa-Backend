@@ -93,7 +93,8 @@ class OrderController {
             });
         }
 
-        await orderService.queue({
+        // ✅ Call directly to get the order
+        const order = await orderService.createOrder({
           userId: user.id,
           rate: parseFloat(price),
           amount: parseFloat(amount), 
@@ -102,34 +103,22 @@ class OrderController {
           minimumAmount: parseFloat(minimumAmount),
           baseWallet: baseWalletExists,
           quoteWallet: quoteWalletExists
-        })
-
-        // const order = await orderService.createOrder({
-        //   userId: user.id,
-        //   rate: parseFloat(price),
-        //   amount: parseFloat(amount), 
-        //   orderType: type, 
-        //   pairId, 
-        //   minimumAmount: parseFloat(minimumAmount),
-        //   baseWallet: baseWalletExists,
-        //   quoteWallet: quoteWalletExists
-        // })
+        });
 
       return res
         .status(200)
         .json({
-          msg: 'Order Initiated Successfully',
-          success: true
-          // order
+          msg: 'Order Created Successfully',
+          success: true,
+          order
         });
 
     } catch (error) {
-      console.log(error)
-      res.status(500)
-        .json({
-          msg: 'Order initiated unsuccessful',
-          success: false
-        });
+      console.log(error);
+      return res.status(500).json({
+        msg:'Order creation unsuccessful',
+        success: false
+      });
     }
   }
 
