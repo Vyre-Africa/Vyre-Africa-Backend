@@ -7,6 +7,7 @@ import config from './config/env.config';
 import { User } from './globals';
 import Decimal from 'decimal.js';
 import crypto from 'crypto';
+import { ulid } from 'ulid';
 
 const algorithm: string = 'aes-256-cbc';
 const key: Buffer = crypto.randomBytes(32);
@@ -484,6 +485,10 @@ export function getPaymentSystems(currencyISO: CurrencyISO): PaymentSystem[] {
   };
   
   return PaymentSystemsMap[currency] || [];
+}
+
+export function generateOrderId(): string {
+  return `ORD-${ulid()}`; // e.g., "ORD-01HN8X9ZYQR8XJKM9T5WN3QVBP"
 }
 
 

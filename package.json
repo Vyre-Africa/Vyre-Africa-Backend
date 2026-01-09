@@ -66,6 +66,7 @@
         "swagger-autogen": "^2.23.7",
         "swagger-ui-express": "^5.0.1",
         "ts-node": "^10.9.2",
+        "ulid": "^3.0.2",
         "uuid": "^11.1.0",
         "winston": "^3.17.0",
         "zeptomail": "^6.0.0"

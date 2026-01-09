@@ -12,7 +12,8 @@ import mobilePushService from '../services/mobilePush.service';
 import { subMinutes } from 'date-fns';
 import anonService from '../services/anon.service';
 // import {Currency,walletType} from '@prisma/client';
-import { hasSufficientBalance, amountSufficient, getPaymentSystems } from '../utils';
+import { generateOrderId, amountSufficient, getPaymentSystems } from '../utils';
+import Decimal from 'decimal.js';
 
 
 class OrderController {
@@ -67,25 +68,23 @@ class OrderController {
 
         console.log('pair', pair)
 
-        const baseWalletExists = await prisma.wallet.findFirst({
-          where: {
-            userId: user.id,
-            currencyId: pair?.baseCurrency?.id!
-          }
-        });
+        const [baseWallet, quoteWallet] = await Promise.all([
+          prisma.wallet.findFirst({
+            where: {
+              userId: user.id,
+              currencyId: pair?.baseCurrency?.id!
+            }
+          }),
+          prisma.wallet.findFirst({
+            where: {
+              userId: user.id,
+              currencyId: pair?.quoteCurrency?.id!
+            }
+          })
+        ]);
 
-        console.log('baseWalletExists', baseWalletExists)
 
-        const quoteWalletExists = await prisma.wallet.findFirst({
-          where: {
-            userId: user.id,
-            currencyId: pair?.quoteCurrency?.id!
-          }
-        });
-
-        console.log('quoteWalletExists', quoteWalletExists)
-
-        if(!baseWalletExists || !quoteWalletExists){
+        if(!baseWallet || !quoteWallet){
           return res.status(400)
             .json({
               msg: 'User wallets required does not exist',
@@ -93,24 +92,49 @@ class OrderController {
             });
         }
 
-        // ✅ Call directly to get the order
-        const order = await orderService.createOrder({
+        // ✅ Quick balance check before queuing
+        const amountDecimal = new Decimal(amount);
+        const walletToCheck = type === 'SELL' ? baseWallet : quoteWallet;
+        const availableBalance = new Decimal(walletToCheck.availableBalance);
+
+        if (availableBalance.lessThan(amountDecimal)) {
+          return res.status(400).json({
+            msg: `Insufficient ${type === 'SELL' ? 'base' : 'quote'} balance`,
+            success: false,
+          });
+        }
+
+        // ✅ PHASE 2: Generate order ID immediately
+        const orderId = generateOrderId();
+
+        // ✅ Queue the heavy work (transaction, blocking, etc.)
+        await orderService.queue({
+          orderId, // Pass the pre-generated ID
           userId: user.id,
           rate: parseFloat(price),
           amount: parseFloat(amount), 
           orderType: type, 
           pairId, 
           minimumAmount: parseFloat(minimumAmount),
-          baseWallet: baseWalletExists,
-          quoteWallet: quoteWalletExists
+          baseWallet,
+          quoteWallet
         });
+
+
 
       return res
         .status(200)
         .json({
           msg: 'Order Created Successfully',
           success: true,
-          order
+          order: {
+            id: orderId,
+            type: type,
+            amount: amount,
+            price: price,
+            status: 'PROCESSING', // Add status field
+            createdAt: new Date().toISOString()
+          }
         });
 
     } catch (error) {

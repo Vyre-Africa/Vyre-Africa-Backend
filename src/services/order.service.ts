@@ -42,6 +42,7 @@ class OrderService {
   // ============================================
 
   async createOrder(payload: {
+    orderId: string;
     userId: string;
     rate: number;
     amount: number;
@@ -51,7 +52,7 @@ class OrderService {
     baseWallet: Wallet;
     quoteWallet: Wallet;
   }) {
-    const { userId, rate, amount, orderType, pairId, minimumAmount, baseWallet, quoteWallet } = payload;
+    const { userId, orderId, rate, amount, orderType, pairId, minimumAmount, baseWallet, quoteWallet } = payload;
 
     try {
       logger.info('Creating order', { userId, orderType, amount });
@@ -113,6 +114,7 @@ class OrderService {
           // Create order with Decimal values
           return await tx.order.create({
             data: {
+              id: orderId,
               userId,
               blockId,
               amountMinimum: minimumAmount, // ✅ Prisma accepts number or Decimal
