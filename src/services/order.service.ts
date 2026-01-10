@@ -13,6 +13,7 @@ import { Queue } from 'bullmq'; // Using BullMQ for job queue
 import connection from '../config/redis.config';
 import logger from '../config/logger';
 import { DecimalUtil } from './decimal.util';
+import { getMinimumOrderAmount, getMinimumOrderDescription } from '../config/minimum.config';
 
 interface ProcessOrderPayload {
   userId: string;
@@ -67,8 +68,22 @@ class OrderService {
 
       if (!pair) throw new Error('Trading pair not found');
 
+      // ✅ Get configured minimum for the base currency
+      const configuredMinimum = getMinimumOrderAmount(pair.baseCurrency?.ISO as string);
+
       // ✅ Convert to Decimal for calculations
       const amountDecimal = new Decimal(amount);
+      const userMinimum = minimumAmount ? new Decimal(minimumAmount) : new Decimal(0);
+      const enforcedMinimum = Decimal.max(userMinimum, configuredMinimum);
+
+      // ✅ Validate order amount meets minimum
+      if (amountDecimal.lessThan(enforcedMinimum)) {
+        const description = getMinimumOrderDescription(pair.baseCurrency?.ISO as string);
+        throw new Error(
+          `Order amount ${amountDecimal.toString()} ${pair.baseCurrency?.ISO as string} is below minimum requirement of ${description}`
+        );
+      }
+      
       const baseBalance = new Decimal(baseWallet.availableBalance);
       const quoteBalance = new Decimal(quoteWallet.availableBalance);
 
@@ -84,6 +99,14 @@ class OrderService {
       const feeRate = new Decimal('0.012');
       const fee = amountDecimal.times(feeRate);
       const adjustedAmount = amountDecimal.minus(fee);
+
+      // ✅ Ensure adjusted amount (after fee) still meets minimum
+      if (adjustedAmount.lessThan(enforcedMinimum)) {
+        throw new Error(
+          `Order amount after fees (${adjustedAmount.toString()} ${pair.baseCurrency?.ISO as string}) is below minimum. ` +
+          `Please increase order amount to cover fees and meet minimum of ${enforcedMinimum.toString()} ${pair.baseCurrency?.ISO as string}`
+        );
+      }
 
       logger.info('Fee calculation', {
         amount: amountDecimal.toString(),
@@ -117,7 +140,7 @@ class OrderService {
               id: orderId,
               userId,
               blockId,
-              amountMinimum: minimumAmount, // ✅ Prisma accepts number or Decimal
+              amountMinimum: enforcedMinimum, // ✅ Prisma accepts number or Decimal
               amount: adjustedAmount,               // ✅ Prisma accepts number or Decimal
               type: orderType,
               pairId,

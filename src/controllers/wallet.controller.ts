@@ -53,7 +53,10 @@ class WalletController {
         .json({
           msg:`rate fetched successfully`,
           success: true,
-          rate:response,
+          rate:{
+            ...response,
+            value: response.value.toFixed(2)
+          },
           value: convertedAmount
         });
 

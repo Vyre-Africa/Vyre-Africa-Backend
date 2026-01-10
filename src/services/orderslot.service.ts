@@ -58,6 +58,7 @@ class OrderSlotService {
           amount: true,
           amountProcessed: true,
           amountReserved: true,
+          amountMinimum: true,
           status: true,
           price: true
         }
@@ -83,6 +84,24 @@ class OrderSlotService {
       }
 
       const orderPrice = new Decimal(order.price);
+      const orderMinimum = new Decimal(order.amountMinimum);
+      const amountInBase = order.type === 'SELL'
+        ? requestedDecimal.dividedBy(orderPrice)
+        : requestedDecimal;
+
+      if (amountInBase.lessThan(orderMinimum)) {
+        console.log('Requested amount is below order minimum');
+        return {
+          success: false,
+          requestedAmount: requestedDecimal.toString(),
+          orderAmount: order.amount.toString(),
+          amountProcessed: order.amountProcessed.toString(),
+          amountReserved: order.amountReserved.toString(),
+          reason: `Order is below minimum amount of ${orderMinimum.toFixed(8)} in base currency`
+        };
+      }
+
+
 
       // Step 2: Convert requested amount to order's base currency
       // This is what we'll reserve on the order

@@ -115,7 +115,7 @@ class OrderController {
           amount: parseFloat(amount), 
           orderType: type, 
           pairId, 
-          minimumAmount: parseFloat(minimumAmount),
+          minimumAmount: minimumAmount ? parseFloat(minimumAmount) : undefined,
           baseWallet,
           quoteWallet
         });
