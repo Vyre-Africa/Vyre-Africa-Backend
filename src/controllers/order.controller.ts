@@ -131,6 +131,7 @@ class OrderController {
             id: orderId,
             type: type,
             amount: amount,
+            pair,
             price: price,
             status: 'PROCESSING', // Add status field
             createdAt: new Date().toISOString()
