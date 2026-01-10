@@ -692,14 +692,21 @@ class WalletService
     }
 
 
-    async getRate(currency: string,basePair: string)
-    {
-        const response = await tatumAxios.get(`/tatum/rate/${currency}?basePair=${basePair}`)
-        // console.log(response)
-        const result = response.data
-        return {
-            ...result,
-            value: result.value.toFixed(2)
+    async getRate(currency: string, basePair: string) {
+        const response = await tatumAxios.get(`/tatum/rate/${currency}?basePair=${basePair}`);
+        const result = response.data;
+        console.log('fetched rate',result)
+        try {
+            // ✅ Use Decimal for financial calculations
+            const value = new Decimal(result.value);
+            
+            return {
+                ...result,
+                value: value.toFixed(2), // Decimal's toFixed works correctly
+                rawValue: value.toString() // Keep full precision
+            };
+        } catch (error) {
+            throw new Error(`Invalid rate value received: ${result.value}`);
         }
     }
 
