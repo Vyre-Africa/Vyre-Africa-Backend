@@ -697,7 +697,10 @@ class WalletService
         const response = await tatumAxios.get(`/tatum/rate/${currency}?basePair=${basePair}`)
         // console.log(response)
         const result = response.data
-        return result
+        return {
+            ...result,
+            value: result.value.toFixed(2)
+        }
     }
 
     /**
