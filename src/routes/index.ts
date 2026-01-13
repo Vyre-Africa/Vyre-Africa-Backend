@@ -340,6 +340,13 @@ router.get(
 
 // //update user profile
 
+
+router.get(
+  '/user/portfolio',
+  authMiddleware,
+  walletController.fetchPortfolio,
+);
+
 router.get(
   '/user/get-profile',
   authMiddleware,

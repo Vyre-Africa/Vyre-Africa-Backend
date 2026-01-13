@@ -69,6 +69,390 @@ class WalletService
         });
     }
 
+    // Add these methods to the WalletService class
+
+    /**
+     * Aggregate total value of all fiat wallets for a user in a specified fiat currency
+     * @param userId - User ID
+     * @param targetCurrency - Target fiat currency ISO code (e.g., 'NGN', 'USD')
+     * @returns Total value in target currency with locked balances
+     */
+    async aggregateFiatWallets(userId: string, targetCurrency: string = 'USD'): Promise<{
+        totalValue: string;
+        totalAccountBalance: string;
+        lockedValue: string;
+        targetCurrency: string;
+        wallets: Array<{
+            walletId: string;
+            currency: string;
+            availableBalance: string;
+            accountBalance: string;
+            lockedBalance: string;
+            valueInTarget: string;
+            rate: string;
+        }>;
+    }> {
+        try {
+            // Fetch all fiat wallets for the user
+            const wallets = await prisma.wallet.findMany({
+                where: {
+                    userId,
+                    currency: {
+                        isStablecoin: false,
+                        type: 'FIAT'
+                    }
+                },
+                include: {
+                    currency: {
+                        select: {
+                            ISO: true,
+                            name: true
+                        }
+                    }
+                }
+            });
+
+            if (wallets.length === 0) {
+                return {
+                    totalValue: '0.00',
+                    totalAccountBalance: '0.00',
+                    lockedValue: '0.00',
+                    targetCurrency,
+                    wallets: []
+                };
+            }
+
+            let totalValue = new Decimal(0);
+            let totalAccountBalance = new Decimal(0);
+            let totalLockedValue = new Decimal(0);
+            
+            const walletDetails: Array<{
+                walletId: string;
+                currency: string;
+                availableBalance: string;
+                accountBalance: string;
+                lockedBalance: string;
+                valueInTarget: string;
+                rate: string;
+            }> = [];
+
+            // Process each wallet
+            for (const wallet of wallets) {
+                const availableBalance = new Decimal(wallet.availableBalance || 0);
+                const accountBalance = new Decimal(wallet.accountBalance || 0);
+                const lockedBalance = accountBalance.minus(availableBalance);
+                
+                let rate: string;
+
+                // If wallet currency is same as target, no conversion needed
+                if (wallet.currency?.ISO === targetCurrency) {
+                    rate = '1.00';
+                } else {
+                    // Fetch exchange rate
+                    try {
+                        const rateData = await this.getRate(wallet.currency?.ISO as string, targetCurrency);
+                        const exchangeRate = new Decimal(rateData.value);
+                        rate = exchangeRate.toFixed(2);
+                    } catch (error) {
+                        logger.error('Failed to fetch rate for fiat wallet', {
+                            walletId: wallet.id,
+                            from: wallet.currency?.ISO,
+                            to: targetCurrency,
+                            error
+                        });
+                        // Skip this wallet if rate fetch fails
+                        continue;
+                    }
+                }
+
+                const exchangeRate = new Decimal(rate);
+                const availableValueInTarget = availableBalance.mul(exchangeRate);
+                const accountValueInTarget = accountBalance.mul(exchangeRate);
+                const lockedValueInTarget = lockedBalance.mul(exchangeRate);
+
+                totalValue = totalValue.add(availableValueInTarget);
+                totalAccountBalance = totalAccountBalance.add(accountValueInTarget);
+                totalLockedValue = totalLockedValue.add(lockedValueInTarget);
+
+                walletDetails.push({
+                    walletId: wallet.id,
+                    currency: wallet.currency?.ISO as string,
+                    availableBalance: availableBalance.toFixed(2),
+                    accountBalance: accountBalance.toFixed(2),
+                    lockedBalance: lockedBalance.toFixed(2),
+                    valueInTarget: availableValueInTarget.toFixed(2),
+                    rate
+                });
+            }
+
+            logger.info('Fiat wallets aggregated', {
+                userId,
+                targetCurrency,
+                totalValue: totalValue.toFixed(2),
+                totalAccountBalance: totalAccountBalance.toFixed(2),
+                lockedValue: totalLockedValue.toFixed(2),
+                walletCount: wallets.length
+            });
+
+            return {
+                totalValue: totalValue.toFixed(2),
+                totalAccountBalance: totalAccountBalance.toFixed(2),
+                lockedValue: totalLockedValue.toFixed(2),
+                targetCurrency,
+                wallets: walletDetails
+            };
+
+        } catch (error: any) {
+            logger.error('Failed to aggregate fiat wallets', {
+                userId,
+                targetCurrency,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Aggregate total value of all crypto wallets for a user in a specified fiat currency
+     * @param userId - User ID
+     * @param targetCurrency - Target fiat currency ISO code (e.g., 'NGN', 'USD')
+     * @returns Total value in target currency with locked balances
+     */
+    async aggregateCryptoWallets(userId: string, targetCurrency: string = 'USD'): Promise<{
+        totalValue: string;
+        totalAccountBalance: string;
+        lockedValue: string;
+        targetCurrency: string;
+        wallets: Array<{
+            walletId: string;
+            currency: string;
+            availableBalance: string;
+            accountBalance: string;
+            lockedBalance: string;
+            valueInTarget: string;
+            rate: string;
+            isStablecoin: boolean;
+        }>;
+    }> {
+        try {
+            // Fetch all crypto wallets for the user (including stablecoins)
+            const wallets = await prisma.wallet.findMany({
+                where: {
+                    userId,
+                    currency: {
+                        type: 'CRYPTO'
+                    }
+                },
+                include: {
+                    currency: {
+                        select: {
+                            ISO: true,
+                            name: true,
+                            isStablecoin: true
+                        }
+                    }
+                }
+            });
+
+            if (wallets.length === 0) {
+                return {
+                    totalValue: '0.00',
+                    totalAccountBalance: '0.00',
+                    lockedValue: '0.00',
+                    targetCurrency,
+                    wallets: []
+                };
+            }
+
+            let totalValue = new Decimal(0);
+            let totalAccountBalance = new Decimal(0);
+            let totalLockedValue = new Decimal(0);
+            
+            const walletDetails: Array<{
+                walletId: string;
+                currency: string;
+                availableBalance: string;
+                accountBalance: string;
+                lockedBalance: string;
+                valueInTarget: string;
+                rate: string;
+                isStablecoin: boolean;
+            }> = [];
+
+            // Process each wallet
+            for (const wallet of wallets) {
+                const availableBalance = new Decimal(wallet.availableBalance || 0);
+                const accountBalance = new Decimal(wallet.accountBalance || 0);
+                const lockedBalance = accountBalance.minus(availableBalance);
+                
+                let rate: string;
+
+                // Fetch exchange rate from crypto to target fiat
+                try {
+                    const rateData = await this.getRate(wallet?.currency?.ISO as string, targetCurrency);
+                    const exchangeRate = new Decimal(rateData.value);
+                    rate = exchangeRate.toFixed(2);
+                } catch (error) {
+                    logger.error('Failed to fetch rate for crypto wallet', {
+                        walletId: wallet.id,
+                        from: wallet?.currency?.ISO as string,
+                        to: targetCurrency,
+                        error
+                    });
+                    // Skip this wallet if rate fetch fails
+                    continue;
+                }
+
+                const exchangeRate = new Decimal(rate);
+                const availableValueInTarget = availableBalance.mul(exchangeRate);
+                const accountValueInTarget = accountBalance.mul(exchangeRate);
+                const lockedValueInTarget = lockedBalance.mul(exchangeRate);
+
+                totalValue = totalValue.add(availableValueInTarget);
+                totalAccountBalance = totalAccountBalance.add(accountValueInTarget);
+                totalLockedValue = totalLockedValue.add(lockedValueInTarget);
+
+                walletDetails.push({
+                    walletId: wallet.id,
+                    currency: wallet.currency?.ISO as string,
+                    availableBalance: DecimalUtil.roundForDisplay(availableBalance, wallet.currency?.ISO as string),
+                    accountBalance: DecimalUtil.roundForDisplay(accountBalance, wallet.currency?.ISO as string),
+                    lockedBalance: DecimalUtil.roundForDisplay(lockedBalance, wallet.currency?.ISO as string),
+                    valueInTarget: availableValueInTarget.toFixed(2),
+                    rate,
+                    isStablecoin: wallet?.currency?.isStablecoin as boolean
+                });
+            }
+
+            logger.info('Crypto wallets aggregated', {
+                userId,
+                targetCurrency,
+                totalValue: totalValue.toFixed(2),
+                totalAccountBalance: totalAccountBalance.toFixed(2),
+                lockedValue: totalLockedValue.toFixed(2),
+                walletCount: wallets.length
+            });
+
+            return {
+                totalValue: totalValue.toFixed(2),
+                totalAccountBalance: totalAccountBalance.toFixed(2),
+                lockedValue: totalLockedValue.toFixed(2),
+                targetCurrency,
+                wallets: walletDetails
+            };
+
+        } catch (error: any) {
+            logger.error('Failed to aggregate crypto wallets', {
+                userId,
+                targetCurrency,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Aggregate total value of ALL wallets (fiat + crypto) for a user in a specified fiat currency
+     * @param userId - User ID
+     * @param targetCurrency - Target fiat currency ISO code (e.g., 'NGN', 'USD')
+     * @returns Combined total value in target currency with locked balances
+     */
+    async aggregateAllWallets(userId: string, targetCurrency: string = 'USD'): Promise<{
+        totalValue: string;
+        totalAccountBalance: string;
+        lockedValue: string;
+        targetCurrency: string;
+        fiatTotal: string;
+        fiatAccountBalance: string;
+        fiatLockedValue: string;
+        cryptoTotal: string;
+        cryptoAccountBalance: string;
+        cryptoLockedValue: string;
+        totalInDefaultCurrency: string;
+        lockedInDefaultCurrency: string;
+        breakdown: {
+            fiat: Array<{
+                walletId: string;
+                currency: string;
+                availableBalance: string;
+                accountBalance: string;
+                lockedBalance: string;
+                valueInTarget: string;
+                rate: string;
+            }>;
+            crypto: Array<{
+                walletId: string;
+                currency: string;
+                availableBalance: string;
+                accountBalance: string;
+                lockedBalance: string;
+                valueInTarget: string;
+                rate: string;
+                isStablecoin: boolean;
+            }>;
+        };
+    }> {
+        try {
+            // Aggregate both fiat and crypto wallets in parallel
+            const [fiatResult, cryptoResult, defaultRate] = await Promise.all([
+                this.aggregateFiatWallets(userId, targetCurrency),
+                this.aggregateCryptoWallets(userId, targetCurrency),
+                this.getRate(targetCurrency, 'USD') // Fetch default rate for logging;
+            ]);
+
+            const defaultRateDecimal = new Decimal(defaultRate.value);
+
+            const totalValue = new Decimal(fiatResult.totalValue)
+                .add(new Decimal(cryptoResult.totalValue));
+            
+            const totalAccountBalance = new Decimal(fiatResult.totalAccountBalance)
+                .add(new Decimal(cryptoResult.totalAccountBalance));
+            
+            const totalLockedValue = new Decimal(fiatResult.lockedValue)
+                .add(new Decimal(cryptoResult.lockedValue));
+
+            const totalInDefaultCurrency = totalAccountBalance.mul(defaultRateDecimal);
+            const lockedInDefaultCurrency = totalAccountBalance.mul(defaultRateDecimal);
+
+            logger.info('All wallets aggregated', {
+                userId,
+                targetCurrency,
+                totalValue: totalValue.toFixed(2),
+                totalAccountBalance: totalAccountBalance.toFixed(2),
+                lockedValue: totalLockedValue.toFixed(2),
+                fiatTotal: fiatResult.totalValue,
+                cryptoTotal: cryptoResult.totalValue
+            });
+
+            return {
+                totalValue: totalValue.toFixed(2),
+                totalAccountBalance: totalAccountBalance.toFixed(2),
+                lockedValue: totalLockedValue.toFixed(2),
+                targetCurrency,
+                fiatTotal: fiatResult.totalValue,
+                fiatAccountBalance: fiatResult.totalAccountBalance,
+                fiatLockedValue: fiatResult.lockedValue,
+                cryptoTotal: cryptoResult.totalValue,
+                cryptoAccountBalance: cryptoResult.totalAccountBalance,
+                cryptoLockedValue: cryptoResult.lockedValue,
+                totalInDefaultCurrency: totalInDefaultCurrency.toFixed(2),
+                lockedInDefaultCurrency: lockedInDefaultCurrency.toFixed(2),
+                breakdown: {
+                    fiat: fiatResult.wallets,
+                    crypto: cryptoResult.wallets
+                }
+            };
+
+        } catch (error: any) {
+            logger.error('Failed to aggregate all wallets', {
+                userId,
+                targetCurrency,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+
 
 
     private complete_Withdrawal = async(

@@ -660,6 +660,28 @@ class WalletController {
   // }
 
 
+  async fetchPortfolio(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+
+    try {
+
+      const userPortfolio = await walletService.aggregateAllWallets(user.id,'NGN');
+      console.log('user portfolio', userPortfolio)
+
+    
+      return res
+        .status(200)
+        .json({
+          msg: 'wallets fetched Successfully',
+          success: true,
+          data: userPortfolio
+        });
+    } catch (error) {
+      console.log(error);
+      return res.status(500).send({ msg: 'Internal Server Error', success: false, error });
+    }
+  }
+
   async fetchWallets(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     const { type } = req.query;
