@@ -725,10 +725,10 @@ class eventService {
       }
 
       // Queue order processing
-      await this.orderProcessingQueue.add('process-order', {
+      await orderService.process_Order_Queue({
         awaitingId: awaiting.id,
         transactionId: transaction.id
-      });
+      })
 
       // Cancel the scheduled expiry
       await anonService.cancelAwaitingExpiry(awaiting.id);
@@ -802,103 +802,103 @@ class eventService {
   }
 
 
-  /**
-   * Process queued order (called by worker)
-  */
-  public async processOrderJob(jobData: { awaitingId: string }) {
-    const { awaitingId } = jobData;
+  // /**
+  //  * Process queued order (called by worker)
+  // */
+  // public async processOrderJob(jobData: { awaitingId: string }) {
+  //   const { awaitingId } = jobData;
 
-    try {
-      const awaiting = await prisma.awaiting.findUnique({
-        where: { id: awaitingId },
-        include: {
-          order: {
-            include: {
-              pair: {
-                include: {
-                  baseCurrency: true,
-                  quoteCurrency: true
-                }
-              }
-            }
-          },
-          currency: true,
-          wallet: true
-        }
-      });
+  //   try {
+  //     const awaiting = await prisma.awaiting.findUnique({
+  //       where: { id: awaitingId },
+  //       include: {
+  //         order: {
+  //           include: {
+  //             pair: {
+  //               include: {
+  //                 baseCurrency: true,
+  //                 quoteCurrency: true
+  //               }
+  //             }
+  //           }
+  //         },
+  //         currency: true,
+  //         wallet: true
+  //       }
+  //     });
 
-      if (!awaiting) {
-        throw new Error(`Awaiting record ${awaitingId} not found`);
-      }
+  //     if (!awaiting) {
+  //       throw new Error(`Awaiting record ${awaitingId} not found`);
+  //     }
 
-      // Update status to processing
-      await prisma.awaiting.update({
-        where: { id: awaitingId },
-        data: { status: 'PROCESSING' }
-      });
+  //     // Update status to processing
+  //     await prisma.awaiting.update({
+  //       where: { id: awaitingId },
+  //       data: { status: 'PROCESSING' }
+  //     });
 
-      await ablyService.awaiting_Order_Update(awaitingId);
+  //     await ablyService.awaiting_Order_Update(awaitingId);
 
-      // Find required wallets
-      const [userBaseWallet, userQuoteWallet] = await Promise.all([
-        prisma.wallet.findFirst({
-          where: {
-            userId: awaiting.userId,
-            currencyId: awaiting.order?.pair?.baseId
-          }
-        }),
-        prisma.wallet.findFirst({
-          where: {
-            userId: awaiting.userId,
-            currencyId: awaiting.order?.pair?.quoteId
-          }
-        })
-      ]);
+  //     // Find required wallets
+  //     const [userBaseWallet, userQuoteWallet] = await Promise.all([
+  //       prisma.wallet.findFirst({
+  //         where: {
+  //           userId: awaiting.userId,
+  //           currencyId: awaiting.order?.pair?.baseId
+  //         }
+  //       }),
+  //       prisma.wallet.findFirst({
+  //         where: {
+  //           userId: awaiting.userId,
+  //           currencyId: awaiting.order?.pair?.quoteId
+  //         }
+  //       })
+  //     ]);
 
-      if (!userBaseWallet || !userQuoteWallet) {
-        throw new Error('Required wallets not found');
-      }
+  //     if (!userBaseWallet || !userQuoteWallet) {
+  //       throw new Error('Required wallets not found');
+  //     }
 
-      // Process the order
-      const result = await orderService.processOrder({
-        userId: awaiting?.userId as string,
-        orderId: awaiting?.orderId as string,
-        amount: Number(awaiting.amount),
-        userBaseWallet,
-        userQuoteWallet
-      });
+  //     // Process the order
+  //     const result = await orderService.processOrder({
+  //       userId: awaiting?.userId as string,
+  //       orderId: awaiting?.orderId as string,
+  //       amount: Number(awaiting.amount),
+  //       userBaseWallet,
+  //       userQuoteWallet
+  //     });
 
-      await prisma.awaiting.update({
-        where: { id: awaitingId },
-        data: {
-          status: 'SUCCESS',
-        }
-      });
+  //     await prisma.awaiting.update({
+  //       where: { id: awaitingId },
+  //       data: {
+  //         status: 'SUCCESS',
+  //       }
+  //     });
 
-      await ablyService.awaiting_Order_Update(awaitingId);
+  //     await ablyService.awaiting_Order_Update(awaitingId);
 
-      // Queue order for post Action processing
-      await this.orderProcessingQueue.add('process-post-action', {
-        awaitingId
-      });
+  //     // Queue order for post Action processing
+  //     await this.orderProcessingQueue.add('process-post-action', {
+  //       awaitingId
+  //     });
 
-      logger.info(`order processed and queued for post action: ${result?.id}`);
+  //     logger.info(`order processed and queued for post action: ${result?.id}`);
 
-      return { status: 'queued', action: 'process-post-action' };
+  //     return { status: 'queued', action: 'process-post-action' };
 
-    } catch (error) {
-      console.error(`Order processing failed for ${awaitingId}:`, error);
+  //   } catch (error) {
+  //     console.error(`Order processing failed for ${awaitingId}:`, error);
 
-      await orderslotService.cancelAwaiting(
-        awaitingId,
-        `Order processing failed for ${awaitingId}:`
-      );
+  //     await orderslotService.cancelAwaiting(
+  //       awaitingId,
+  //       `Order processing failed for ${awaitingId}:`
+  //     );
 
-      await ablyService.awaiting_Order_Update(awaitingId);
+  //     await ablyService.awaiting_Order_Update(awaitingId);
       
-      throw error;
-    }
-  }
+  //     throw error;
+  //   }
+  // }
 
   /**
    * Process queued refund (called by worker)
@@ -1012,9 +1012,11 @@ class eventService {
       });
 
       if (!postDetails || postDetails.status !== 'PENDING') {
-        throw new Error(
-          `Post details not found for awaiting ${awaitingId} or already processed. Status: ${postDetails?.status || 'NOT_FOUND'}`
-        );
+        logger.warn(`Post details for awaiting ${awaitingId} not found or already processed`);
+        return { 
+          status: 'Not Found or Already Processed', 
+          reason: `Post details not found for awaiting ${awaitingId} or already processed. Status: ${postDetails?.status || 'NOT_FOUND'}`, 
+        };
       }
 
       // 5. Fetch wallet with currency details

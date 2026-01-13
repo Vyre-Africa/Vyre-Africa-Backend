@@ -36,7 +36,7 @@ const worker = new Worker('general-process',
         case 'create-order':
           return await orderService.createOrder(job.data);
         case 'process-order':
-          return await eventService.processOrderJob(job.data);
+          return await orderService.processOrderJob(job.data);
         case 'process-post-action':
           return await eventService.process_Post_Action_Job(job.data);
         case 'initiate-refund':

@@ -14,6 +14,9 @@ import connection from '../config/redis.config';
 import logger from '../config/logger';
 import { DecimalUtil } from './decimal.util';
 import { getMinimumOrderAmount, getMinimumOrderDescription } from '../config/minimum.config';
+import ablyService from './ably.service';
+import orderslotService from './orderslot.service';
+import moment from 'moment';
 
 interface ProcessOrderPayload {
   userId: string;
@@ -22,6 +25,26 @@ interface ProcessOrderPayload {
   userBaseWallet: Wallet;
   userQuoteWallet: Wallet;
   retryCount?: number;
+}
+
+interface InstantOrderResult {
+  success: boolean;
+  message: string;
+  data?: {
+    awaitingId: string;
+    orderId: string;
+    amount: string;
+    expiresAt: Date;
+    status: string;
+  };
+}
+
+interface InstantAction {
+  orderId: string;
+  amount: string;
+  userId: string;
+  baseWallet: Wallet;
+  quoteWallet: Wallet;
 }
 
 class OrderService {
@@ -675,8 +698,248 @@ class OrderService {
       });
     }
 
-    async queue(payload: any) {
+    /**
+    * Process queued order (called by worker)
+    */
+    public async processOrderJob(jobData: { awaitingId: string }) {
+      const { awaitingId } = jobData;
+    
+      try {
+          const awaiting = await prisma.awaiting.findUnique({
+            where: { id: awaitingId },
+            include: {
+              order: {
+                include: {
+                  pair: {
+                    include: {
+                      baseCurrency: true,
+                      quoteCurrency: true
+                    }
+                  }
+                }
+              },
+              currency: true,
+              wallet: true,
+              postDetails: true
+            }
+          });
+    
+          if (!awaiting) {
+            throw new Error(`Awaiting record ${awaitingId} not found`);
+          }
+    
+          // Update status to processing
+          await prisma.awaiting.update({
+            where: { id: awaitingId },
+            data: { status: 'PROCESSING' }
+          });
+    
+          await ablyService.awaiting_Order_Update(awaitingId);
+    
+          // Find required wallets
+          const [userBaseWallet, userQuoteWallet] = await Promise.all([
+            prisma.wallet.findFirst({
+              where: {
+                userId: awaiting.userId,
+                currencyId: awaiting.order?.pair?.baseId
+              }
+            }),
+            prisma.wallet.findFirst({
+              where: {
+                userId: awaiting.userId,
+                currencyId: awaiting.order?.pair?.quoteId
+              }
+            })
+          ]);
+    
+          if (!userBaseWallet || !userQuoteWallet) {
+            throw new Error('Required wallets not found');
+          }
+    
+          // Process the order
+          const result = await this.processOrder({
+            userId: awaiting?.userId as string,
+            orderId: awaiting?.orderId as string,
+            amount: Number(awaiting.amount),
+            userBaseWallet,
+            userQuoteWallet
+          });
+    
+          await prisma.awaiting.update({
+            where: { id: awaitingId },
+            data: {
+              status: 'SUCCESS',
+            }
+          });
+    
+          await ablyService.awaiting_Order_Update(awaitingId);
+    
+          // Queue order for post Action processing
+          if(awaiting?.postDetails.length > 0){
+            logger.info(`Queuing post action for awaiting: ${awaitingId}`);
+
+            await this.generalQueue.add('process-post-action', {
+              awaitingId
+            });
+
+            logger.info(`order processed and queued for post action: ${result?.id}`);
+         }
+          
+        return { status: 'processed', action: 'process-post-action' };
+    
+      } catch (error) {
+          console.error(`Order processing failed for ${awaitingId}:`, error);
+    
+          await orderslotService.cancelAwaiting(
+            awaitingId,
+            `Order processing failed for ${awaitingId}:`
+          );
+    
+          await ablyService.awaiting_Order_Update(awaitingId);
+          
+          throw error;
+      }
+    }
+
+    // ============================================
+    // Initiates and instantly queues an order
+    // ============================================
+    async instantOrder(payload: InstantAction): Promise<InstantOrderResult> {
+    const { orderId, amount, userId, baseWallet, quoteWallet } = payload;
+
+    let reservationId: string | undefined;
+
+    try {
+      logger.info('Processing instant order', { orderId, userId, amount });
+
+      // ============================================
+      // STEP 1: FETCH ORDER DETAILS
+      // ============================================
+      const order = await prisma.order.findUnique({ 
+        where: { id: orderId },
+        select: { 
+          id: true, 
+          type: true,
+          pairId: true,
+          price: true,
+          amount: true
+        }
+      });
+
+      if (!order) {
+        return {
+          success: false,
+          message: 'Order not found'
+        };
+      }
+
+      // ============================================
+      // STEP 2: RESERVE ORDER SLOT
+      // ============================================
+      const reservation = await orderslotService.reserveOrderSlot(orderId, amount);
+
+      if (!reservation.success) {
+        return {
+          success: false,
+          message: reservation.reason || 
+            `Insufficient order capacity. Available: ${reservation.availableAmount}, Requested: ${amount}`
+        };
+      }
+
+      reservationId = reservation.awaitingId;
+
+      logger.info('Order slot reserved', {
+        orderId,
+        awaitingId: reservationId,
+        amount
+      });
+
+      // ============================================
+      // STEP 3: UPDATE AWAITING WITH USER DETAILS
+      // ============================================
+      const expiryDuration = moment().add(30, 'minutes').toDate();
+      const walletId = order.type === 'BUY' ? baseWallet.id : quoteWallet.id;
+
+      const awaiting = await prisma.awaiting.update({
+        where: { id: reservationId },
+        data: {
+          userId,
+          walletId,
+          duration: expiryDuration,
+        },
+        select: {
+          id: true,
+          orderId: true,
+          userId: true,
+          amount: true,
+          duration: true,
+          status: true
+        }
+      });
+
+      // ============================================
+      // STEP 4: QUEUE ORDER PROCESSING
+      // ============================================
+      await this.process_Order_Queue({
+        awaitingId: awaiting.id,
+      });
+
+      logger.info('Instant order queued successfully', {
+        awaitingId: awaiting.id,
+        orderId,
+        userId
+      });
+
+      return {
+        success: true,
+        message: 'Order processing initiated successfully',
+        data: {
+          awaitingId: awaiting.id,
+          orderId,
+          amount: awaiting.amount.toString(),
+          expiresAt: awaiting.duration,
+          status: awaiting.status
+        }
+      };
+
+    } catch (error: any) {
+      // ❌ CLEANUP: Release reservation if failed
+      if (reservationId) {
+        logger.warn('Releasing reservation due to error', {
+          awaitingId: reservationId,
+          error: error.message
+        });
+
+        await orderslotService.cancelAwaiting(
+          reservationId,
+          `Instant order failed: ${error.message}`
+        ).catch(cleanupError => {
+          logger.error('Failed to cleanup reservation', {
+            awaitingId: reservationId,
+            error: cleanupError.message
+          });
+        });
+      }
+
+      logger.error('Instant order failed', { 
+        orderId,
+        userId,
+        error: error.message
+      });
+
+      return {
+        success: false,
+        message: error.message || 'Failed to process instant order'
+      };
+    }
+  }
+
+    async create_Order_Queue(payload: any) {
       return await this.generalQueue.add('create-order', payload);
+    }
+
+    async process_Order_Queue(payload: any) {
+      return await this.generalQueue.add('process-order', payload);
     }
 
 

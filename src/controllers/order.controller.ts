@@ -14,6 +14,7 @@ import anonService from '../services/anon.service';
 // import {Currency,walletType} from '@prisma/client';
 import { generateOrderId, amountSufficient, getPaymentSystems } from '../utils';
 import Decimal from 'decimal.js';
+import logger from '../config/logger';
 
 
 class OrderController {
@@ -108,7 +109,7 @@ class OrderController {
         const orderId = generateOrderId();
 
         // ✅ Queue the heavy work (transaction, blocking, etc.)
-        await orderService.queue({
+        await orderService.create_Order_Queue({
           orderId, // Pass the pre-generated ID
           userId: user.id,
           rate: parseFloat(price),
@@ -147,107 +148,130 @@ class OrderController {
     }
   }
 
-
   async processOrder(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     const {amount, orderId } = req.body;
-   
-
-    const userData = await prisma.user.findUnique({
-      where: { id: user.id }
-    })
-
-    const order = await prisma.order.findUnique({
-      where:{id: orderId}
-    })
-
-    const pair = await prisma.pair.findFirst({
-      where:{id: order?.pairId},
-      include:{
-        quoteCurrency:{
-          select:{
-            id:true,
-            ISO:true  
-          },
-        },
-        baseCurrency:{
-          select:{
-            id:true,
-            ISO:true  
-          },
-        },
-        quoteWallet:true,
-        baseWallet:true,
-      }
-    })
-
-    if(!pair){
-      return res.status(400)
-        .json({
-          msg: 'order pair not found',
-          success: false,
-        });
-    }
-
-    const userBaseWallet = await prisma.wallet.findFirst({
-      where:{
-        currencyId: pair?.baseCurrency?.id,
-        userId: user.id
-      }
-    })
-
-    const userQuoteWallet = await prisma.wallet.findFirst({
-      where:{
-        currencyId: pair?.quoteCurrency?.id,
-        userId: user.id
-      }
-    })
-
-    if (!userBaseWallet || !userQuoteWallet) {
-      return res.status(400)
-        .json({
-          msg: 'User wallet does not exist',
-          success: false,
-        });
-    }
-
-    // check for single minimum amount required per trade
-    if(!amountSufficient(amount, Number(order?.amountMinimum))){
-      return res.status(400)
-        .json({
-          msg: 'Minimum Order Amount not sufficient',
-          success: false,
-        });
-    }
 
     try {
 
-      const order = await orderService.processOrder({
-        userId: user.id,
+      // ============================================
+        // STEP 1: VALIDATE INPUT
+        // ============================================
+      if (!amount || !orderId) {
+        return res.status(400).json({
+          msg: 'Amount and order ID are required',
+          success: false
+        });
+      }
+
+      // ============================================
+        // STEP 2: FETCH ORDER WITH PAIR DETAILS
+        // ============================================
+        const order = await prisma.order.findUnique({
+          where: { id: orderId },
+          include: {
+            pair: {
+              include: {
+                baseCurrency: { select: { id: true, ISO: true } },
+                quoteCurrency: { select: { id: true, ISO: true } }
+              }
+            }
+          }
+        });
+
+        if (!order) {
+          return res.status(404).json({
+            msg: 'Order not found',
+            success: false
+          });
+        }
+
+        if (!order.pair) {
+          return res.status(400).json({
+            msg: 'Order pair not found',
+            success: false
+          });
+        }
+
+        // ============================================
+        // STEP 3: VALIDATE MINIMUM AMOUNT WITH DECIMAL
+        // ============================================
+        const amountDecimal = new Decimal(amount);
+        const minimumAmountDecimal = new Decimal(order.amountMinimum);
+        
+        // ✅ Use Decimal's lessThan method for precise comparison
+        if (amountDecimal.lessThan(minimumAmountDecimal)) {
+          return res.status(400).json({
+            msg: `Minimum order amount is ${minimumAmountDecimal.toString()} ${order.pair?.baseCurrency?.ISO}`,
+            success: false
+          });
+        }
+
+      // ============================================
+        // STEP 4: FETCH USER WALLETS (PARALLEL)
+        // ============================================
+        const [userBaseWallet, userQuoteWallet] = await Promise.all([
+          prisma.wallet.findFirst({
+            where: {
+              currencyId: order.pair?.baseCurrency?.id,
+              userId: user.id
+            }
+          }),
+          prisma.wallet.findFirst({
+            where: {
+              currencyId: order.pair?.quoteCurrency?.id,
+              userId: user.id
+            }
+          })
+        ]);
+
+      if (!userBaseWallet || !userQuoteWallet) {
+          return res.status(400).json({
+            msg: 'Required wallets not found. Please create wallets for this trading pair.',
+            success: false
+          });
+      }
+
+  
+
+      // Execute instant order
+      const result = await orderService.instantOrder({
         orderId,
-        amount, 
-        userBaseWallet,
-        userQuoteWallet
-      })
+        amount,
+        userId: user.id,
+        baseWallet: userBaseWallet,
+        quoteWallet: userQuoteWallet
+      });
 
-      return res
-        .status(200)
-        .json({
-          msg: 'Order Processed Successfully',
+      // ✅ Return based on result.success
+      if (result.success) {
+        return res.status(200).json({
+          msg: result.message,
           success: true,
-          order
+          data: result.data
         });
+      } else {
+        return res.status(400).json({
+          msg: result.message,
+          success: false
+        });
+      }
 
-    } catch (error) {
-      console.log(error)
-      res.status(500)
-        .json({
-          msg: 'Internal Server Error',
-          success: false,
-        });
+    } catch (error: any) {
+
+      logger.error('Instant order action failed', {
+        userId: user.id,
+        error: error.message
+      });
+
+      return res.status(500).json({
+        msg: 'An unexpected error occurred',
+        success: false
+      });
+
     }
-  }
 
+  }
 
   async initiateAnonymous(req: Request & Record<string, any>, res: Response) {
     // const { user } = req;
@@ -336,8 +360,6 @@ class OrderController {
       return res.status(500).send({ msg: 'Initialisation failed', success: false, error });
     }
   }
-
-
 
   async getRatebyPair(req: Request, res: Response) {
     const { pairId } = req.query;

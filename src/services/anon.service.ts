@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { Prisma } from '@prisma/client';
+import { Prisma, Wallet } from '@prisma/client';
 import prisma from '../config/prisma.config';
 import { OrderType } from '@prisma/client';
 import walletService from './wallet.service';
@@ -31,6 +31,14 @@ interface PreAction {
     address: string;
   };
   paymentMethod?: string;
+}
+
+interface InstantAction {
+  orderId: string;
+  amount: string;
+  userId: string;
+  baseWallet: Wallet;
+  quoteWallet: Wallet;
 }
 
 class AnonService {
@@ -535,12 +543,147 @@ class AnonService {
           logger.error('Failed to cleanup reservation', {
             awaitingId: reservationId,
             cleanupError: cleanupError.message
-            
+
           });
         }
       }
 
       logger.error('PreActions failed', { 
+        error: error.message,
+        stack: error.stack,
+        duration: `${duration}ms` 
+      });
+      throw error;
+    }
+  }
+
+ 
+  async instantOrder(payload: InstantAction) {
+    const { orderId,amount, userId, baseWallet, quoteWallet } = payload;
+
+    const startTime = Date.now();
+    let reservationId: string | undefined;
+
+    try {
+
+      // ============================================
+      // STEP 1: ATOMICALLY RESERVE ORDER SLOT (BEFORE ANYTHING ELSE)
+      // ============================================
+      logger.info('Attempting to reserve order slot', { orderId, amount });
+
+      const reservation = await orderslotService.reserveOrderSlot(
+        orderId,
+        amount
+      );
+
+      if (!reservation.success) {
+        logger.warn('Order slot reservation failed', {
+          orderId,
+          requestedAmount: amount,
+          availableAmount: reservation.availableAmount,
+          reason: reservation.reason
+        });
+
+        throw new Error(
+          reservation.reason || 
+          `Insufficient order capacity. Available: ${reservation.availableAmount}, Requested: ${amount}`
+        );
+      }
+
+      // ✅ Track reservation for cleanup
+      reservationId = reservation.awaitingId;
+
+      logger.info('Order slot reserved successfully', {
+        orderId,
+        awaitingId: reservation.awaitingId,
+        availableAmount: reservation.availableAmount,
+        requestedAmount: amount
+      });
+
+      // Calculate expiry upfront
+      const expiryDuration = moment().add(30, 'minutes').toDate();
+
+      // Fetch order and currency in parallel
+      const [order] = await this.retryOperation(
+        async () => {
+          return await Promise.all([
+            prisma.order.findUnique({ 
+              where: { id: orderId },
+              select: { id: true, type: true }
+            }),
+          
+          ]);
+        },
+        'Fetch order and currency',
+        3,
+        1500
+      );
+
+      if (!order) throw new Error('Order not found');
+      // ============================================
+      // STEP 5: UPDATE AWAITING WITH COMPLETE DETAILS
+      // ============================================
+
+      const result = await this.retryOperation(
+        async () => {
+          return await prisma.$transaction(
+            async (tx) => {
+              const awaiting = await tx.awaiting.update({
+                where: { id: reservation.awaitingId },
+                data: {
+                  userId,
+                  walletId: order.type === 'BUY' ? baseWallet.id : quoteWallet.id,
+                  duration: expiryDuration,
+                }
+              });
+
+              return { awaiting};
+            },
+            {
+              maxWait: 10000,
+              timeout: 30000,
+              isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+            }
+          );
+        },
+        'Update awaiting with complete details',
+        2,
+        3000
+      );
+
+      // Queue order processing
+      await orderService.process_Order_Queue({
+        awaitingId: result.awaiting.id,
+      })
+
+      return result.awaiting;
+
+    } catch (error: any) {
+
+      const duration = Date.now() - startTime;
+
+      // ❌ Cleanup reservation if something failed
+      if (reservationId) {
+        logger.warn('Releasing reservation due to error', {
+          awaitingId: reservationId,
+          error: error.message
+        });
+
+        try {
+          await orderslotService.cancelAwaiting(
+            reservationId,
+            `instant Actions failed: ${error.message}`
+          );
+        } catch (cleanupError: any) {
+          logger.error('Failed to cleanup reservation', {
+            awaitingId: reservationId,
+            cleanupError: cleanupError.message
+            
+          });
+        }
+      }
+
+      logger.error('Instant Action failed', { 
         error: error.message,
         stack: error.stack,
         duration: `${duration}ms` 
