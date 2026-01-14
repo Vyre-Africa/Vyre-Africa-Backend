@@ -274,6 +274,7 @@ class OrderSlotService {
 
       // Only release if it was pending (not already completed/processed)
       if (awaiting.status !== 'PENDING') {
+        console.log('awaiting to release',awaiting)
         logger.info('Awaiting not in PENDING status, skipping release', {
           awaitingId,
           status: awaiting.status
