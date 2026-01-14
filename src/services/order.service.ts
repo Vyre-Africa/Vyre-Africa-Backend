@@ -523,7 +523,7 @@ class OrderService {
             version: currentVersion
           },
           data: {
-            amountProcessed: DecimalUtil.formatWithCurrency(newAmountProcessed, order.type === 'BUY' ? pair?.quoteCurrency?.ISO as string : pair?.baseCurrency?.ISO as string),    // Prisma accepts Decimal
+            amountProcessed: DecimalUtil.roundForStorage(newAmountProcessed, order.type === 'BUY' ? pair?.quoteCurrency?.ISO as string : pair?.baseCurrency?.ISO as string),    // Prisma accepts Decimal
             percentageProcessed: newPercentage.toNumber(), // Convert to number for float field
             status: newStatus,
             version: currentVersion + 1

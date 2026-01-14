@@ -333,13 +333,14 @@ class OrderSlotService {
     reason?: string
   ): Promise<void> {
     try {
+
+      // Release the reservation
+      await this.releaseReservation(awaitingId);
+
+
       await prisma.$transaction(async (tx) => {
-
-        // Release the reservation
-        await this.releaseReservation(awaitingId);
         // Update awaiting status
-
-        await tx.awaiting.update({
+        const awaiting = await tx.awaiting.update({
           where: { id: awaitingId },
           data: {
             status: 'FAILED',
@@ -347,17 +348,22 @@ class OrderSlotService {
               cancelledAt: new Date(),
               cancellationReason: reason,
             }
+          },
+          include:{
+            postDetails: true
           }
         });
 
-        await tx.postDetails.updateMany({
-          where:{
-            awaitingId,
-          },
-          data:{
-            status: 'FAILED'
-          }
-        });
+        if(awaiting?.postDetails.length > 0){
+          await tx.postDetails.updateMany({
+            where:{
+              awaitingId,
+            },
+            data:{
+              status: 'FAILED'
+            }
+          });
+        }
 
       });
 
