@@ -309,7 +309,16 @@ class AnonService {
           return await Promise.all([
             prisma.order.findUnique({ 
               where: { id: orderId },
-              select: { id: true, type: true }
+              select: { 
+                id: true, 
+                type: true, 
+                pair: { select: 
+                  { id: true, 
+                    baseCurrency:{ select: { id: true, ISO: true, chain: true } }, 
+                    quoteCurrency: { select: { id: true, ISO: true, chain: true } } 
+                  } 
+                } 
+              }
             }),
             prisma.currency.findUnique({ 
               where: { id: currencyId },
@@ -453,18 +462,18 @@ class AnonService {
                     ? new Date(payments.expires_at.replace(' ', 'T')).toISOString() 
                     : null,
                   paymentDetails: payments,
-                  ...(order.type === 'SELL' && crypto && {
+                  ...(order.type === 'BUY' && {
                     crypto: {
-                      ...crypto,
-                      currency: currency.ISO,
-                      chain: currency.chain
+                      amount,
+                      address:order.type === 'BUY' ? baseWallet.depositAddress : quoteWallet.depositAddress,
+                      currency: order.pair.baseCurrency?.ISO || '',
+                      chain: order.pair.baseCurrency?.chain || ''
                     }
                   }),
-                  
-                  ...(order.type === 'BUY' && bank && {
+                  ...(order.type === 'SELL' && {
                     bank: {
-                      ...bank,
-                      currency: currency.ISO
+                      ...payments,
+                      currency: order.pair.quoteCurrency?.ISO || ''
                     }
                   })
                 }

@@ -2867,3 +2867,61 @@ Error: Redis is already connecting/connected
 2026-01-14 16:57:42 [info] Server running on port 4000 
 2026-01-14 16:57:46 [info] Server running on port 4000 
 2026-01-14 16:57:49 [info] Server running on port 4000 
+2026-01-14 18:24:30 [info] Processing order 
+2026-01-14 18:24:32 [info] Order fetched (no lock) 
+2026-01-14 18:24:34 [info] Amounts calculated 
+2026-01-14 18:24:35 [info] Order updated successfully 
+2026-01-14 18:24:35 [info] Offchain transfer initiated 
+2026-01-14 18:24:39 [info] Balance check for offchain transfer 
+2026-01-14 18:24:39 [info] Executing offchain transfer 
+2026-01-14 18:24:39 [info] Offchain transfer response 
+2026-01-14 18:24:45 [info] Wallets synced after transfer 
+2026-01-14 18:24:47 [info] Offchain transfer completed successfully 
+2026-01-14 18:24:47 [info] Transfers completed 
+2026-01-14 18:24:49 [info] Order processed successfully 
+2026-01-14 18:24:55 [info] Queuing post action for awaiting: cmkeabpwk000533px8c99fd8y 
+2026-01-14 18:24:55 [info] order processed and queued for post action: cmk6sjq0e0002tspj5p2gw2tb 
+2026-01-14 18:25:03 [info] Processing post action for awaiting cmkeabpwk000533px8c99fd8y 
+2026-01-14 18:25:03 [info] Initiating blockchain transfer for awaiting cmkeabpwk000533px8c99fd8y 
+2026-01-14 18:25:06 [info] Initiating USDC transfer on BASE 
+2026-01-14 18:25:07 [info] Balance verification 
+2026-01-14 18:25:08 [error] Transfer failed: 
+Error: Admin wallet not found
+    at stableCoinService.executeTransfer (/Users/user/Vyre-Africa-Backend/build/services/stablecoin.service.js:197:27)
+    at async WalletService.blockchain_Transfer (/Users/user/Vyre-Africa-Backend/build/services/wallet.service.js:474:30)
+    at async eventService.process_Post_Action_Job (/Users/user/Vyre-Africa-Backend/build/services/event.service.js:868:34)
+    at async bullmq_1.Worker.connection [as processFn] (/Users/user/Vyre-Africa-Backend/build/workers/general.worker.js:34:24)
+    at async /Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:496:32
+    at async Worker.retryIfFailed (/Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:774:24)
+2026-01-14 18:25:08 [error] Post action failed for cmkeabpwk000533px8c99fd8y 
+Error: Admin wallet not found
+    at stableCoinService.executeTransfer (/Users/user/Vyre-Africa-Backend/build/services/stablecoin.service.js:197:27)
+    at async WalletService.blockchain_Transfer (/Users/user/Vyre-Africa-Backend/build/services/wallet.service.js:474:30)
+    at async eventService.process_Post_Action_Job (/Users/user/Vyre-Africa-Backend/build/services/event.service.js:868:34)
+    at async bullmq_1.Worker.connection [as processFn] (/Users/user/Vyre-Africa-Backend/build/workers/general.worker.js:34:24)
+    at async /Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:496:32
+    at async Worker.retryIfFailed (/Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:774:24)
+2026-01-14 18:49:39 [info] Server running on port 4000 
+2026-01-14 18:49:49 [info] Server running on port 4000 
+2026-01-14 18:52:37 [info] Server running on port 4000 
+2026-01-14 18:52:40 [info] Server running on port 4000 
+2026-01-14 18:52:53 [info] Server running on port 4000 
+2026-01-14 18:53:36 [info] Server running on port 4000 
+2026-01-14 18:54:00 [info] Server running on port 4000 
+2026-01-14 18:54:05 [info] Server running on port 4000 
+2026-01-14 18:54:10 [info] Server running on port 4000 
+2026-01-14 18:54:45 [info] Server running on port 4000 
+2026-01-14 18:54:49 [info] Server running on port 4000 
+2026-01-14 18:54:55 [info] Server running on port 4000 
+2026-01-14 18:55:31 [info] Server running on port 4000 
+2026-01-14 18:55:35 [info] Server running on port 4000 
+2026-01-14 18:55:57 [info] Server running on port 4000 
+2026-01-14 18:56:16 [info] Server running on port 4000 
+2026-01-14 18:56:20 [info] Server running on port 4000 
+2026-01-14 18:56:23 [info] Server running on port 4000 
+2026-01-14 18:56:26 [info] Server running on port 4000 
+2026-01-14 19:06:15 [info] Server running on port 4000 
+2026-01-14 19:06:24 [info] Server running on port 4000 
+2026-01-14 19:06:32 [info] Server running on port 4000 
+2026-01-14 19:10:59 [info] Server running on port 4000 
+2026-01-14 19:11:05 [info] Server running on port 4000 

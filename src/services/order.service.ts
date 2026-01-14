@@ -769,22 +769,7 @@ class OrderService {
           await prisma.awaiting.update({
             where: { id: awaitingId },
             data: {
-              status: 'SUCCESS',
-              
-              // ✅ Add null checks and proper type handling
-              ...(result.type === 'SELL' && {
-                crypto: {
-                  ...(awaiting.crypto as object),
-                  amount: result.log.baseAmount
-                }
-              }),
-                  
-              ...(result.type === 'BUY' && {
-                bank: {
-                  ...(awaiting.bank as object),
-                  amount: result.log.quoteAmount
-                }
-              })
+              status: 'SUCCESS'
             }
           });
     
