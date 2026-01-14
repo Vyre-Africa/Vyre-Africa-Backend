@@ -583,7 +583,7 @@ class OrderService {
         // ============================================
         // STEP 6: LOG TRANSACTION
         // ============================================
-        await tx.orderLog.create({
+        const logResult = await tx.orderLog.create({
           data: {
             userId,
             orderId,
@@ -611,6 +611,7 @@ class OrderService {
 
         return {
           id: order.id,
+          log: logResult,
           amountProcessed: newAmountProcessed.toNumber(), // Convert for response
           percentageProcessed: newPercentage.toNumber(),
           status: newStatus,
@@ -769,6 +770,21 @@ class OrderService {
             where: { id: awaitingId },
             data: {
               status: 'SUCCESS',
+              
+              // ✅ Add null checks and proper type handling
+              ...(result.type === 'SELL' && {
+                crypto: {
+                  ...(awaiting.crypto as object),
+                  amount: result.log.baseAmount
+                }
+              }),
+                  
+              ...(result.type === 'BUY' && {
+                bank: {
+                  ...(awaiting.bank as object),
+                  amount: result.log.quoteAmount
+                }
+              })
             }
           });
     

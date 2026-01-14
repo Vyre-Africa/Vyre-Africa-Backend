@@ -526,6 +526,13 @@ class eventService {
             awaitingId: awaiting.id
           });
 
+          await prisma.awaiting.update({
+              where: { id: awaiting.id },
+              data: { status: 'CONFIRMED' }
+          });
+
+          await ablyService.awaiting_Order_Update(awaiting.id);
+
           logger.info(`Fiat payment processed and queued for order processing, reference: ${reference}`);
 
           // Cancel the scheduled expiry
@@ -729,6 +736,13 @@ class eventService {
         awaitingId: awaiting.id,
         transactionId: transaction.id
       })
+
+      await prisma.awaiting.update({
+        where: { id: awaiting.id },
+        data: { status: 'CONFIRMED' }
+      });
+
+      await ablyService.awaiting_Order_Update(awaiting.id);
 
       // Cancel the scheduled expiry
       await anonService.cancelAwaitingExpiry(awaiting.id);

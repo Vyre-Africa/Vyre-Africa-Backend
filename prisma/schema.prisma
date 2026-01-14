@@ -143,6 +143,7 @@ enum TransactionType {
 
 enum AwaitingStatus {
   PENDING
+  CONFIRMED
   PROCESSING
   SUCCESS
   REFUNDED
@@ -631,6 +632,7 @@ model Awaiting {
   userId         String?
   orderId        String?
   amount         Decimal        @db.Decimal(20, 8)
+  
   orderType      OrderType
   status         AwaitingStatus @default(PENDING)
   currencyId     String?
@@ -642,7 +644,9 @@ model Awaiting {
   bank_Account_Name   String?
   bank_expires_At     DateTime?
 
-  paymentDetails Json?
+  bank              Json?
+  crypto            Json?
+  paymentDetails    Json?
 
   currency Currency? @relation(fields: [currencyId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])

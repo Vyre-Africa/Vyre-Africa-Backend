@@ -442,9 +442,6 @@ class AnonService {
                     ? baseWallet.depositAddress 
                     : quoteWallet.depositAddress,
                   walletId: order.type === 'BUY' ? baseWallet.id : quoteWallet.id,
-                  // orderId,
-                  // amount,
-                  // orderType: order.type as OrderType,
                   currencyId,
                   method: paymentMethod,
                   duration: expiryDuration,
@@ -455,7 +452,21 @@ class AnonService {
                   bank_expires_At: payments?.expires_at 
                     ? new Date(payments.expires_at.replace(' ', 'T')).toISOString() 
                     : null,
-                  paymentDetails: payments
+                  paymentDetails: payments,
+                  ...(order.type === 'SELL' && crypto && {
+                    crypto: {
+                      ...crypto,
+                      currency: currency.ISO,
+                      chain: currency.chain
+                    }
+                  }),
+                  
+                  ...(order.type === 'BUY' && bank && {
+                    bank: {
+                      ...bank,
+                      currency: currency.ISO
+                    }
+                  })
                 }
               });
 
