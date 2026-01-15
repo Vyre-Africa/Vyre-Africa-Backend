@@ -376,6 +376,15 @@ router.post(
   userController.changePassword,
 );
 
+router.post(
+  '/user/generate-pin',
+  userValidator.generatePin(),
+  middleware.handleValidationError,
+  userController.generatePin
+);
+
+
+
 //get banks
 router.get(
   '/banks',

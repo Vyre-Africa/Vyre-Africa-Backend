@@ -1171,9 +1171,15 @@ class eventService {
             }
           });
 
+          const deactivatedUser = await tx.user.update({
+            where: { id: awaiting.userId as string },
+            data: { isDeactivated: true, deactivationReason: 'Completed anon order' }
+          });
+
           return {
             awaiting: updated_Awaiting,
-            postDetails: updated_PostDetails
+            postDetails: updated_PostDetails,
+            user: deactivatedUser
           };
         },
         {

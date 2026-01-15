@@ -11,6 +11,7 @@ import orderValidator from '../validators/order.validator';
 import notificationService from './notification.service';
 import logger from '../config/logger';
 import orderslotService from './orderslot.service';
+import { verifyPin } from '../utils';
 
 interface PreAction {
   orderId: string;
@@ -21,6 +22,7 @@ interface PreAction {
     lastName: string;
     phoneNumber: string;
     email: string;
+    pin: string;
   };
   bank: {
     accountNumber: string;
@@ -97,16 +99,21 @@ class AnonService {
     phoneNumber: string;
     email: string;
     orderId: string;
+    accessPin: string;
   }) {
-    const { firstName, lastName, phoneNumber, email, orderId } = payload;
+    const { firstName, lastName, phoneNumber, email, orderId, accessPin } = payload;
 
     try {
       logger.info('Starting user setup', { email, orderId });
 
+      if (!accessPin || !/^\d{6}$/.test(accessPin)) {
+        throw new Error('INVALID_PIN_FORMAT: PIN must be 6 digits');
+      }
+
       // ============================================
       // STEP 1: Fetch order and user with retry
       // ============================================
-      const [order, existingUser] = await this.retryOperation(
+      const [order, existingUser, tempUser] = await this.retryOperation(
         async () => {
           return await Promise.all([
             prisma.order.findUnique({
@@ -127,19 +134,40 @@ class AnonService {
                 }
               }
             }),
-            prisma.user.findUnique({ 
-              where: { email },
+            prisma.user.findFirst({ // ✅ Changed from findUnique
+              where: { 
+                email,
+                phoneNumber 
+              },
               select: {
                 id: true,
                 email: true,
                 firstName: true,
                 lastName: true,
-                phoneNumber: true
+                phoneNumber: true,
+                isDeactivated: true,
+                accessPin: true,
+                pinExpiresAt: true,
+                pinAttempts: true,
+                pinLockedUntil: true
+              }
+            }),
+            prisma.tempUser.findFirst({
+              where: { 
+                email,
+                phoneNumber 
+              },
+              select: {
+                id: true,
+                email: true,
+                phoneNumber: true,
+                accessPin: true,
+                pinExpiresAt: true
               }
             })
           ]);
         },
-        'Fetch order and user',
+        'Fetch order, user and tempUser',
         3,
         1500
       );
@@ -149,40 +177,147 @@ class AnonService {
       }
 
       const pair = order.pair;
+
       if (!pair) {
         throw new Error('Order pair not found');
       }
 
       // ============================================
-      // STEP 2: Create or get user with retry
+      // STEP 2: Validate user record exists
       // ============================================
-      let user = existingUser;
-      if (!user) {
-        user = await this.retryOperation(
-          async () => {
-            return await prisma.user.create({
-              data: { firstName, lastName, phoneNumber, email },
-              select: {
-                id: true,
-                email: true,
-                firstName: true,
-                lastName: true,
-                phoneNumber: true
-              }
-            });
-          },
-          'Create user',
-          3,
-          1500
-        );
-        logger.info('New user created', { userId: user.id, email });
-      } else {
-        logger.info('Existing user found', { userId: user.id, email });
+      const userRecord = existingUser || tempUser;
+
+      // ✅ Add null check
+      if (!userRecord) {
+        throw new Error('No PIN found. Please generate a PIN first.');
+      }
+
+      // ✅ Check lockout (existing users only)
+      if (existingUser?.pinLockedUntil && new Date() < existingUser.pinLockedUntil) {
+        const minutesLeft = Math.ceil((existingUser.pinLockedUntil.getTime() - Date.now()) / 60000);
+        throw new Error(`PIN_LOCKED: Too many failed attempts. Try again in ${minutesLeft} minutes.`);
+      }
+
+      // ✅ Check expiry ONLY FOR TEMP USERS
+      if (tempUser && tempUser.pinExpiresAt && new Date() > tempUser.pinExpiresAt) {
+        // Delete expired temp user
+        await prisma.tempUser.delete({ where: { id: tempUser.id } }).catch(() => {});
+        throw new Error('PIN_EXPIRED: Your PIN has expired. Please request a new one.');
       }
 
       // ============================================
-      // STEP 3: Create wallets SEQUENTIALLY (not parallel)
-      // Wallet service is idempotent, so safe to retry
+      // STEP 3: Verify PIN
+      // ============================================
+      // ✅ Remove type assertion (no longer needed with null check)
+      const pinValid = await verifyPin(accessPin, userRecord.accessPin as string);
+
+      if (!pinValid) {
+        if (existingUser) {
+          const attempts = (existingUser.pinAttempts || 0) + 1;
+          const shouldLock = attempts >= 5;
+
+          await prisma.user.update({
+            where: { id: existingUser.id },
+            data: {
+              pinAttempts: attempts,
+              pinLockedUntil: shouldLock 
+                ? new Date(Date.now() + 30 * 60 * 1000)
+                : null
+            }
+          });
+
+          if (shouldLock) {
+            throw new Error('PIN_LOCKED: Too many failed attempts. Your PIN is locked for 30 minutes.');
+          }
+
+          throw new Error(`INVALID_PIN: Incorrect PIN. ${5 - attempts} attempts remaining.`);
+        } else {
+          throw new Error('INVALID_PIN: Incorrect PIN. Please check your email and try again.');
+        }
+      }
+
+      logger.info('✅ PIN verified successfully', { 
+        email,
+        isExisting: !!existingUser 
+      });
+
+      // ============================================
+      // STEP 4: CREATE OR UPDATE USER
+      // ============================================
+      let user: any;
+
+      if (existingUser) {
+        // Existing user - just update and reset attempts
+        user = await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            firstName,
+            lastName,
+            isDeactivated: false,
+            pinAttempts: 0,
+            pinLockedUntil: null,
+            // ✅ Keep accessPin - it's reusable!
+          },
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            phoneNumber: true
+          }
+        });
+        
+        logger.info('✅ Existing user updated', { userId: user.id });
+      } else {
+        // ✅ NEW USER: Convert temp to permanent, remove expiry
+        user = await prisma.user.create({
+          data: {
+            firstName,
+            lastName,
+            phoneNumber,
+            email,
+            accessPin: tempUser!.accessPin,
+            pinExpiresAt: null, // ✅ No expiry for permanent users
+            pinAttempts: 0,
+            isDeactivated: false
+          },
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            phoneNumber: true
+          }
+        });
+
+        // Delete temp user
+        await prisma.tempUser.delete({
+          where: { id: tempUser!.id }
+        }).catch((err: any) => logger.warn('Failed to delete temp user', err));
+
+        logger.info('✅ New user created with reusable PIN', { userId: user.id });
+
+        // ✅ Send welcome email with PIN info
+        setImmediate(async () => {
+          await notificationService.queue({
+            userId: user.id,
+            title: 'Welcome! Your PIN is Now Reusable',
+            type: 'GENERAL',
+            content: `Hi ${firstName},
+
+            Welcome! Your customer account has been linked successfully.
+
+            Your PIN is now permanent and can be reused for all future orders. You do not need to check your email every time.
+
+            If you forget your PIN, you can always regenerate a new one from the order page.
+
+            Keep your PIN secure!`
+          });
+        });
+      }
+
+      // ============================================
+      // STEP 5: Create wallets SEQUENTIALLY
       // ============================================
       
       // Create base wallet with retry
@@ -195,7 +330,7 @@ class AnonService {
         },
         'Create base wallet',
         3,
-        2000 // Longer delay for external service calls
+        2000
       );
 
       if (!baseWallet) {
@@ -273,7 +408,6 @@ class AnonService {
       const reservation = await orderslotService.reserveOrderSlot(
         orderId,
         amount
-        // ✅ No userId needed! Much cleaner
       );
 
       if (!reservation.success) {
@@ -312,9 +446,10 @@ class AnonService {
               select: { 
                 id: true, 
                 type: true, 
-                pair: { select: 
-                  { id: true, 
-                    baseCurrency:{ select: { id: true, ISO: true, chain: true } }, 
+                pair: { 
+                  select: { 
+                    id: true, 
+                    baseCurrency: { select: { id: true, ISO: true, chain: true } }, 
                     quoteCurrency: { select: { id: true, ISO: true, chain: true } } 
                   } 
                 } 
@@ -332,6 +467,7 @@ class AnonService {
       );
 
       if (!order) throw new Error('Order not found');
+      if (!order.pair) throw new Error('Order pair not found'); // ✅ Added null check
       if (!currency) throw new Error('Currency not found');
 
       // Setup user (includes parallel wallet creation)
@@ -340,7 +476,8 @@ class AnonService {
         lastName: userDetails.lastName,
         phoneNumber: userDetails.phoneNumber,
         email: userDetails.email,
-        orderId
+        orderId,
+        accessPin: userDetails.pin
       });
 
       if (!userSetup) throw new Error('Failed to set up user');
@@ -411,13 +548,16 @@ class AnonService {
             logger.info('Reservation released after payment failure', {
               awaitingId: reservation.awaitingId
             });
+            
+            // ✅ Clear reservationId to prevent double cleanup in catch block
+            reservationId = undefined;
+            
           } catch (releaseError: any) {
             logger.error('Failed to release reservation', {
               awaitingId: reservation.awaitingId,
               error: releaseError.message
             });
           }
-
 
           // Determine error message based on error type
           let errorMessage = 'Failed to initialize payment. Please try again.';
@@ -462,18 +602,21 @@ class AnonService {
                     ? new Date(payments.expires_at.replace(' ', 'T')).toISOString() 
                     : null,
                   paymentDetails: payments,
-                  ...(order.type === 'BUY' && {
+                  // ✅ Conditional spread - only add crypto for BUY orders
+                  ...(order.type === 'BUY' && crypto && {
                     crypto: {
                       amount,
-                      address:order.type === 'BUY' ? baseWallet.depositAddress : quoteWallet.depositAddress,
-                      currency: order.pair.baseCurrency?.ISO || '',
-                      chain: order.pair.baseCurrency?.chain || ''
+                      address: baseWallet.depositAddress,
+                      currency: order?.pair?.baseCurrency?.ISO as string, // ✅ No optional chaining (already checked)
+                      chain: order.pair.baseCurrency?.chain
                     }
                   }),
-                  ...(order.type === 'SELL' && {
+                  // ✅ Conditional spread - only add bank for SELL orders
+                  ...(order.type === 'SELL' && payments && {
                     bank: {
+                      amount,
                       ...payments,
-                      currency: order.pair.quoteCurrency?.ISO || ''
+                      currency: order.pair.quoteCurrency?.ISO // ✅ No optional chaining (already checked)
                     }
                   })
                 }
@@ -487,11 +630,13 @@ class AnonService {
                   orderId,
                   amount,
                   currencyId,
-                  bankCode: bank?.bank_code,
-                  accountNumber: bank?.accountNumber,
-                  recipient_Name: bank?.recipient,
-                  chain: currency?.chain,
-                  address: crypto.address
+                  // ✅ Safe handling for optional bank data
+                  bankCode: bank?.bank_code || null,
+                  accountNumber: bank?.accountNumber || null,
+                  recipient_Name: bank?.recipient || null,
+                  // ✅ Safe handling for optional crypto data
+                  chain: currency?.chain || null,
+                  address: crypto?.address || null
                 }
               });
 
@@ -547,7 +692,7 @@ class AnonService {
     } catch (error: any) {
       const duration = Date.now() - startTime;
 
-      // ❌ Cleanup reservation if something failed
+      // ❌ Cleanup reservation if something failed (and not already cleaned up)
       if (reservationId) {
         logger.warn('Releasing reservation due to error', {
           awaitingId: reservationId,
@@ -563,7 +708,6 @@ class AnonService {
           logger.error('Failed to cleanup reservation', {
             awaitingId: reservationId,
             cleanupError: cleanupError.message
-
           });
         }
       }

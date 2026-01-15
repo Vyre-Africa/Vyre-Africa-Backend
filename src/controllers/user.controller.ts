@@ -19,15 +19,15 @@ import {
     generateOtp,
     generateRefCode,
     hashData,
-    checkUserPaymentMethods
+    checkUserPaymentMethods,
+    generateAccessPin,
+    hashPin,
+    maskEmail
 } from '../utils';
 import moment from 'moment';
 import transactionService from '../services/transaction.service';
-import walletService from '../services/wallet.service';
-import { endOfDay, startOfDay, subDays } from 'date-fns';
-import mobilePushService from '../services/mobilePush.service';
-import smsService from '../services/sms.service';
 import fernService from '../services/fern.service';
+import logger from '../config/logger';
 
 interface KycDetails {
     legalFirstName: string;
@@ -68,6 +68,203 @@ interface KycDetails {
   }
 
 class UserController {
+
+    async generatePin(req: Request, res: Response) {
+        const { email, phoneNumber } = req.body;
+
+        try {
+            if (!email || !phoneNumber) {
+                return res.status(400).json({
+                    msg: 'Email and phone number are required',
+                    success: false
+                });
+            }
+
+            logger.info('🔵 PIN generation requested', { email, phoneNumber });
+
+            // ============================================
+            // CHECK IF USER EXISTS
+            // ============================================
+            const existingUser = await prisma.user.findFirst({
+                where: {
+                    OR: [{ email }, { phoneNumber }]
+                },
+                select: {
+                    id: true,
+                    email: true,
+                    phoneNumber: true,
+                    firstName: true,
+                    accessPin: true,
+                    pinGeneratedAt: true,
+                    pinGenerationCount: true
+                }
+            });
+
+            // ✅ Rate limiting: Prevent PIN spam
+            if (existingUser?.pinGeneratedAt) {
+                const timeSinceLastPin = Date.now() - existingUser.pinGeneratedAt.getTime();
+                const oneMinute = 60 * 1000;
+
+                if (timeSinceLastPin < oneMinute) {
+                    const secondsLeft = Math.ceil((oneMinute - timeSinceLastPin) / 1000);
+                    return res.status(429).json({
+                    msg: `Please wait ${secondsLeft} seconds before requesting a new PIN`,
+                    success: false
+                    });
+                }
+
+                // Check daily limit (10 PINs per day)
+                const isNewDay = new Date().toDateString() !== new Date(existingUser.pinGeneratedAt).toDateString();
+                const currentCount = isNewDay ? 0 : existingUser.pinGenerationCount;
+
+                if (currentCount >= 10) {
+                    return res.status(429).json({
+                    msg: 'PIN generation limit reached. Please try again tomorrow or contact support.',
+                    success: false
+                    });
+                }
+            }
+
+            // ============================================
+            // GENERATE NEW PIN
+            // ============================================
+            const newPin = generateAccessPin();
+            const hashedPin = await hashPin(newPin);
+            
+            // ✅ ONLY TEMP USERS GET EXPIRY
+            // Existing users regenerating PIN = no expiry
+            const expiresAt:any = existingUser 
+                ? null  // ✅ No expiry for existing users
+                : new Date(Date.now() + 15 * 60 * 1000); // 15 min expiry for temp users
+
+            let user;
+
+            if (existingUser) {
+                // ============================================
+                // EXISTING USER: Regenerate reusable PIN
+                // ============================================
+                if (existingUser.email !== email || existingUser.phoneNumber !== phoneNumber) {
+                    return res.status(400).json({
+                    msg: 'Email and phone number do not match our records',
+                    success: false
+                    });
+                }
+
+                const isNewDay = new Date().toDateString() !== new Date(existingUser.pinGeneratedAt || 0).toDateString();
+
+                user = await prisma.user.update({
+                    where: { id: existingUser.id },
+                    data: {
+                        accessPin: hashedPin,
+                        pinExpiresAt: null, // ✅ No expiry for existing users
+                        pinGeneratedAt: new Date(),
+                        pinGenerationCount: isNewDay ? 1 : (existingUser.pinGenerationCount || 0) + 1,
+                        pinAttempts: 0,
+                        pinLockedUntil: null
+                    },
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true
+                    }
+                });
+
+                logger.info('✅ Reusable PIN regenerated for existing user', { userId: user.id });
+            } else {
+                // ============================================
+                // NEW USER: Create temp record with expiring PIN
+                // ============================================
+                user = await prisma.tempUser.create({
+                    data: {
+                        email,
+                        phoneNumber,
+                        accessPin: hashedPin,
+                        pinExpiresAt: expiresAt, // ✅ Expires in 15 min
+                        pinGeneratedAt: new Date(),
+                        pinGenerationCount: 1
+                        },
+                        select: {
+                        id: true,
+                        email: true
+                        }
+                });
+
+                logger.info('✅ Temporary PIN generated for new user', { tempUserId: user.id });
+            }
+
+            // ============================================
+            // SEND PIN TO EMAIL
+            // ============================================
+            await this.sendAccessPinEmail({
+                email,
+                firstName: existingUser?.firstName || 'there',
+                pin: newPin,
+                isReusable: !!existingUser, // ✅ Tell user if PIN is reusable
+                expiresInMinutes: existingUser ? null : 15
+            });
+
+            return res.status(200).json({
+                msg: existingUser 
+                    ? 'New reusable PIN sent to your email. Save it for future orders!'
+                    : 'PIN sent to your email. Valid for 15 minutes.',
+                success: true,
+                data: {
+                    email: maskEmail(email),
+                    isReusable: !!existingUser,
+                    expiresIn: existingUser ? null : 15
+                }
+            });
+
+        } catch (error: any) {
+            logger.error('🔴 PIN generation failed', {
+                email,
+                error: error.message
+            });
+
+            return res.status(500).json({
+              msg: 'Failed to generate PIN. Please try again.',
+              success: false
+            });
+        }
+
+    }
+
+    private async sendAccessPinEmail(params: {
+        email: string;
+        firstName: string;
+        pin: string;
+        isReusable: boolean;
+        expiresInMinutes: number | null;
+        }): Promise<void> {
+        const { email, firstName, pin, isReusable, expiresInMinutes } = params;
+
+        const subject = isReusable ? 'Your New Access PIN' : 'Your Access PIN';
+  
+        const expiryText = isReusable
+            ? 'This PIN can be reused for all your future orders. Save it somewhere safe!'
+            : `This PIN is valid for ${expiresInMinutes} minutes. Once you complete your first order, you can reuse this PIN for future orders.`;
+
+        await mailService.general(
+            email,
+            firstName,
+            subject,
+            `Hi ${firstName},
+
+            Your access PIN is: ${pin}
+
+            ${expiryText}
+
+            Please enter this PIN along with your details to continue with your order.
+
+            If you forget your PIN, you can always generate a new one.
+
+            Keep this PIN secure and do not share it with anyone.`
+            
+        )
+
+        logger.info('📧 PIN email sent', { email: maskEmail(email) });
+
+    }
     
     async register(req: Request & Record<string, any>, res: Response) {
         // const { DETAILS} = req.body;

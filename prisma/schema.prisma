@@ -243,6 +243,14 @@ model User {
   otpCodeUsed       Boolean  @default(false)
   otpCodeExpiryTime String?
 
+  // PIN fields
+  accessPin           String?   // Hashed PIN
+  pinExpiresAt        DateTime? // For regenerated PINs
+  pinAttempts         Int       @default(0)
+  pinLockedUntil      DateTime?
+  pinGeneratedAt      DateTime? // Last PIN generation time
+  pinGenerationCount  Int       @default(0) // Daily counter
+
   fernUserId                    String?
   fernKycLink                   String?
   userBanks                     UserBank[]
@@ -255,7 +263,10 @@ model User {
   twoFactorAuthenticationSecret String?
   isDeactivated                 Boolean                       @default(false)
   deactivationReason            String?
+
   createdAt                     DateTime                      @default(now())
+  updatedAt                     DateTime           @updatedAt @default(now())
+  
   Order                         Order[]
   PendingActivity               PendingActivity[]
   Card                          Card?
@@ -266,7 +277,6 @@ model User {
 
   Awaiting    Awaiting[]
   postDetails postDetails[]
-  OrderLog    OrderLog[]
   
   // 🚀 PERFORMANCE INDEXES - ADD THESE
   @@index([userStatus])                // Fast status lookups
@@ -275,6 +285,23 @@ model User {
   @@index([accountVerified])           // For verification checks
   @@index([createdAt])                 // For time-based queries
   @@index([phoneNumber])               // For phone lookups
+}
+
+// ✅ Temporary table for new users (before account creation)
+model TempUser {
+  id                  String    @id @default(cuid())
+  email               String
+  phoneNumber         String
+  accessPin           String    // Hashed PIN
+  pinExpiresAt        DateTime  // Always has expiry
+  pinGeneratedAt      DateTime  @default(now())
+  pinGenerationCount  Int       @default(1)
+  
+  createdAt           DateTime  @default(now())
+  
+  @@unique([email, phoneNumber])
+  @@index([email])
+  @@index([phoneNumber])
 }
 
 model UserKyc {
@@ -565,9 +592,11 @@ model OrderLog {
   quoteAmount Decimal @db.Decimal(20, 8)
   rate        Decimal @db.Decimal(20, 8)
 
+  baseCurrency String?
+  quoteCurrency String?
+
   orderType OrderType
 
-  user     User?     @relation(fields: [userId], references: [id])
   order    Order?    @relation(fields: [orderId], references: [id])
 
   createdAt DateTime @default(now())
@@ -647,6 +676,7 @@ model Awaiting {
   bank              Json?
   crypto            Json?
   paymentDetails    Json?
+  log               Json?
 
   currency Currency? @relation(fields: [currencyId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])

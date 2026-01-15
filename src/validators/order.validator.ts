@@ -40,6 +40,7 @@ class OrderValidator {
           body('user.lastName').notEmpty().withMessage('last name is required'),
           body('user.phoneNumber').notEmpty().withMessage('phone number is required'),
           body('user.email').notEmpty().withMessage('user email is required').isEmail().withMessage('user email is invalid'),
+          body('user.pin').notEmpty().withMessage('user pin is required'),
 
       body('orderId').notEmpty().withMessage('order ID is required').isString().withMessage('order Id is invalid'),
       body('currencyId').notEmpty().withMessage('currency ID is required').isString().withMessage('currency Id is invalid'),

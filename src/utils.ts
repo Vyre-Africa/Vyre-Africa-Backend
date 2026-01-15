@@ -8,6 +8,7 @@ import { User } from './globals';
 import Decimal from 'decimal.js';
 import crypto from 'crypto';
 import { ulid } from 'ulid';
+import logger from './config/logger';
 
 const algorithm: string = 'aes-256-cbc';
 const key: Buffer = crypto.randomBytes(32);
@@ -489,6 +490,34 @@ export function getPaymentSystems(currencyISO: CurrencyISO): PaymentSystem[] {
 
 export function generateOrderId(): string {
   return `ORD-${ulid()}`; // e.g., "ORD-01HN8X9ZYQR8XJKM9T5WN3QVBP"
+}
+
+export function generateAccessPin(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+export async function hashPin(pin: string): Promise<string> {
+  const bcrypt = require('bcryptjs');
+  return await bcrypt.hash(pin, 10);
+}
+
+/**
+ * Verify PIN against hashed version
+ */
+export async function verifyPin(inputPin: string, hashedPin: string): Promise<boolean> {
+  const bcrypt = require('bcryptjs');
+  try {
+    return await bcrypt.compare(inputPin, hashedPin);
+  } catch (error) {
+    logger.error('PIN verification error', { error });
+    return false;
+  }
+}
+
+export function maskEmail(email: string): string {
+  const [username, domain] = email.split('@');
+  const masked = username.slice(0, 2) + '***' + username.slice(-1);
+  return `${masked}@${domain}`;
 }
 
 

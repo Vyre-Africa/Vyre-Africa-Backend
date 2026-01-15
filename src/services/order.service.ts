@@ -593,6 +593,8 @@ class OrderService {
             quoteAmount: order.type === 'BUY' 
               ? amountToProcess.toNumber() 
               : amount,
+            baseCurrency: order.type === 'BUY' ? pair?.baseCurrency?.ISO as string : pair?.quoteCurrency?.ISO as string,
+            quoteCurrency: order.type === 'BUY' ? pair?.quoteCurrency?.ISO as string : pair?.baseCurrency?.ISO as string,
             rate: order.price, // Prisma accepts Decimal
             orderType: order.type
           }
@@ -677,26 +679,18 @@ class OrderService {
       const quoteAmount = order.type === 'BUY' ? amountProcessed : amount;
 
       await notificationService.queue({
-        userId,
-        title: '🎉 Order Completed!',
-        type: 'GENERAL',
-        content: `
-          <div style="font-family: Arial, sans-serif;">
-            <h3 style="color: #112044;">Your ${order.type} order completed!</h3>
-            <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0;">
-              <p><strong>You ${order.type === 'BUY' ? 'Sent' : 'Received'}:</strong> ${DecimalUtil.formatWithCurrency(baseAmount, baseCurrency as string)}</p>
-              <p><strong>You ${order.type === 'BUY' ? 'Received' : 'Sent'}:</strong> ${DecimalUtil.formatWithCurrency(quoteAmount, quoteCurrency as string)}</p>
-              <p><strong>Rate:</strong> ${Number(order.price)?.toLocaleString('en-US', {
-                style: 'currency',
-                currency: quoteCurrency,
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2
-              })}
-              </p>
-            </div>
-          </div>
-        `
+          userId,
+          title: '🎉 Order Completed!',
+          type: 'GENERAL',
+          content: `Your ${order.type} order has been completed successfully!
+            You ${order.type === 'BUY' ? 'Sent' : 'Received'}: ${DecimalUtil.formatWithCurrency(baseAmount, baseCurrency as string)}
+            You ${order.type === 'BUY' ? 'Received' : 'Sent'}: ${DecimalUtil.formatWithCurrency(quoteAmount, quoteCurrency as string)}
+            Rate: ${Number(order.price)?.toLocaleString('en-US', {
+               minimumFractionDigits: 2,
+              maximumFractionDigits: 8
+            })} ${quoteCurrency}/${baseCurrency}`
       });
+
     }
 
     /**
@@ -765,11 +759,14 @@ class OrderService {
             userBaseWallet,
             userQuoteWallet
           });
+
+          const {log} = result;
     
           await prisma.awaiting.update({
             where: { id: awaitingId },
             data: {
-              status: 'SUCCESS'
+              status: 'SUCCESS',
+              log: result.log
             }
           });
     
