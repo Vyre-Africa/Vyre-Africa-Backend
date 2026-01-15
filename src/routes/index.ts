@@ -383,6 +383,13 @@ router.post(
   userController.generatePin
 );
 
+router.post(
+  '/user/verify-pin',
+  userValidator.verifyPin(),
+  middleware.handleValidationError,
+  userController.verifyPin
+);
+
 
 
 //get banks

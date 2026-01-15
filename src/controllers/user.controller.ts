@@ -22,7 +22,8 @@ import {
     checkUserPaymentMethods,
     generateAccessPin,
     hashPin,
-    maskEmail
+    maskEmail,
+    verifyPin
 } from '../utils';
 import moment from 'moment';
 import transactionService from '../services/transaction.service';
@@ -143,12 +144,12 @@ class UserController {
                 // ============================================
                 // EXISTING USER: Regenerate reusable PIN
                 // ============================================
-                // if (existingUser.email !== email) {
-                //     return res.status(400).json({
-                //     msg: 'Email and phone number do not match our records',
-                //     success: false
-                //     });
-                // }
+                if (existingUser.email !== email || existingUser.phoneNumber !== phoneNumber) {
+                    return res.status(400).json({
+                    msg: 'Email and phone number do not match',
+                    success: false
+                    });
+                }
 
                 const isNewDay = new Date().toDateString() !== new Date(existingUser.pinGeneratedAt || 0).toDateString();
 
@@ -227,6 +228,213 @@ class UserController {
             });
         }
 
+    }
+
+    async verifyPin(req: Request, res: Response) {
+    try {
+        const { email, phoneNumber, pin } = req.body;
+
+        // ============================================
+        // STEP 1: VALIDATE INPUT
+        // ============================================
+        if (!email || !phoneNumber || !pin) {
+        return res.status(400).json({
+            success: false,
+            valid: false,
+            msg: 'Email, phone number, and PIN are required'
+        });
+        }
+
+        if (!/^\d{6}$/.test(pin as string)) {
+        return res.status(400).json({
+            success: false,
+            valid: false,
+            msg: 'PIN must be 6 digits'
+        });
+        }
+
+        logger.info('🔍 PIN verification attempt', { 
+        email, 
+        phoneNumber
+        });
+
+        // ============================================
+        // STEP 2: FIND USER RECORD
+        // ============================================
+        const [existingUser, tempUser] = await Promise.all([
+            prisma.user.findFirst({
+                where: {
+                    email: email as string,
+                    phoneNumber 
+                },
+                select: {
+                id: true,
+                email: true,
+                accessPin: true,
+                pinExpiresAt: true,
+                pinAttempts: true,
+                pinLockedUntil: true,
+                firstName: true
+                }
+            }),
+            prisma.tempUser.findFirst({
+                where: {
+                 email: email as string,
+                 phoneNumber 
+                },
+                select: {
+                    id: true,
+                    email: true,
+                    accessPin: true,
+                    pinExpiresAt: true
+                }
+            })
+        ]);
+
+        const userRecord = existingUser || tempUser;
+
+        // ============================================
+        // STEP 3: CHECK IF USER EXISTS
+        // ============================================
+        if (!userRecord) {
+            return res.status(404).json({
+                success: false,
+                valid: false,
+                msg: 'No PIN found for this email and phone number. Please generate a PIN first.',
+                needsGeneration: true
+            });
+        }
+
+        // ============================================
+        // STEP 4: CHECK IF LOCKED (EXISTING USERS ONLY)
+        // ============================================
+        if (existingUser?.pinLockedUntil && new Date() < existingUser.pinLockedUntil) {
+            const minutesLeft = Math.ceil((existingUser.pinLockedUntil.getTime() - Date.now()) / 60000);
+            return res.status(429).json({
+                success: false,
+                valid: false,
+                msg: `Too many failed attempts. Please try again in ${minutesLeft} minutes.`,
+                locked: true,
+                lockedUntil: existingUser.pinLockedUntil,
+                minutesRemaining: minutesLeft
+            });
+        }
+
+        // ============================================
+        // STEP 5: CHECK IF EXPIRED (TEMP USERS ONLY)
+        // ============================================
+        if (tempUser && tempUser.pinExpiresAt && new Date() > tempUser.pinExpiresAt) {
+        // Delete expired temp user
+            await prisma.tempUser.delete({ 
+                where: { id: tempUser.id } 
+            }).catch(() => {});
+
+            return res.status(410).json({
+                success: false,
+                valid: false,
+                msg: 'Your PIN has expired. Please generate a new one.',
+                expired: true,
+                needsGeneration: true
+            });
+        }
+
+        // ============================================
+        // STEP 6: VERIFY PIN
+        // ============================================
+        const isValid = await verifyPin(pin as string, userRecord.accessPin as string);
+
+        if (isValid) {
+        // ✅ PIN IS CORRECT
+        
+        // Reset attempts for existing users
+        if (existingUser) {
+            await prisma.user.update({
+            where: { id: existingUser.id },
+            data: {
+                pinAttempts: 0,
+                pinLockedUntil: null
+            }
+            }).catch(err => logger.error('Failed to reset PIN attempts', err));
+        }
+
+        logger.info('✅ PIN verification successful', { 
+            email,
+            isExistingUser: !!existingUser 
+        });
+
+        return res.status(200).json({
+            success: true,
+            valid: true,
+            msg: 'PIN is correct! You can proceed with your order.',
+            isReusable: !!existingUser, // Tell user if this PIN can be reused
+            userName: existingUser?.firstName || null
+        });
+        } else {
+        // ❌ PIN IS INCORRECT
+        
+        if (existingUser) {
+            // Track failed attempts for existing users
+            const attempts = (existingUser.pinAttempts || 0) + 1;
+            const shouldLock = attempts >= 5;
+
+            await prisma.user.update({
+            where: { id: existingUser.id },
+            data: {
+                pinAttempts: attempts,
+                pinLockedUntil: shouldLock 
+                ? new Date(Date.now() + 30 * 60 * 1000)
+                : null
+            }
+            }).catch(err => logger.error('Failed to update PIN attempts', err));
+
+            const attemptsRemaining = 5 - attempts;
+
+            logger.warn('❌ PIN verification failed', { 
+            email,
+            attempts,
+            shouldLock 
+            });
+
+            if (shouldLock) {
+            return res.status(429).json({
+                success: false,
+                valid: false,
+                msg: 'Too many failed attempts. Your PIN is locked for 30 minutes.',
+                locked: true,
+                attemptsRemaining: 0
+            });
+            }
+
+            return res.status(400).json({
+            success: false,
+            valid: false,
+            msg: `Incorrect PIN. ${attemptsRemaining} ${attemptsRemaining === 1 ? 'attempt' : 'attempts'} remaining.`,
+            attemptsRemaining
+            });
+        } else {
+            // Temp user - no attempt tracking
+            logger.warn('❌ PIN verification failed for temp user', { email });
+
+            return res.status(400).json({
+            success: false,
+            valid: false,
+            msg: 'Incorrect PIN. Please check your email and try again.'
+            });
+        }
+        }
+
+    } catch (error: any) {
+        logger.error('🔴 PIN verification error', {
+        error: error.message,
+        stack: error.stack
+        });
+
+        return res.status(500).json({
+        success: false,
+        valid: false,
+        msg: 'Failed to verify PIN. Please try again.'
+        });
+    }
     }
 
     private async sendAccessPinEmail(params: {
