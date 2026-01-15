@@ -555,7 +555,7 @@ class OrderService {
               order?.blockId as string, 
               userQuoteWallet.id
             ),
-            walletService.offchain_Transfer({
+            walletService.direct_offchain_Transfer({
               userId,
               receipientId: order.userId as string,
               currencyId: pair?.baseCurrency?.id as string,
@@ -569,7 +569,7 @@ class OrderService {
               order.blockId as string, 
               userBaseWallet.id
             ),
-            walletService.offchain_Transfer({
+            walletService.direct_offchain_Transfer({
               userId,
               receipientId: order.userId as string,
               currencyId: pair?.quoteCurrency?.id as string,
@@ -620,7 +620,7 @@ class OrderService {
       },
       {
         maxWait: 15000,
-        timeout: 50000,
+        timeout: 120000,
         isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
       }
     );

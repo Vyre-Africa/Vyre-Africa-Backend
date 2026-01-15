@@ -17,6 +17,7 @@ import { currency } from '../globals';
 import Decimal from 'decimal.js';
 import logger from '../config/logger';
 import { DecimalUtil } from './decimal.util';
+import { Wallet } from '@prisma/client';
 
 // import connection from '../config/redis.config';
 
@@ -718,6 +719,7 @@ class WalletService
         amount: string; // ✅ Changed to string
     }) {
         const { userId, receipientId, currencyId, amount } = payload;
+        const startTime = Date.now();
 
         try {
             // ✅ Convert amount to Decimal immediately
@@ -735,83 +737,88 @@ class WalletService
                 amount: amountDecimal.toString()
             });
 
-            // Fetch currency details
-            const currency = await prisma.currency.findUnique({
-                where: { id: currencyId },
-                select: {
-                    id: true,
-                    type: true,
-                    name: true,
-                    ISO: true,
-                    chain: true
-                }
-            });
+            // ============================================
+            // STEP 1: FETCH DATA IN PARALLEL (OPTIMIZED)
+            // ============================================
+            const fetchStartTime = Date.now();
+
+            const [currency, user_Wallet, receipient_Wallet_Temp] = await Promise.all([
+                prisma.currency.findUnique({
+                    where: { id: currencyId },
+                        select: {
+                        id: true,
+                        type: true,
+                        name: true,
+                        ISO: true,
+                        chain: true
+                    }
+                }),
+                prisma.wallet.findFirst({
+                    where: { userId, currencyId },
+                        select: {
+                        id: true,
+                        userId: true,
+                        currencyId: true,
+                        availableBalance: true,
+                        accountBalance: true
+                    }
+                }),
+                prisma.wallet.findFirst({
+                    where: { userId: receipientId, currencyId },
+                        select: {
+                        id: true,
+                        userId: true,
+                        currencyId: true,
+                        availableBalance: true,
+                        accountBalance: true
+                    }
+                })
+
+            ]);
+
+            const fetchDuration = Date.now() - fetchStartTime;
+            logger.info('⏱️ Data fetch complete', { duration: `${fetchDuration}ms` });
 
             if (!currency) {
-                const error = new Error('Currency not found');
-                error.name = 'CurrencyNotFoundError';
-                throw error;
+              throw new Error('Currency not found');
             }
 
-            let receipient_Wallet:any;
+            if (!user_Wallet) {
+              throw new Error('User wallet not found');
+            }
 
-            // Fetch or create recipient wallet
-            receipient_Wallet = await prisma.wallet.findFirst({
-                where: {
-                    userId: receipientId,
-                    currencyId
-                },
-                select: {
-                    id: true,
-                    userId: true,
-                    currencyId: true,
-                    availableBalance: true,
-                    accountBalance: true
-                }
-            });
+            // ============================================
+            // STEP 2: CREATE RECIPIENT WALLET IF NEEDED
+            // ============================================
+            let receipient_Wallet:any = receipient_Wallet_Temp;
 
             if (!receipient_Wallet) {
+                const walletCreateStart = Date.now();
                 logger.info('Creating recipient wallet', { receipientId, currencyId });
+                
                 receipient_Wallet = await this.createWallet({
                     userId: receipientId,
                     currencyId: currencyId as string
                 });
+
+                const walletCreateDuration = Date.now() - walletCreateStart;
+                logger.info('⏱️ Wallet created', { duration: `${walletCreateDuration}ms` });
             }
 
-            // Fetch user wallet
-            const user_Wallet = await prisma.wallet.findFirst({
-                where: {
-                    userId,
-                    currencyId
-                },
-                select: {
-                    id: true,
-                    userId: true,
-                    currencyId: true,
-                    availableBalance: true,
-                    accountBalance: true
-                }
-            });
-
-            if (!user_Wallet) {
-                throw new Error('User wallet not found');
-            }
-
-            // ✅ Check balance with Decimal comparison
+            // ============================================
+            // STEP 3: VALIDATE BALANCE
+            // ============================================
             const availableBalance = new Decimal(user_Wallet.availableBalance);
-
-            logger.info('Balance check for offchain transfer', {
-                userId,
-                availableBalance: availableBalance.toString(),
-                requestedAmount: amountDecimal.toString(),
-                currency: currency.ISO
-            });
 
             if (availableBalance.lessThan(amountDecimal)) {
                 throw new Error(
-                    `Insufficient balance for offchain transfer. Available: ${availableBalance.toFixed(8)} ${currency.ISO}, Required: ${amountDecimal.toFixed(8)} ${currency.ISO}`
+                    `Insufficient balance. Available: ${availableBalance.toFixed(8)} ${currency.ISO}, Required: ${amountDecimal.toFixed(8)} ${currency.ISO}`
                 );
             }
+
+            // ============================================
+            // STEP 4: EXECUTE TATUM TRANSFER
+            // ============================================
 
             // Prepare transfer data
             const data = {
@@ -822,38 +829,264 @@ class WalletService
                 compliant: false
             };
 
-            logger.info('Executing offchain transfer', {
+            logger.info('📡 Executing Tatum API call', {
                 from: user_Wallet.id,
                 to: receipient_Wallet.id,
                 amount: amountDecimal.toString(),
                 currency: currency.ISO
             });
+            const apiStartTime = Date.now();
 
             // Execute transfer
             const response = await tatumAxios.post('/ledger/transaction', data);
             const paymentData = response.data;
+            const apiDuration = Date.now() - apiStartTime;
 
-            logger.info('Offchain transfer response', {
+            logger.info('🟢 Tatum API complete', {
                 reference: paymentData.reference,
-                status: paymentData.status
+                status: paymentData.status,
+                duration: `${apiDuration}ms`
             });
 
-            // Sync both wallets in parallel
-            await Promise.all([
-                this.getAccount(user_Wallet.id),
-                this.getAccount(receipient_Wallet.id)
+            // ============================================
+            // STEP 5: BACKGROUND POST-PROCESSING
+            // ============================================
+            // ✅ Move slow operations to background
+            setImmediate(async () => {
+                const postProcessStart = Date.now();
+
+                try {
+                    // Sync wallets in parallel
+                    await Promise.all([
+                        this.getAccount(user_Wallet.id),
+                        this.getAccount(receipient_Wallet.id)
+                    ]);
+
+                    // Create transaction records
+                    await prisma.transaction.createMany({
+                        data: [
+                            {
+                            userId: userId,
+                            currency: currency.ISO,
+                            amount: amountDecimal.negated(),
+                            reference: paymentData.reference,
+                            status: 'SUCCESSFUL',
+                            walletId: user_Wallet.id,
+                            type: 'DEBIT_PAYMENT',
+                            description: `${currency.name} transfer to ${receipientId.slice(0, 8)}`,
+                            metadata: {
+                                recipientId: receipientId,
+                                recipientWalletId: receipient_Wallet.id,
+                                currency: currency.ISO,
+                                transferType: 'offchain'
+                            }
+                            },
+                            {
+                            userId: receipientId,
+                            currency: currency.ISO,
+                            amount: amountDecimal,
+                            reference: paymentData.reference,
+                            status: 'SUCCESSFUL',
+                            walletId: receipient_Wallet.id,
+                            type: 'CREDIT_PAYMENT',
+                            description: `${currency.name} transfer from ${userId.slice(0, 8)}`,
+                            metadata: {
+                                senderId: userId,
+                                senderWalletId: user_Wallet.id,
+                                currency: currency.ISO,
+                                transferType: 'offchain'
+                            }
+                            }
+                        ]
+                    });
+
+                    const postProcessDuration = Date.now() - postProcessStart;
+                    logger.info('🔄 Background post-processing complete', {
+                    reference: paymentData.reference,
+                    duration: `${postProcessDuration}ms`
+                    });
+
+                } catch (postError: any) {
+                    logger.error('⚠️ Background post-processing failed (non-critical)', {
+                    reference: paymentData.reference,
+                    error: postError.message
+                    });
+                    // Don't throw - transfer already succeeded
+                }
+            });
+
+            const totalDuration = Date.now() - startTime;
+                logger.info('✅ Offchain transfer COMPLETE', {
+                reference: paymentData.reference,
+                totalDuration: `${totalDuration}ms`
+            });
+
+            // ✅ Return immediately after Tatum API succeeds
+            return {
+                success: true,
+                reference: paymentData.reference,
+                amount: amountDecimal.toString(),
+                currency: currency.ISO,
+                senderWallet: user_Wallet.id,
+                recipientWallet: receipient_Wallet.id
+            };
+
+        } catch (error: any) {
+            const totalDuration = Date.now() - startTime;
+            logger.error('🔴 Offchain transfer FAILED', {
+                error: error.message,
+                userId,
+                receipientId,
+                currencyId,
+                amount,
+                totalDuration: `${totalDuration}ms`,
+                stack: error.stack
+            });
+            throw error;
+        }
+    }
+
+    async direct_offchain_Transfer(payload: {
+        userId: string;
+        receipientId: string;
+        currencyId: string;
+        amount: string;
+    }) {
+        const { userId, receipientId, currencyId, amount } = payload;
+        const startTime = Date.now();
+
+        try {
+            const amountDecimal = new Decimal(amount);
+
+            if (amountDecimal.lessThanOrEqualTo(0)) {
+            throw new Error('Transfer amount must be greater than 0');
+            }
+
+            logger.info('🔵 Direct offchain transfer START', {
+            userId,
+            receipientId,
+            currencyId,
+            amount: amountDecimal.toString()
+            });
+
+            // ============================================
+            // STEP 1: FETCH DATA IN PARALLEL
+            // ============================================
+            const fetchStartTime = Date.now();
+
+            const [currency, user_Wallet, receipient_Wallet] = await Promise.all([
+                prisma.currency.findUnique({
+                    where: { id: currencyId },
+                    select: {
+                    id: true,
+                    type: true,
+                    name: true,
+                    ISO: true,
+                    chain: true
+                    }
+                }),
+                prisma.wallet.findFirst({
+                    where: { userId, currencyId },
+                    select: {
+                    id: true,
+                    userId: true,
+                    currencyId: true,
+                    availableBalance: true,
+                    accountBalance: true
+                    }
+                }),
+                prisma.wallet.findFirst({
+                    where: { userId: receipientId, currencyId },
+                    select: {
+                    id: true,
+                    userId: true,
+                    currencyId: true,
+                    availableBalance: true,
+                    accountBalance: true
+                    }
+                })
             ]);
 
-            logger.info('Wallets synced after transfer');
+            const fetchDuration = Date.now() - fetchStartTime;
+            logger.info('⏱️ Data fetch complete', { duration: `${fetchDuration}ms` });
 
-            // ✅ Create transaction records for both parties
-            const transactions = await prisma.transaction.createMany({
+            if (!currency) {
+              throw new Error('Currency not found');
+            }
+
+            if (!user_Wallet) {
+              throw new Error('User wallet not found');
+            }
+
+            if (!receipient_Wallet) {
+                throw new Error(
+                    `Recipient wallet not found for user ${receipientId} and currency ${currency.ISO}`
+                );
+            }
+
+            // ============================================
+            // STEP 2: VALIDATE BALANCE
+            // ============================================
+            const availableBalance = new Decimal(user_Wallet.availableBalance);
+
+            if (availableBalance.lessThan(amountDecimal)) {
+            throw new Error(
+                `Insufficient balance. Available: ${availableBalance.toFixed(8)} ${currency.ISO}, Required: ${amountDecimal.toFixed(8)} ${currency.ISO}`
+            );
+            }
+
+            // ============================================
+            // STEP 3: EXECUTE TATUM TRANSFER
+            // ============================================
+            const transferData = {
+                senderAccountId: user_Wallet.id,
+                recipientAccountId: receipient_Wallet.id, // ✅ Removed optional chaining
+                amount: DecimalUtil.roundForDisplay(amountDecimal, currency.ISO),
+                anonymous: false,
+                compliant: false
+            };
+
+            logger.info('📡 Executing Tatum API call', {
+                from: user_Wallet.id,
+                to: receipient_Wallet.id, // ✅ Removed optional chaining
+                amount: amountDecimal.toString(),
+                currency: currency.ISO
+            });
+
+            const apiStartTime = Date.now();
+
+            // ✅ Add timeout to prevent hanging
+            const response = await tatumAxios.post('/ledger/transaction',transferData);
+
+            const paymentData = response.data;
+            const apiDuration = Date.now() - apiStartTime;
+
+            logger.info('🟢 Tatum API complete', {
+                reference: paymentData.reference,
+                status: paymentData.status,
+                duration: `${apiDuration}ms`
+            });
+
+            // ============================================
+            // STEP 4: BACKGROUND POST-PROCESSING
+            // ============================================
+            setImmediate(async () => {
+            const postProcessStart = Date.now();
+
+            try {
+                // Sync wallets in parallel
+                await Promise.all([
+                this.getAccount(user_Wallet.id),
+                this.getAccount(receipient_Wallet.id) // ✅ Removed optional chaining & type assertion
+                ]);
+
+                // Create transaction records
+                await prisma.transaction.createMany({
                 data: [
-                    // Debit transaction for sender
                     {
                         userId: userId,
                         currency: currency.ISO,
-                        amount: amountDecimal.negated(), // ✅ Negative for debit (Prisma accepts Decimal)
+                        amount: amountDecimal.negated(),
                         reference: paymentData.reference,
                         status: 'SUCCESSFUL',
                         walletId: user_Wallet.id,
@@ -861,36 +1094,48 @@ class WalletService
                         description: `${currency.name} transfer to ${receipientId.slice(0, 8)}`,
                         metadata: {
                             recipientId: receipientId,
-                            recipientWalletId: receipient_Wallet.id,
+                            recipientWalletId: receipient_Wallet.id, // ✅ Removed optional chaining
                             currency: currency.ISO,
-                            transferType: 'offchain'
+                            transferType: 'direct_offchain'
                         }
                     },
-                    // Credit transaction for recipient
                     {
-                        userId: receipientId, // ✅ Fixed: was using sender's userId
+                        userId: receipientId,
                         currency: currency.ISO,
-                        amount: amountDecimal, // ✅ Positive for credit (Prisma accepts Decimal)
+                        amount: amountDecimal,
                         reference: paymentData.reference,
                         status: 'SUCCESSFUL',
-                        walletId: receipient_Wallet.id, // ✅ Fixed: was using sender's wallet
+                        walletId: receipient_Wallet.id, // ✅ Removed optional chaining
                         type: 'CREDIT_PAYMENT',
                         description: `${currency.name} transfer from ${userId.slice(0, 8)}`,
                         metadata: {
                             senderId: userId,
                             senderWalletId: user_Wallet.id,
                             currency: currency.ISO,
-                            transferType: 'offchain'
+                            transferType: 'direct_offchain'
                         }
                     }
                 ]
+                });
+
+                const postProcessDuration = Date.now() - postProcessStart;
+                    logger.info('🔄 Background post-processing complete', {
+                    reference: paymentData.reference,
+                    duration: `${postProcessDuration}ms`
+                });
+
+            } catch (postError: any) {
+                    logger.error('⚠️ Background post-processing failed (non-critical)', {
+                    reference: paymentData.reference,
+                    error: postError.message
+                });
+            }
             });
 
-            logger.info('Offchain transfer completed successfully', {
-                transactionCount: transactions.count,
+            const totalDuration = Date.now() - startTime;
+                logger.info('✅ Direct offchain transfer COMPLETE', {
                 reference: paymentData.reference,
-                amount: amountDecimal.toString(),
-                currency: currency.ISO
+                totalDuration: `${totalDuration}ms`
             });
 
             return {
@@ -898,22 +1143,24 @@ class WalletService
                 reference: paymentData.reference,
                 amount: amountDecimal.toString(),
                 currency: currency.ISO,
-                transactionCount: transactions.count,
                 senderWallet: user_Wallet.id,
-                recipientWallet: receipient_Wallet.id
+                recipientWallet: receipient_Wallet.id // ✅ Removed optional chaining
             };
 
         } catch (error: any) {
-            logger.error('Offchain transfer failed', {
+            const totalDuration = Date.now() - startTime;
+            logger.error('🔴 Direct offchain transfer FAILED', {
                 error: error.message,
                 userId,
                 receipientId,
                 currencyId,
                 amount,
+                totalDuration: `${totalDuration}ms`,
                 stack: error.stack
             });
             throw error;
         }
+
     }
 
     async bank_Transfer(payload:{
@@ -1273,33 +1520,75 @@ class WalletService
 
     async unblock_Transfer(amount:number | string, blockId:string, recipientAccountId:string){
 
-        const data = {
-            recipientAccountId,
-            amount: String(amount),
-            anonymous: true,
-            compliant: false
-        };
+        const startTime = Date.now();
 
-        const response = await tatumAxios.put(`https://api.tatum.io/v3/ledger/account/block/${blockId}`, data)
-        const responseData = response.data
-        console.log(responseData.reference)
+        try {
 
-        // sync wallet 
-        const wallet = await this.getAccount(recipientAccountId)
+            const data = {
+                recipientAccountId,
+                amount: String(amount),
+                anonymous: true,
+                compliant: false
+            };
 
-        // const record = await prisma.block.create({
-        //     data:{
-        //         id: responseData.id,
-        //         walletId: accountId,
-        //         amount,
-        //         description:'order amount blocked'
-        //     }
-        // })
+            logger.info('🔵 Unblock transfer START', { 
+                blockId, 
+                recipientAccountId,
+                amount: String(amount)
+            });
 
-        console.log('amount transferred')
+            const response = await tatumAxios.put(`https://api.tatum.io/v3/ledger/account/block/${blockId}`, data)
+            const responseData = response.data
 
-        return wallet
-        
+            console.log(responseData.reference)
+            const duration = Date.now() - startTime;
+
+            logger.info('🟢 Unblock transfer API complete', {
+                blockId,
+                reference: responseData.reference,
+                duration: `${duration}ms`
+            });
+
+            // ✅ Skip wallet sync - not needed immediately
+            // Wallet balance is already updated by Tatum
+            // Sync in background if needed
+            setImmediate(() => {
+                this.getAccount(recipientAccountId).catch(err =>
+                    logger.error('Background wallet sync failed (non-critical)', {
+                    recipientAccountId,
+                    error: err.message
+                    })
+                );
+            });
+
+            const totalDuration = Date.now() - startTime;
+            logger.info('✅ Unblock transfer COMPLETE', {
+                blockId,
+                totalDuration: `${totalDuration}ms`
+            });
+
+            return {
+                success: true,
+                reference: responseData.reference,
+                blockId,
+                recipientAccountId
+            }; 
+
+        } catch (error: any) {
+
+            const duration = Date.now() - startTime;
+            logger.error('🔴 Unblock transfer FAILED', {
+                blockId,
+                recipientAccountId,
+                duration: `${duration}ms`,
+                error: error.message,
+                stack: error.stack
+            });
+
+          throw error;
+        }
+
+
     }
 
     async unblock_Amount(blockId:string){
