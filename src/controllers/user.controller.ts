@@ -87,7 +87,7 @@ class UserController {
             // ============================================
             const existingUser = await prisma.user.findFirst({
                 where: {
-                    OR: [{ email }, { phoneNumber }]
+                    email
                 },
                 select: {
                     id: true,
@@ -143,12 +143,12 @@ class UserController {
                 // ============================================
                 // EXISTING USER: Regenerate reusable PIN
                 // ============================================
-                if (existingUser.email !== email || existingUser.phoneNumber !== phoneNumber) {
-                    return res.status(400).json({
-                    msg: 'Email and phone number do not match our records',
-                    success: false
-                    });
-                }
+                // if (existingUser.email !== email) {
+                //     return res.status(400).json({
+                //     msg: 'Email and phone number do not match our records',
+                //     success: false
+                //     });
+                // }
 
                 const isNewDay = new Date().toDateString() !== new Date(existingUser.pinGeneratedAt || 0).toDateString();
 
