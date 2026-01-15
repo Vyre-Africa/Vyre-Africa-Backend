@@ -446,6 +446,8 @@ class UserController {
         }): Promise<void> {
         const { email, firstName, pin, isReusable, expiresInMinutes } = params;
 
+        console.log('sending email for pin',pin)
+
         const subject = isReusable ? 'Your New Access PIN' : 'Your Access PIN';
   
         const expiryText = isReusable
