@@ -37,28 +37,49 @@ class NotificationService
 
         try {
 
-            const user = await prisma.user.findUnique({
-                where:{id: payload.userId},
-                select:{
-                    firstName:true,
-                    lastName: true,
-                    email:true
-                }
-            })
+            const [user, tempUser] = await Promise.all([
 
-            await prisma.notification.create({
-                data: {
-                    userId: payload.userId,
-                    title: payload.title,
-                    content: payload.content,
-                    type: payload.type,
-                }
-            });
+                prisma.user.findUnique({
+                    where:{id: payload.userId},
+                    select:{
+                        firstName:true,
+                        lastName: true,
+                        email:true
+                    }
+                }),
+            
+                prisma.tempUser.findFirst({
+                    where: { 
+                        id: payload.userId 
+                    },
+                    select: {
+                        id: true,
+                        email: true,
+                        phoneNumber: true,
+                        accessPin: true,
+                        pinExpiresAt: true
+                    }
+                })
+
+            ]);
+
+            const userRecord = user || tempUser
+
+            if(user){
+                await prisma.notification.create({
+                    data: {
+                        userId: payload.userId,
+                        title: payload.title,
+                        content: payload.content,
+                        type: payload.type,
+                    }
+                });
+            }
 
 
             await mailService.general(
                 user?.email as string,
-                user?.firstName as string,
+                user?.firstName as string || 'there',
                 payload.title,
                 payload.content
             )

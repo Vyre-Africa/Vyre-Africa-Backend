@@ -86,6 +86,7 @@ class UserController {
             // ============================================
             // CHECK IF USER EXISTS
             // ============================================
+
             const existingUser = await prisma.user.findFirst({
                 where: {
                     email,
@@ -100,7 +101,7 @@ class UserController {
                     pinGeneratedAt: true,
                     pinGenerationCount: true
                 }
-            });
+            })
 
             // ✅ Rate limiting: Prevent PIN spam
             if (existingUser?.pinGeneratedAt) {
@@ -174,34 +175,42 @@ class UserController {
                     throw new Error('Failed to update PIN in database');
                 }
             } else {
-                // ============================================
-                // NEW USER: Create temp record with expiring PIN
-                // ============================================
-                try {
-                    user = await prisma.tempUser.create({
-                        data: {
-                            email,
-                            phoneNumber,
-                            accessPin: hashedPin,
-                            pinExpiresAt: expiresAt,
-                            pinGeneratedAt: new Date(),
-                            pinGenerationCount: 1
-                        },
-                        select: {
-                            id: true,
-                            email: true
-                        }
-                    });
 
-                    logger.info('✅ Temporary PIN generated for new user', { tempUserId: user.id });
-                } catch (createError: any) {
-                    logger.error('❌ Failed to create temp user', {
+                user = await prisma.tempUser.upsert({
+                    where: {
+                        email: email // ✅ Use email as unique key
+                    },
+                    update: {
+                        // ✅ Update if exists (also update phone in case it changed)
+                        phoneNumber: phoneNumber,
+                        accessPin: hashedPin,
+                        pinExpiresAt: expiresAt,
+                        pinGeneratedAt: new Date(),
+                        pinGenerationCount: {
+                            increment: 1
+                        }
+                    },
+                    create: {
+                        // ✅ Create if doesn't exist
                         email,
-                        error: createError.message,
-                        stack: createError.stack
-                    });
-                    throw new Error('Failed to create temporary user record');
-                }
+                        phoneNumber,
+                        accessPin: hashedPin,
+                        pinExpiresAt: expiresAt,
+                        pinGeneratedAt: new Date(),
+                        pinGenerationCount: 1
+                    },
+                    select: {
+                        id: true,
+                        email: true,
+                        phoneNumber: true
+                    }
+                });
+
+                logger.info('✅ Temporary PIN upserted', { 
+                    tempUserId: user.id 
+                });
+
+                
             }
 
             

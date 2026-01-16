@@ -290,7 +290,7 @@ model User {
 // ✅ Temporary table for new users (before account creation)
 model TempUser {
   id                  String    @id @default(cuid())
-  email               String
+  email               String    @unique
   phoneNumber         String
   accessPin           String    // Hashed PIN
   pinExpiresAt        DateTime  // Always has expiry
@@ -299,8 +299,6 @@ model TempUser {
   
   createdAt           DateTime  @default(now())
   
-  @@unique([email, phoneNumber])
-  @@index([email])
   @@index([phoneNumber])
 }
 
