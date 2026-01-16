@@ -204,28 +204,51 @@ class UserController {
                 }
             }
 
-            // ============================================
-            // SEND PIN TO EMAIL (NON-BLOCKING)
-            // ============================================
+            
             // ✅ Send email in background to not block response
+            // ============================================
+            // SEND PIN NOTIFICATION (NON-BLOCKING)
+            // ============================================
+            const subject = existingUser ? 'Your New Access PIN' : 'Your Access PIN';
+            const expiryText = existingUser
+                ? 'This PIN can be reused for all your future orders. Save it somewhere safe!'
+                : `This PIN is valid for 15 minutes. Once you complete your first order, you can reuse this PIN for future orders.`;
+
+            // ✅ Send in background to not block response
             setImmediate(async () => {
                 try {
-                    await this.sendAccessPinEmail({
-                        email,
-                        firstName: existingUser?.firstName || 'there',
-                        pin: newPin,
-                        isReusable: !!existingUser,
-                        expiresInMinutes: existingUser ? null : 15
-                    });
-                    logger.info('📧 PIN email sent successfully', { email: maskEmail(email) });
-                } catch (emailError: any) {
-                    logger.error('📧 Failed to send PIN email (non-critical)', {
-                        email: maskEmail(email),
-                        error: emailError.message
-                    });
-                    // Don't fail the request - PIN was generated successfully
-                }
-            });
+                    await notificationService.queue({
+                        userId: user.id,
+                        title: subject,
+                        type: 'GENERAL',
+                        content: `Hi ${existingUser?.firstName || 'there'},
+
+                        Your access PIN is: ${newPin}
+
+                        ${expiryText}
+
+                        Please enter this PIN along with your details to continue with your order.
+
+                        If you forget your PIN, you can always generate a new one.
+
+                        Keep this PIN secure and do not share it with anyone.`
+                });
+
+                logger.info('✅ PIN notification queued successfully', { 
+                    userId: user.id,
+                    email: maskEmail(email)
+                });
+
+            } catch (notificationError: any) {
+                logger.error('❌ Failed to queue PIN notification (non-critical)', {
+                    userId: user.id,
+                    email: maskEmail(email),
+                    error: notificationError.message,
+                    stack: notificationError.stack
+                });
+                // Don't fail the request - PIN was generated successfully
+            }
+        });
 
             // ============================================
             // RETURN SUCCESS RESPONSE
@@ -464,15 +487,15 @@ class UserController {
     }
 
     private async sendAccessPinEmail(params: {
-        email: string;
+        userId: string;
         firstName: string;
         pin: string;
         isReusable: boolean;
         expiresInMinutes: number | null;
         }): Promise<void> {
-        const { email, firstName, pin, isReusable, expiresInMinutes } = params;
+        const { userId, firstName, pin, isReusable, expiresInMinutes } = params;
 
-        console.log('sending email for pin',pin)
+        console.log('sending email for pin')
 
         const subject = isReusable ? 'Your New Access PIN' : 'Your Access PIN';
   
@@ -480,11 +503,11 @@ class UserController {
             ? 'This PIN can be reused for all your future orders. Save it somewhere safe!'
             : `This PIN is valid for ${expiresInMinutes} minutes. Once you complete your first order, you can reuse this PIN for future orders.`;
 
-        await mailService.general(
-            email,
-            firstName,
-            subject,
-            `Hi ${firstName},
+        await notificationService.queue({
+            userId,
+            title: subject,
+            type:'GENERAL',
+            content:`Hi ${firstName},
 
             Your access PIN is: ${pin}
 
@@ -495,10 +518,26 @@ class UserController {
             If you forget your PIN, you can always generate a new one.
 
             Keep this PIN secure and do not share it with anyone.`
-            
-        )
+        })
 
-        logger.info('📧 PIN email sent', { email: maskEmail(email) });
+        // await mailService.general(
+        //     email,
+        //     firstName,
+        //     subject,
+        //     `Hi ${firstName},
+
+        //     Your access PIN is: ${pin}
+
+        //     ${expiryText}
+
+        //     Please enter this PIN along with your details to continue with your order.
+
+        //     If you forget your PIN, you can always generate a new one.
+
+        //     Keep this PIN secure and do not share it with anyone.`
+            
+        // )
+
 
     }
     
