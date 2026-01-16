@@ -286,7 +286,7 @@ router.get(
 
 router.get(
   '/order/:id',
-  authMiddleware,
+  // authMiddleware,
   orderController.fetchOrder
 )
 
