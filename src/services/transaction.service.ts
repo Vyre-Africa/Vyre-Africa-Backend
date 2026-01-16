@@ -42,7 +42,7 @@ class TransactionService
             where: {
               userId
             },
-            take: limit ? limit : 20 || 20,
+            take: limit ? limit : 20,
             orderBy: { createdAt: "desc" }
         });
     }
@@ -56,7 +56,7 @@ class TransactionService
             where: {
               walletId
             },
-            take: limit ? limit : 20 || 20,
+            take: limit ? limit : 20,
             orderBy: { createdAt: "desc" }
         });
     }
@@ -81,7 +81,7 @@ class TransactionService
             include:{
                 user: true
             },
-            take: limit ? parseInt(limit as string) : 20 || 20,
+            take: limit ? parseInt(limit as string) : 20,
             orderBy: { createdAt: "desc" }
         });
     }
@@ -143,7 +143,7 @@ class TransactionService
             include:{
                 user: true
             },
-            take: limit ? parseInt(limit as string) : 20 || 20,
+            take: limit ? parseInt(limit as string) : 20,
             orderBy: { createdAt: "desc" }
         });
     }
@@ -159,7 +159,7 @@ class TransactionService
                 userId,
                 type: type as TransactionType
             },
-            take: limit ? parseInt(limit as string) : 20 || 20,
+            take: limit ? parseInt(limit as string) : 20,
             orderBy: { createdAt: "desc" }
         });
     }

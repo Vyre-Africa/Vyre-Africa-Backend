@@ -5,3 +5,107 @@ ReferenceError: logger is not defined
     at Server.emit (node:events:532:35)
     at emitListeningNT (node:net:1945:10)
     at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+2025-12-01 03:25:52 [error] invalid json response body at https://api.zeptomail.eu/v1.1/email/template reason: Unexpected token '<', "<!DOCTYPE "... is not valid JSON 
+FetchError: invalid json response body at https://api.zeptomail.eu/v1.1/email/template reason: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+    at /Users/user/Vyre-Africa-Backend/node_modules/node-fetch/lib/index.js:273:32
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+2025-12-01 19:57:07 [error] UNHANDLED REJECTION: Redis is already connecting/connected 
+Error: Redis is already connecting/connected
+    at /Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:108:24
+    at new Promise (<anonymous>)
+    at EventEmitter.connect (/Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:104:25)
+    at Object.<anonymous> (/Users/user/Vyre-Africa-Backend/build/config/redis.config.js:43:12)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2025-12-01 19:57:07 [error] UNHANDLED REJECTION: Redis is already connecting/connected 
+Error: Redis is already connecting/connected
+    at /Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:108:24
+    at new Promise (<anonymous>)
+    at EventEmitter.connect (/Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:104:25)
+    at Object.<anonymous> (/Users/user/Vyre-Africa-Backend/build/config/redis.config.js:43:12)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2025-12-01 19:57:07 [error] UNHANDLED REJECTION: Redis is already connecting/connected 
+Error: Redis is already connecting/connected
+    at /Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:108:24
+    at new Promise (<anonymous>)
+    at EventEmitter.connect (/Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:104:25)
+    at Object.<anonymous> (/Users/user/Vyre-Africa-Backend/build/config/redis.config.js:43:12)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2025-12-01 19:57:56 [error] UNHANDLED REJECTION: Redis is already connecting/connected 
+Error: Redis is already connecting/connected
+    at /Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:108:24
+    at new Promise (<anonymous>)
+    at EventEmitter.connect (/Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:104:25)
+    at Object.<anonymous> (/Users/user/Vyre-Africa-Backend/build/config/redis.config.js:43:12)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2025-12-01 19:58:08 [error] UNHANDLED REJECTION: Redis is already connecting/connected 
+Error: Redis is already connecting/connected
+    at /Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:108:24
+    at new Promise (<anonymous>)
+    at EventEmitter.connect (/Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:104:25)
+    at Object.<anonymous> (/Users/user/Vyre-Africa-Backend/build/config/redis.config.js:43:12)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2025-12-01 19:58:08 [error] UNHANDLED REJECTION: Redis is already connecting/connected 
+Error: Redis is already connecting/connected
+    at /Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:108:24
+    at new Promise (<anonymous>)
+    at EventEmitter.connect (/Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:104:25)
+    at Object.<anonymous> (/Users/user/Vyre-Africa-Backend/build/config/redis.config.js:43:12)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2025-12-01 19:58:08 [error] UNHANDLED REJECTION: Redis is already connecting/connected 
+Error: Redis is already connecting/connected
+    at /Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:108:24
+    at new Promise (<anonymous>)
+    at EventEmitter.connect (/Users/user/Vyre-Africa-Backend/node_modules/ioredis/built/Redis.js:104:25)
+    at Object.<anonymous> (/Users/user/Vyre-Africa-Backend/build/config/redis.config.js:43:12)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2026-01-14 18:25:08 [error] Transfer failed: 
+Error: Admin wallet not found
+    at stableCoinService.executeTransfer (/Users/user/Vyre-Africa-Backend/build/services/stablecoin.service.js:197:27)
+    at async WalletService.blockchain_Transfer (/Users/user/Vyre-Africa-Backend/build/services/wallet.service.js:474:30)
+    at async eventService.process_Post_Action_Job (/Users/user/Vyre-Africa-Backend/build/services/event.service.js:868:34)
+    at async bullmq_1.Worker.connection [as processFn] (/Users/user/Vyre-Africa-Backend/build/workers/general.worker.js:34:24)
+    at async /Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:496:32
+    at async Worker.retryIfFailed (/Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:774:24)
+2026-01-14 18:25:08 [error] Post action failed for cmkeabpwk000533px8c99fd8y 
+Error: Admin wallet not found
+    at stableCoinService.executeTransfer (/Users/user/Vyre-Africa-Backend/build/services/stablecoin.service.js:197:27)
+    at async WalletService.blockchain_Transfer (/Users/user/Vyre-Africa-Backend/build/services/wallet.service.js:474:30)
+    at async eventService.process_Post_Action_Job (/Users/user/Vyre-Africa-Backend/build/services/event.service.js:868:34)
+    at async bullmq_1.Worker.connection [as processFn] (/Users/user/Vyre-Africa-Backend/build/workers/general.worker.js:34:24)
+    at async /Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:496:32
+    at async Worker.retryIfFailed (/Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:774:24)

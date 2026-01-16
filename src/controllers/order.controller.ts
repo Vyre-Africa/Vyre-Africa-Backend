@@ -12,7 +12,10 @@ import mobilePushService from '../services/mobilePush.service';
 import { subMinutes } from 'date-fns';
 import anonService from '../services/anon.service';
 // import {Currency,walletType} from '@prisma/client';
-import { hasSufficientBalance, amountSufficient } from '../utils';
+import { generateOrderId, amountSufficient, getPaymentSystems } from '../utils';
+import Decimal from 'decimal.js';
+import logger from '../config/logger';
+
 
 class OrderController {
 
@@ -66,25 +69,23 @@ class OrderController {
 
         console.log('pair', pair)
 
-        const baseWalletExists = await prisma.wallet.findFirst({
-          where: {
-            userId: user.id,
-            currencyId: pair?.baseCurrency?.id!
-          }
-        });
+        const [baseWallet, quoteWallet] = await Promise.all([
+          prisma.wallet.findFirst({
+            where: {
+              userId: user.id,
+              currencyId: pair?.baseCurrency?.id!
+            }
+          }),
+          prisma.wallet.findFirst({
+            where: {
+              userId: user.id,
+              currencyId: pair?.quoteCurrency?.id!
+            }
+          })
+        ]);
 
-        console.log('baseWalletExists', baseWalletExists)
 
-        const quoteWalletExists = await prisma.wallet.findFirst({
-          where: {
-            userId: user.id,
-            currencyId: pair?.quoteCurrency?.id!
-          }
-        });
-
-        console.log('quoteWalletExists', quoteWalletExists)
-
-        if(!baseWalletExists || !quoteWalletExists){
+        if(!baseWallet || !quoteWallet){
           return res.status(400)
             .json({
               msg: 'User wallets required does not exist',
@@ -92,141 +93,189 @@ class OrderController {
             });
         }
 
-        const order = await orderService.createOrder({
+        // ✅ Quick balance check before queuing
+        const amountDecimal = new Decimal(amount);
+        const walletToCheck = type === 'SELL' ? baseWallet : quoteWallet;
+        const availableBalance = new Decimal(walletToCheck.availableBalance);
+
+        if (availableBalance.lessThan(amountDecimal)) {
+          return res.status(400).json({
+            msg: `Insufficient ${type === 'SELL' ? 'base' : 'quote'} balance`,
+            success: false,
+          });
+        }
+
+        // ✅ PHASE 2: Generate order ID immediately
+        const orderId = generateOrderId();
+
+        // ✅ Queue the heavy work (transaction, blocking, etc.)
+        await orderService.create_Order_Queue({
+          orderId, // Pass the pre-generated ID
           userId: user.id,
           rate: parseFloat(price),
           amount: parseFloat(amount), 
           orderType: type, 
           pairId, 
-          minimumAmount: parseFloat(minimumAmount),
-          baseWallet: baseWalletExists,
-          quoteWallet: quoteWalletExists
-        })
+          minimumAmount: minimumAmount ? parseFloat(minimumAmount) : undefined,
+          baseWallet,
+          quoteWallet
+        });
+
+
 
       return res
         .status(200)
         .json({
-          msg: 'Order created Successfully',
+          msg: 'Order Created Successfully',
           success: true,
-          order
+          order: {
+            id: orderId,
+            type: type,
+            amount: amount,
+            pair,
+            price: price,
+            status: 'PROCESSING', // Add status field
+            createdAt: new Date().toISOString()
+          }
         });
 
     } catch (error) {
-      console.log(error)
-      res.status(500)
-        .json({
-          msg: 'Order creation unsuccessful',
-          success: false,
-        });
+      console.log(error);
+      return res.status(500).json({
+        msg:'Order creation unsuccessful',
+        success: false
+      });
     }
   }
-
 
   async processOrder(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     const {amount, orderId } = req.body;
-   
-
-    const userData = await prisma.user.findUnique({
-      where: { id: user.id }
-    })
-
-    const order = await prisma.order.findUnique({
-      where:{id: orderId}
-    })
-
-    const pair = await prisma.pair.findFirst({
-      where:{id: order?.pairId},
-      include:{
-        quoteCurrency:{
-          select:{
-            id:true,
-            ISO:true  
-          },
-        },
-        baseCurrency:{
-          select:{
-            id:true,
-            ISO:true  
-          },
-        },
-        quoteWallet:true,
-        baseWallet:true,
-      }
-    })
-
-    if(!pair){
-      return res.status(400)
-        .json({
-          msg: 'order pair not found',
-          success: false,
-        });
-    }
-
-    const userBaseWallet = await prisma.wallet.findFirst({
-      where:{
-        currencyId: pair?.baseCurrency?.id,
-        userId: user.id
-      }
-    })
-
-    const userQuoteWallet = await prisma.wallet.findFirst({
-      where:{
-        currencyId: pair?.quoteCurrency?.id,
-        userId: user.id
-      }
-    })
-
-    if (!userBaseWallet || !userQuoteWallet) {
-      return res.status(400)
-        .json({
-          msg: 'User wallet does not exist',
-          success: false,
-        });
-    }
-
-    // check for single minimum amount required per trade
-    if(!amountSufficient(amount, order?.amountMinimum as number)){
-      return res.status(400)
-        .json({
-          msg: 'Minimum Order Amount not sufficient',
-          success: false,
-        });
-    }
 
     try {
 
-      const order = await orderService.processOrder({
-        userId: user.id,
+      // ============================================
+        // STEP 1: VALIDATE INPUT
+        // ============================================
+      if (!amount || !orderId) {
+        return res.status(400).json({
+          msg: 'Amount and order ID are required',
+          success: false
+        });
+      }
+
+      // ============================================
+        // STEP 2: FETCH ORDER WITH PAIR DETAILS
+        // ============================================
+        const order = await prisma.order.findUnique({
+          where: { id: orderId },
+          include: {
+            pair: {
+              include: {
+                baseCurrency: { select: { id: true, ISO: true } },
+                quoteCurrency: { select: { id: true, ISO: true } }
+              }
+            }
+          }
+        });
+
+        if (!order) {
+          return res.status(404).json({
+            msg: 'Order not found',
+            success: false
+          });
+        }
+
+        if (!order.pair) {
+          return res.status(400).json({
+            msg: 'Order pair not found',
+            success: false
+          });
+        }
+
+        // ============================================
+        // STEP 3: VALIDATE MINIMUM AMOUNT WITH DECIMAL
+        // ============================================
+        const amountDecimal = new Decimal(amount);
+        const minimumAmountDecimal = new Decimal(order.amountMinimum);
+        
+        // ✅ Use Decimal's lessThan method for precise comparison
+        if (amountDecimal.lessThan(minimumAmountDecimal)) {
+          return res.status(400).json({
+            msg: `Minimum order amount is ${minimumAmountDecimal.toString()} ${order.pair?.baseCurrency?.ISO}`,
+            success: false
+          });
+        }
+
+      // ============================================
+        // STEP 4: FETCH USER WALLETS (PARALLEL)
+        // ============================================
+        const [userBaseWallet, userQuoteWallet] = await Promise.all([
+          prisma.wallet.findFirst({
+            where: {
+              currencyId: order.pair?.baseCurrency?.id,
+              userId: user.id
+            }
+          }),
+          prisma.wallet.findFirst({
+            where: {
+              currencyId: order.pair?.quoteCurrency?.id,
+              userId: user.id
+            }
+          })
+        ]);
+
+      if (!userBaseWallet || !userQuoteWallet) {
+          return res.status(400).json({
+            msg: 'Required wallets not found. Please create wallets for this trading pair.',
+            success: false
+          });
+      }
+
+  
+
+      // Execute instant order
+      const result = await orderService.instantOrder({
         orderId,
-        amount, 
-        userBaseWallet,
-        userQuoteWallet
-      })
+        amount,
+        userId: user.id,
+        baseWallet: userBaseWallet,
+        quoteWallet: userQuoteWallet
+      });
 
-
-      return res
-        .status(200)
-        .json({
-          msg: 'Order Processed Successfully',
+      // ✅ Return based on result.success
+      if (result.success) {
+        return res.status(200).json({
+          msg: result.message,
           success: true,
-          order
+          data: result.data
         });
+      } else {
+        return res.status(400).json({
+          msg: result.message,
+          success: false
+        });
+      }
 
-    } catch (error) {
-      console.log(error)
-      res.status(500)
-        .json({
-          msg: 'Internal Server Error',
-          success: false,
-        });
+    } catch (error: any) {
+
+      logger.error('Instant order action failed', {
+        userId: user.id,
+        error: error.message
+      });
+
+      return res.status(500).json({
+        msg: 'An unexpected error occurred',
+        success: false
+      });
+
     }
-  }
 
+  }
 
   async initiateAnonymous(req: Request & Record<string, any>, res: Response) {
     // const { user } = req;
-    const { orderId, currencyId, amount, user, bank, crypto } = req.body;
+    const { orderId, currencyId, amount, user, bank, crypto, paymentMethod } = req.body;
 
     try {
 
@@ -261,19 +310,19 @@ class OrderController {
         });
       }
 
-      if(order?.type === 'BUY' && !bank ){
-        return res.status(400)
+      if(order?.type === 'BUY' && (!bank.accountNumber || !bank.bankCode || !bank.recipient)){
+          return res.status(400)
             .json({
               msg: 'bank details required',
-              success: false,
-        });
+              success: false
+            });
       }
 
-      if(order?.type === 'SELL' && !crypto){
+      if(order?.type === 'SELL' && !crypto.address){
         return res.status(400)
             .json({
               msg: 'crypto details required',
-              success: false,
+              success: false
         });
 
       }
@@ -283,6 +332,8 @@ class OrderController {
         currencyId,
         amount,
         userDetails: user,
+        paymentMethod,
+
         bank:{
           accountNumber: bank.accountNumber,
           bank_code: bank.bankCode,
@@ -291,7 +342,8 @@ class OrderController {
         crypto:{
           address: crypto.address
           // chain: crypto.chain
-        }
+        },
+        
       })
 
 
@@ -308,8 +360,6 @@ class OrderController {
       return res.status(500).send({ msg: 'Initialisation failed', success: false, error });
     }
   }
-
-
 
   async getRatebyPair(req: Request, res: Response) {
     const { pairId } = req.query;
@@ -435,7 +485,7 @@ class OrderController {
         .json({
           msg: 'Successful',
           success: true,
-          order,
+          order:{...order,paymentMethods: getPaymentSystems(order?.pair?.quoteCurrency?.ISO as string)},
         });
 
     } catch (error) {
@@ -445,6 +495,7 @@ class OrderController {
   }
 
   async cancelOrder(req: Request | any, res: Response) {
+    const { user } = req;
     const orderId = req.params.id
 
     if (!orderId) {
@@ -476,10 +527,24 @@ class OrderController {
           });
       }
 
-      const canceledOrder = await prisma.order.update({
-        where:{id: order?.id},
-        data:{status:'CANCELED'}
-      })
+      const pendingOrders = await prisma.awaiting.findMany({
+        where: {
+          orderId: order.id,
+          status: {
+            in: ['PENDING', 'PROCESSING']
+          }
+        }
+      });
+
+      if (pendingOrders.length) {
+        return res.status(400).json({
+          msg: 'Pending order exists',
+          success: false,
+          data: pendingOrders // optional: include the pending orders in response
+        });
+      }
+
+      const canceledOrder = await orderService.cancelOrder({orderId, userId:user.id})
 
 
       return res
@@ -496,6 +561,7 @@ class OrderController {
     }
   }
 
+
   async fetchOrders(req: Request | any, res: Response) {
     const { cursor, type, pairId, priceMin, priceMax } = req.query;
 
@@ -511,7 +577,8 @@ class OrderController {
             ...(priceMin && { gte: parseFloat(priceMin) }),
             ...(priceMax && { lte: parseFloat(priceMax) })
           }
-        })
+        }),
+        status: 'OPEN'
       };
 
       const totalCount = await prisma.order.count({
@@ -587,6 +654,84 @@ class OrderController {
         success: true,
         totalCount: totalCount,
         cursor: newCursor,
+        orders
+      });
+
+    } catch (error) {
+      console.error(error);
+      return res.status(500).send({ 
+        msg: 'Internal Server Error', 
+        success: false
+      });
+    }
+  }
+
+  async fetch_user_orders(req: Request | any, res: Response) {
+
+    const user = req.user
+
+    console.log(req.query)
+
+    try {
+
+      const orders = await prisma.order.findMany({
+        where: {userId: user.id},
+        select: {
+          id: true,
+          type: true,
+          user: {
+            select: {
+              firstName: true,
+              lastName: true,
+              photoUrl: true,
+            }
+          },
+          pair: {
+            select:{
+              name: true,
+              baseCurrency:{
+                select:{
+                  id: true, 
+                  type: true,
+                  name: true,
+                  ISO: true,
+                  chain: true,
+                  imgUrl: true,
+                  chainImgUrl: true,
+                  isStablecoin: true,
+                  flagEmoji: true 
+                }  
+              },
+              quoteCurrency:{
+                select:{
+                  id: true, 
+                  type: true,
+                  name: true,
+                  ISO: true,
+                  chain: true,
+                  imgUrl: true,
+                  chainImgUrl: true,
+                  isStablecoin: true,
+                  flagEmoji: true 
+                }  
+              }
+            }
+          },
+          amount: true,
+          amountProcessed: true,
+          percentageProcessed: true,
+          price: true,
+          status: true,
+          createdAt: true
+        },
+        orderBy: {
+          createdAt: 'desc'  // Assuming you want newest orders first
+        }
+      });
+
+      return res.status(200).json({
+        msg: 'Successful',
+        success: true,
         orders
       });
 

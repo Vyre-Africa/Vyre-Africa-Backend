@@ -10,10 +10,6 @@ import { registerMiddleware } from '../services/register';
 import userController from '../controllers/user.controller';
 import tripController from '../controllers/wallet.controller';
 import orderController from '../controllers/order.controller';
-import productController from '../controllers/product.controller';
-import storeController from '../controllers/account.controller';
-import organisationController from '../controllers/organisation.controller';
-import organisationValidator from '../validators/organisation.validator';
 import userValidator from '../validators/user.validator';
 import walletValidator from '../validators/wallet.validator';
 import storeValidator from '../validators/store.validator';
@@ -45,10 +41,13 @@ router.post(
   userController.register
 );
 
-
+router.post(
+  '/webhook/clerk',
+  eventController.clerk_WebHook
+);
 
 router.post(
-  '/webhook',
+  '/webhook/qorepay',
   eventController.qorepay_WebHook
 );
 
@@ -58,7 +57,7 @@ router.post(
 );
 
 router.post(
-  '/tatum/events',
+  '/webhook/tatum',
   eventController.tatum_WebHook
 );
 
@@ -280,8 +279,14 @@ router.get(
 );
 
 router.get(
-  '/order/:id',
+  '/orders/user',
   authMiddleware,
+  orderController.fetch_user_orders
+);
+
+router.get(
+  '/order/:id',
+  // authMiddleware,
   orderController.fetchOrder
 )
 
@@ -335,6 +340,13 @@ router.get(
 
 // //update user profile
 
+
+router.get(
+  '/user/portfolio',
+  authMiddleware,
+  walletController.fetchPortfolio,
+);
+
 router.get(
   '/user/get-profile',
   authMiddleware,
@@ -363,6 +375,22 @@ router.post(
   middleware.handleValidationError,
   userController.changePassword,
 );
+
+router.post(
+  '/user/generate-pin',
+  userValidator.generatePin(),
+  middleware.handleValidationError,
+  userController.generatePin
+);
+
+router.post(
+  '/user/verify-pin',
+  userValidator.verifyPin(),
+  middleware.handleValidationError,
+  userController.verifyPin
+);
+
+
 
 //get banks
 router.get(

@@ -38,6 +38,82 @@ class MailService {
         this.batchClient = new SendMailClient({ url: this.batchUrl, token: this.token });
     }
 
+    public async general(
+        address:string, 
+        userName:string, 
+        title: string,
+        content: string,
+       ): Promise<void> {
+        try {
+            
+            const response = await this.client.sendMail({
+                mail_template_key:
+                    '13ef.77aaa135805f0ced.k1.d7473860-437c-11f0-832a-66e0c45c7bae.19749980ee6',
+                from: {
+                    address: 'team@vyre.africa',
+                    name: 'Vyre',
+                },
+                to: [
+                    {
+                        email_address: {
+                            address: address,
+                            name: 'Vyre',
+                        },
+                    },
+                ],
+                merge_info: { 
+                    title,
+                    content,
+                    user_name: userName 
+                },
+                subject: title,
+            });
+            console.log('success', response);
+        } catch (error) {
+            console.error('error', error);
+        }
+    }
+
+    public async order_Placed(
+        address:string, 
+        userName:string, 
+        amount: number,
+        status:string,
+        reference:string
+    ): Promise<void> {
+
+        // console.log('address',address,'userName',userName,'otp',otp)
+        try {
+            const response = await this.client.sendMail({
+                mail_template_key:'13ef.77aaa135805f0ced.k1.b1f19160-cc1a-11f0-90c5-e23f717f7d6f.19ac8ecb576',
+                
+                from: {
+                    address: 'team@vyre.africa',
+                    name: 'Vyre',
+                },
+                to: [
+                    {
+                        email_address: {
+                            address: address,
+                            name: 'Vyre',
+                        },
+                    },
+                ],
+                merge_info: { 
+                    date: Date.now(), 
+                    user_name: userName,
+                    amount,
+                    status,
+                    reference
+                },
+                subject: 'Order created',
+            });
+            console.log('success', response);
+        } catch (error) {
+            console.error('error', error);
+        }
+    }
+
     public async sendBroadCast(receipients:{}[]): Promise<void> {
 
             this.batchClient.mailBatchWithTemplate({
@@ -140,6 +216,8 @@ class MailService {
             console.error('error', error);
         }
     }
+
+    
 
     public async sendWelcomeEmail(address:string, userName:string): Promise<void> {
 

@@ -3,23 +3,23 @@ import { body } from 'express-validator';
 class walletValidator {
   initDeposit() {
     return [
-      body('currency').notEmpty().withMessage('currency is required'),
+      body('currencyId').notEmpty().withMessage('currency Id is required'),
       body('amount').notEmpty().withMessage('amount is required')
     ];
   }
 
   initBlockchainTransfer() {
     return [
-      body('currency').notEmpty().withMessage('currency is required'),
+      body('currencyId').notEmpty().withMessage('currency id is required'),
       body('amount').notEmpty().withMessage('amount is required'),
       body('address').notEmpty().withMessage('blockchain is required'),
-      // body('destinationTag').optional().withMessage('destinationTag is required for XRP')
+      body('destinationTag').optional()
     ];
   }
 
   initVyreTransfer() {
     return [
-      body('currency').notEmpty().withMessage('currency is required'),
+      body('currencyId').notEmpty().withMessage('currency id is required'),
       body('amount').notEmpty().withMessage('amount is required'),
       body('receipient_id').notEmpty().withMessage('receipient_id is required'),
     ];

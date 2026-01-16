@@ -16,6 +16,7 @@ import { subMinutes } from 'date-fns';
 import * as crypto from 'crypto';
 import {createHmac} from 'node:crypto';
 import { generateRefCode, generateSignature, isValidSignature } from '../utils';
+import Decimal from 'decimal.js';
 import transactionService from '../services/transaction.service';
 import fernService from '../services/fern.service';
 
@@ -52,7 +53,7 @@ class WalletController {
         .json({
           msg:`rate fetched successfully`,
           success: true,
-          rate:response,
+          rate: response,
           value: convertedAmount
         });
 
@@ -82,20 +83,20 @@ class WalletController {
           });
       }
   
-      const walletExists = await prisma.wallet.findFirst({
-        where: { 
-          userId: user.id,
-          currencyId
-        }
-      })
+      // const walletExists = await prisma.wallet.findFirst({
+      //   where: { 
+      //     userId: user.id,
+      //     currencyId
+      //   }
+      // })
   
-      if(walletExists){
-        return res.status(400)
-          .json({
-            msg: `${currency?.name} wallet already exists`,
-            success: false,
-          });
-      }
+      // if(walletExists){
+      //   return res.status(400)
+      //     .json({
+      //       msg: `${currency?.name} wallet already exists`,
+      //       success: false,
+      //     });
+      // }
 
       const result = await walletService.createWallet({
         userId:user.id, 
@@ -133,7 +134,7 @@ class WalletController {
     }
 
     const currency = await prisma.currency.findUnique({
-      where:{id:currencyId}
+      where:{id: currencyId}
     })
 
     if(!currency){
@@ -308,7 +309,12 @@ class WalletController {
           });
       }
 
-      if(amount > walletExists.availableBalance){
+      // ✅ Convert amount to Decimal immediately
+      const amountDecimal = new Decimal(amount);
+      // ✅ Check balance with Decimal comparison
+      const availableBalance = new Decimal(walletExists.availableBalance);
+
+      if(availableBalance.lessThan(amountDecimal)){
         return res.status(400)
           .json({
             msg: 'Available balance not sufficient',
@@ -316,20 +322,28 @@ class WalletController {
           });
       }
 
-      const result = await walletService.offchain_Transfer
-        ({
+        // const result = await walletService.offchain_Transfer
+        // ({
+        //   userId: user.id,
+        //   receipientId: receipient_id,
+        //   currencyId: currencyId,
+        //   amount
+        // })
+
+        await walletService.queue({
           userId: user.id,
           receipientId: receipient_id,
           currencyId: currencyId,
-          amount
+          amount,
+          type:'OFFCHAIN'
         })
 
         return res
         .status(200)
         .json({
           msg: 'Transfer Successful',
-          success: true,
-          wallet:result
+          success: true
+          // wallet:result
         });
 
     } catch (error) {
@@ -381,7 +395,12 @@ class WalletController {
           });
       }
 
-      if(amount > walletExists.availableBalance){
+      // ✅ Convert amount to Decimal immediately
+      const amountDecimal = new Decimal(amount);
+      // ✅ Check balance with Decimal comparison
+      const availableBalance = new Decimal(walletExists.availableBalance);
+
+      if(availableBalance.lessThan(amountDecimal)){
         return res.status(400)
           .json({
             msg: 'Available balance not sufficient',
@@ -398,21 +417,30 @@ class WalletController {
         }
 
         // Handle crypto withdrawal logic here
-        const result = await walletService.blockchain_Transfer
-        ({
+        // const result = await walletService.blockchain_Transfer
+        // ({
+        //   userId: user.id, 
+        //   currencyId: currency.id,
+        //   amount: amount,
+        //   address: address,
+        //   destination_Tag: destinationTag
+        // })
+
+        await walletService.queue({
           userId: user.id, 
           currencyId: currency.id,
           amount: amount,
           address: address,
-          destination_Tag: destinationTag
+          destination_Tag: destinationTag,
+          type:'BLOCKCHAIN'
         })
 
         return res
         .status(200)
         .json({
           msg: 'Transfer Initiated',
-          success: true,
-          wallet:result
+          success: true
+          // wallet:result
         });
 
 
@@ -444,6 +472,14 @@ class WalletController {
           recipient_name: recipient_name,
           endpoint: endpoint_url
         })
+
+        // await walletService.queue({
+        //   account_number,
+        //   bank_code,
+        //   recipient_name: recipient_name,
+        //   endpoint: endpoint_url,
+        //   type:'BANK'
+        // })
 
         return res
         .status(200)
@@ -624,6 +660,28 @@ class WalletController {
   // }
 
 
+  async fetchPortfolio(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+
+    try {
+
+      const userPortfolio = await walletService.aggregateAllWallets(user.id,'NGN');
+      console.log('user portfolio', userPortfolio)
+
+    
+      return res
+        .status(200)
+        .json({
+          msg: 'wallets fetched Successfully',
+          success: true,
+          data: userPortfolio
+        });
+    } catch (error) {
+      console.log(error);
+      return res.status(500).send({ msg: 'Internal Server Error', success: false, error });
+    }
+  }
+
   async fetchWallets(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     const { type } = req.query;
@@ -649,6 +707,9 @@ class WalletController {
         wallets = await prisma.wallet.findMany({
           where: {
             userId: user.id
+          },
+          include: {
+            currency: true  // Optionally include the full currency data in the response
           }
         });
       }

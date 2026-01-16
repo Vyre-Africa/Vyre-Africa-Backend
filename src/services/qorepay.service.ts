@@ -6,6 +6,7 @@ import prisma from '../config/prisma.config';
 import axios from "axios";
 import { UserBank } from "@prisma/client";
 import { generateRefCode } from "../utils";
+import logger from "../config/logger";
 const Flutterwave = require('flutterwave-node-v3');
 
 const qorepayAxios = axios.create({
@@ -14,6 +15,15 @@ const qorepayAxios = axios.create({
       'accept':'application/json',
       'authorization': `Bearer ${config.QOREPAY_BEARER_TOKEN}`,
       'Content-Type': 'application/json'
+  }
+});
+
+const qorepayServer = axios.create({
+  baseURL: 'https://gate.qorepay.com',
+  headers: {
+      'accept':'application/json',
+      'authorization': `Bearer ${config.QOREPAY_S2S_TOKEN}`,
+      'Content-Type': 'multipart/form-data'
   }
 });
 
@@ -55,6 +65,7 @@ class QorepayService {
         // create transaction record
         const transaction = await prisma.transaction.create({
             data:{
+                id:result.id,
                 userId,
                 currency,
                 amount,
@@ -74,77 +85,83 @@ class QorepayService {
         return paymentDetails
     }
 
-    async deposit_via_Bank(payload:{
-      currency: string,
-      amount: number, 
-      email: string,
-      userId: string,
-      walletId: string
-    })
-    {
-        const { currency, amount, email, userId, walletId } = payload
-        
+    async deposit_via_Bank(payload: {
+      currency: string;
+      amount: number;
+      email: string;
+      userId: string;
+      walletId: string;
+    }) {
+      const { currency, amount, email, userId, walletId } = payload;
+
+      try {
+        // Step 1: Create purchase
         const data = {
-              client: {
-                email
-              },
-              purchase: {
-                currency,
-                products: [
-                  {
-                    name: "Deposit",
-                    quantity: 1,
-                    price: amount * 100
-                  }
-                ]
-              },
-              brand_id: config.QOREPAY_BRAND_ID
-        }
-        const response = await qorepayAxios.post(`/api/v1/purchases/`, data)
-        console.log(response.data)
-        const result = response.data
+          client: { email },
+          purchase: {
+            currency,
+            products: [{
+              name: "Deposit",
+              quantity: 1,
+              price: amount * 100
+            }]
+          },
+          brand_id: config.QOREPAY_BRAND_ID
+        };
 
-        if(!result){
-          throw new Error('Could not initialize payment');
-        }
+        const response = await qorepayAxios.post('/api/v1/purchases/', data);
+        const result = response.data;
 
-        // get bank details
-        const account = await qorepayAxios.post(`/p/${result.id}/`, { s2s: true, pm: "sarepay_bank_transfer"})
-        console.log(account.data)
-        const details = account.data
+        if (!result) throw new Error('Could not initialize payment');
 
+        // Step 2 & 3: Create transaction record AND fetch bank details in parallel
+        const formData = new FormData();
+        formData.append('s2s', 'true');
+        formData.append('pm', 'sarepay_bank_transfer');
 
-
-        // create transaction record
-        const transaction = await prisma.transaction.create({
-            data:{
-                userId,
-                currency,
-                amount,
-                reference: result.id,
-                status: 'PENDING',
-                walletId,
-                type:'FIAT_DEPOSIT',
-                description:`${currency} deposit`
+        const [transaction, bankAccount] = await Promise.all([
+          // Create transaction record
+          prisma.transaction.create({
+            data: {
+              id: result.id,
+              userId,
+              currency,
+              amount,
+              reference: result.id,
+              status: 'PENDING',
+              walletId,
+              type: 'FIAT_DEPOSIT',
+              description: `${currency} deposit`
             }
-        })
-        const bankDetails ={
-            id: result.id,
-            account_number: details?.account_number,
-            account_name: details?.account_name,
-            bank: details?.bank,
-            status: details?.status,
-            type: details?.type,
-            expires_at: details?.expires_at,
-            validity_type: details?.validity_type
-        }
-        return bankDetails
+          }),
+          // Get bank details
+          qorepayServer.post(`/p/${result.id}/`, formData)
+        ]);
+
+        const details = bankAccount.data.data;
+
+        return {
+          id: result.id,
+          account_number: details?.account_number,
+          account_name: details?.account_name,
+          bank: details?.bank,
+          status: details?.status,
+          type: details?.type,
+          expires_at: details?.expires_at,
+          validity_type: details?.validity_type
+        };
+
+      } catch (error) {
+        logger.error('Bank deposit initialization failed:', error);
+        throw error;
+      }
     }
 
 
     async bank_Transfer(payload:{
+       userId:string,
        currency: string,
-       amount:number,
+       amount:string,
        email:string, 
        phone:string,
 
@@ -163,7 +180,7 @@ class QorepayService {
                 phone
               },
               payment: {
-                amount: amount * 100,
+                amount: (Number(amount)) * 100,
                 currency,
                 description: `${currency} withdrawal `,
               },
@@ -199,7 +216,7 @@ class QorepayService {
       console.log('qorepay transfer response',transferResponse.data)
       const transferResult = transferResponse.data
 
-      return transferResult
+      return {success:true, ...result}
 
 
     }

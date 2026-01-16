@@ -19,15 +19,16 @@ import {
     generateOtp,
     generateRefCode,
     hashData,
-    checkUserPaymentMethods
+    checkUserPaymentMethods,
+    generateAccessPin,
+    hashPin,
+    maskEmail,
+    verifyPin
 } from '../utils';
 import moment from 'moment';
 import transactionService from '../services/transaction.service';
-import walletService from '../services/wallet.service';
-import { endOfDay, startOfDay, subDays } from 'date-fns';
-import mobilePushService from '../services/mobilePush.service';
-import smsService from '../services/sms.service';
 import fernService from '../services/fern.service';
+import logger from '../config/logger';
 
 interface KycDetails {
     legalFirstName: string;
@@ -68,6 +69,486 @@ interface KycDetails {
   }
 
 class UserController {
+
+    async generatePin(req: Request, res: Response) {
+        const { email, phoneNumber } = req.body;
+
+        try {
+            if (!email || !phoneNumber) {
+                return res.status(400).json({
+                    msg: 'Email and phone number are required',
+                    success: false
+                });
+            }
+
+            logger.info('🔵 PIN generation requested', { email, phoneNumber });
+
+            // ============================================
+            // CHECK IF USER EXISTS
+            // ============================================
+
+            const existingUser = await prisma.user.findFirst({
+                where: {
+                    email,
+                    phoneNumber  // ✅ Also check phone number
+                },
+                select: {
+                    id: true,
+                    email: true,
+                    phoneNumber: true,
+                    firstName: true,
+                    accessPin: true,
+                    pinGeneratedAt: true,
+                    pinGenerationCount: true
+                }
+            })
+
+            // ✅ Rate limiting: Prevent PIN spam
+            if (existingUser?.pinGeneratedAt) {
+                const timeSinceLastPin = Date.now() - existingUser.pinGeneratedAt.getTime();
+                const oneMinute = 60 * 1000;
+
+                if (timeSinceLastPin < oneMinute) {
+                    const secondsLeft = Math.ceil((oneMinute - timeSinceLastPin) / 1000);
+                    return res.status(429).json({
+                        msg: `Please wait ${secondsLeft} seconds before requesting a new PIN`,
+                        success: false
+                    });
+                }
+
+                // Check daily limit (10 PINs per day)
+                const isNewDay = new Date().toDateString() !== new Date(existingUser.pinGeneratedAt).toDateString();
+                const currentCount = isNewDay ? 0 : existingUser.pinGenerationCount;
+
+                if (currentCount >= 10) {
+                    return res.status(429).json({
+                        msg: 'PIN generation limit reached. Please try again tomorrow or contact support.',
+                        success: false
+                    });
+                }
+            }
+
+            // ============================================
+            // GENERATE NEW PIN
+            // ============================================
+            const newPin = generateAccessPin();
+            const hashedPin = await hashPin(newPin);
+            
+            // ✅ ONLY TEMP USERS GET EXPIRY
+            const expiresAt:any = existingUser 
+                ? null
+                : new Date(Date.now() + 15 * 60 * 1000);
+
+            let user;
+
+            if (existingUser) {
+                // ============================================
+                // EXISTING USER: Regenerate reusable PIN
+                // ============================================
+                const isNewDay = new Date().toDateString() !== new Date(existingUser.pinGeneratedAt || 0).toDateString();
+
+                try {
+                    user = await prisma.user.update({
+                        where: { id: existingUser.id },
+                        data: {
+                            accessPin: hashedPin,
+                            pinExpiresAt: null,
+                            pinGeneratedAt: new Date(),
+                            pinGenerationCount: isNewDay ? 1 : (existingUser.pinGenerationCount || 0) + 1,
+                            pinAttempts: 0,
+                            pinLockedUntil: null
+                        },
+                        select: {
+                            id: true,
+                            email: true,
+                            firstName: true
+                        }
+                    });
+
+                    logger.info('✅ Reusable PIN regenerated for existing user', { userId: user.id });
+                } catch (updateError: any) {
+                    logger.error('❌ Failed to update user PIN', {
+                        userId: existingUser.id,
+                        error: updateError.message,
+                        stack: updateError.stack
+                    });
+                    throw new Error('Failed to update PIN in database');
+                }
+            } else {
+
+                user = await prisma.tempUser.upsert({
+                    where: {
+                        email: email // ✅ Use email as unique key
+                    },
+                    update: {
+                        // ✅ Update if exists (also update phone in case it changed)
+                        phoneNumber: phoneNumber,
+                        accessPin: hashedPin,
+                        pinExpiresAt: expiresAt,
+                        pinGeneratedAt: new Date(),
+                        pinGenerationCount: {
+                            increment: 1
+                        }
+                    },
+                    create: {
+                        // ✅ Create if doesn't exist
+                        email,
+                        phoneNumber,
+                        accessPin: hashedPin,
+                        pinExpiresAt: expiresAt,
+                        pinGeneratedAt: new Date(),
+                        pinGenerationCount: 1
+                    },
+                    select: {
+                        id: true,
+                        email: true,
+                        phoneNumber: true
+                    }
+                });
+
+                logger.info('✅ Temporary PIN upserted', { 
+                    tempUserId: user.id 
+                });
+
+                
+            }
+
+            
+            // ✅ Send email in background to not block response
+            // ============================================
+            // SEND PIN NOTIFICATION (NON-BLOCKING)
+            // ============================================
+            const subject = existingUser ? 'Your New Access PIN' : 'Your Access PIN';
+            const expiryText = existingUser
+                ? 'This PIN can be reused for all your future orders. Save it somewhere safe!'
+                : `This PIN is valid for 15 minutes. Once you complete your first order, you can reuse this PIN for future orders.`;
+
+            // ✅ Send in background to not block response
+            setImmediate(async () => {
+                try {
+                    await notificationService.queue({
+                        userId: user.id,
+                        title: subject,
+                        type: 'GENERAL',
+                        content: `Hi ${existingUser?.firstName || 'there'},
+
+                        Your access PIN is: ${newPin}
+
+                        ${expiryText}
+
+                        Please enter this PIN along with your details to continue with your order.
+
+                        If you forget your PIN, you can always generate a new one.
+
+                        Keep this PIN secure and do not share it with anyone.`
+                });
+
+                logger.info('✅ PIN notification queued successfully', { 
+                    userId: user.id,
+                    email: maskEmail(email)
+                });
+
+            } catch (notificationError: any) {
+                logger.error('❌ Failed to queue PIN notification (non-critical)', {
+                    userId: user.id,
+                    email: maskEmail(email),
+                    error: notificationError.message,
+                    stack: notificationError.stack
+                });
+                // Don't fail the request - PIN was generated successfully
+            }
+        });
+
+            // ============================================
+            // RETURN SUCCESS RESPONSE
+            // ============================================
+            return res.status(200).json({
+                msg: existingUser 
+                    ? 'New reusable PIN generated. Check your email!'
+                    : 'PIN generated. Check your email (valid for 15 minutes).',
+                success: true,
+                data: {
+                    email: maskEmail(email),
+                    isReusable: !!existingUser,
+                    expiresIn: existingUser ? null : 15
+                }
+            });
+
+        } catch (error: any) {
+            logger.error('🔴 PIN generation failed', {
+                email,
+                error: error.message,
+                stack: error.stack
+            });
+
+            return res.status(500).json({
+                msg: error.message || 'Failed to generate PIN. Please try again.',
+                success: false
+            });
+        }
+    }
+
+    async verifyPin(req: Request, res: Response) {
+    try {
+        const { email, phoneNumber, pin } = req.body;
+
+        // ============================================
+        // STEP 1: VALIDATE INPUT
+        // ============================================
+        if (!email || !phoneNumber || !pin) {
+        return res.status(400).json({
+            success: false,
+            valid: false,
+            msg: 'Email, phone number, and PIN are required'
+        });
+        }
+
+        if (!/^\d{6}$/.test(pin as string)) {
+        return res.status(400).json({
+            success: false,
+            valid: false,
+            msg: 'PIN must be 6 digits'
+        });
+        }
+
+        logger.info('🔍 PIN verification attempt', { 
+        email, 
+        phoneNumber
+        });
+
+        // ============================================
+        // STEP 2: FIND USER RECORD
+        // ============================================
+        const [existingUser, tempUser] = await Promise.all([
+            prisma.user.findFirst({
+                where: {
+                    email: email as string,
+                    phoneNumber 
+                },
+                select: {
+                id: true,
+                email: true,
+                accessPin: true,
+                pinExpiresAt: true,
+                pinAttempts: true,
+                pinLockedUntil: true,
+                firstName: true
+                }
+            }),
+            prisma.tempUser.findFirst({
+                where: {
+                 email: email as string,
+                 phoneNumber 
+                },
+                select: {
+                    id: true,
+                    email: true,
+                    accessPin: true,
+                    pinExpiresAt: true
+                }
+            })
+        ]);
+
+        const userRecord = existingUser || tempUser;
+
+        // ============================================
+        // STEP 3: CHECK IF USER EXISTS
+        // ============================================
+        if (!userRecord) {
+            return res.status(404).json({
+                success: false,
+                valid: false,
+                msg: 'No PIN found for this email and phone number. Please generate a PIN first.',
+                needsGeneration: true
+            });
+        }
+
+        // ============================================
+        // STEP 4: CHECK IF LOCKED (EXISTING USERS ONLY)
+        // ============================================
+        if (existingUser?.pinLockedUntil && new Date() < existingUser.pinLockedUntil) {
+            const minutesLeft = Math.ceil((existingUser.pinLockedUntil.getTime() - Date.now()) / 60000);
+            return res.status(429).json({
+                success: false,
+                valid: false,
+                msg: `Too many failed attempts. Please try again in ${minutesLeft} minutes.`,
+                locked: true,
+                lockedUntil: existingUser.pinLockedUntil,
+                minutesRemaining: minutesLeft
+            });
+        }
+
+        // ============================================
+        // STEP 5: CHECK IF EXPIRED (TEMP USERS ONLY)
+        // ============================================
+        if (tempUser && tempUser.pinExpiresAt && new Date() > tempUser.pinExpiresAt) {
+        // Delete expired temp user
+            await prisma.tempUser.delete({ 
+                where: { id: tempUser.id } 
+            }).catch(() => {});
+
+            return res.status(410).json({
+                success: false,
+                valid: false,
+                msg: 'Your PIN has expired. Please generate a new one.',
+                expired: true,
+                needsGeneration: true
+            });
+        }
+
+        // ============================================
+        // STEP 6: VERIFY PIN
+        // ============================================
+        const isValid = await verifyPin(pin as string, userRecord.accessPin as string);
+
+        if (isValid) {
+        // ✅ PIN IS CORRECT
+        
+        // Reset attempts for existing users
+        if (existingUser) {
+            await prisma.user.update({
+            where: { id: existingUser.id },
+            data: {
+                pinAttempts: 0,
+                pinLockedUntil: null
+            }
+            }).catch(err => logger.error('Failed to reset PIN attempts', err));
+        }
+
+        logger.info('✅ PIN verification successful', { 
+            email,
+            isExistingUser: !!existingUser 
+        });
+
+        return res.status(200).json({
+            success: true,
+            valid: true,
+            msg: 'PIN is correct! You can proceed with your order.',
+            isReusable: !!existingUser, // Tell user if this PIN can be reused
+            userName: existingUser?.firstName || null
+        });
+        } else {
+        // ❌ PIN IS INCORRECT
+        
+        if (existingUser) {
+            // Track failed attempts for existing users
+            const attempts = (existingUser.pinAttempts || 0) + 1;
+            const shouldLock = attempts >= 5;
+
+            await prisma.user.update({
+            where: { id: existingUser.id },
+            data: {
+                pinAttempts: attempts,
+                pinLockedUntil: shouldLock 
+                ? new Date(Date.now() + 30 * 60 * 1000)
+                : null
+            }
+            }).catch(err => logger.error('Failed to update PIN attempts', err));
+
+            const attemptsRemaining = 5 - attempts;
+
+            logger.warn('❌ PIN verification failed', { 
+            email,
+            attempts,
+            shouldLock 
+            });
+
+            if (shouldLock) {
+            return res.status(429).json({
+                success: false,
+                valid: false,
+                msg: 'Too many failed attempts. Your PIN is locked for 30 minutes.',
+                locked: true,
+                attemptsRemaining: 0
+            });
+            }
+
+            return res.status(400).json({
+            success: false,
+            valid: false,
+            msg: `Incorrect PIN. ${attemptsRemaining} ${attemptsRemaining === 1 ? 'attempt' : 'attempts'} remaining.`,
+            attemptsRemaining
+            });
+        } else {
+            // Temp user - no attempt tracking
+            logger.warn('❌ PIN verification failed for temp user', { email });
+
+            return res.status(400).json({
+            success: false,
+            valid: false,
+            msg: 'Incorrect PIN. Please check your email and try again.'
+            });
+        }
+        }
+
+    } catch (error: any) {
+        logger.error('🔴 PIN verification error', {
+        error: error.message,
+        stack: error.stack
+        });
+
+        return res.status(500).json({
+        success: false,
+        valid: false,
+        msg: 'Failed to verify PIN. Please try again.'
+        });
+    }
+    }
+
+    private async sendAccessPinEmail(params: {
+        userId: string;
+        firstName: string;
+        pin: string;
+        isReusable: boolean;
+        expiresInMinutes: number | null;
+        }): Promise<void> {
+        const { userId, firstName, pin, isReusable, expiresInMinutes } = params;
+
+        console.log('sending email for pin')
+
+        const subject = isReusable ? 'Your New Access PIN' : 'Your Access PIN';
+  
+        const expiryText = isReusable
+            ? 'This PIN can be reused for all your future orders. Save it somewhere safe!'
+            : `This PIN is valid for ${expiresInMinutes} minutes. Once you complete your first order, you can reuse this PIN for future orders.`;
+
+        await notificationService.queue({
+            userId,
+            title: subject,
+            type:'GENERAL',
+            content:`Hi ${firstName},
+
+            Your access PIN is: ${pin}
+
+            ${expiryText}
+
+            Please enter this PIN along with your details to continue with your order.
+
+            If you forget your PIN, you can always generate a new one.
+
+            Keep this PIN secure and do not share it with anyone.`
+        })
+
+        // await mailService.general(
+        //     email,
+        //     firstName,
+        //     subject,
+        //     `Hi ${firstName},
+
+        //     Your access PIN is: ${pin}
+
+        //     ${expiryText}
+
+        //     Please enter this PIN along with your details to continue with your order.
+
+        //     If you forget your PIN, you can always generate a new one.
+
+        //     Keep this PIN secure and do not share it with anyone.`
+            
+        // )
+
+
+    }
     
     async register(req: Request & Record<string, any>, res: Response) {
         // const { DETAILS} = req.body;
@@ -325,260 +806,6 @@ class UserController {
                 .json({ msg: 'Internal Server Error', success: false, error });
         }
     }
-
-    // async registerRider(req: Request, res: Response) {
-    //     const { email, phoneNumber, firstName, lastName } = req.body;
-
-    //     console.log('body',req.body)
-
-    //     const otpCode = generateOtp();
-
-    //     try {
-
-    //         const userExist = await prisma.user.findUnique({
-    //           where: { email },
-    //         });
-
-    //         if (userExist) {
-    //             return res.status(400).json({
-    //                 msg: 'User already exist',
-    //                 success: false,
-    //                 user: userExist,
-    //             });
-    //         }
-
-
-    //         const result = await prisma.$transaction(
-    //             async (prisma) => {
-
-                    
-    //                 const newUser = await prisma.user.create({
-    //                     data: {
-    //                         firstName: firstName,
-    //                         lastName: lastName,
-    //                         email: email,
-    //                         phoneNumber: phoneNumber,
-    //                         type: UserType.RIDER,
-    //                         otpCode: otpCode,
-    //                         otpCodeExpiryTime: OTP_CODE_EXP,
-    //                         photoUrl: config.defaultPhotoUrl,
-        
-    //                         wallet: {
-    //                             create: {
-    //                                 currency: config.defaultCurrency
-    //                             }
-    //                         }
-    //                     },
-    //                 });
-                    
-    //                 await mailService.sendOtp(email, firstName, otpCode);
-              
-                          
-    //                 return {
-    //                   user: newUser
-    //                 }
-    //             },
-    //             {
-    //              maxWait: 50000, // default: 2000
-    //              timeout: 50000, // default: 5000
-    //             }
-    //         )
-
-    //         console.log('newUser',result.user)
-
-    //         // await mailService.sendOtp(email, firstName, otpCode);
-
-    //         return res.status(201).json({
-    //             msg: 'An otp code sent to your email ',
-    //             success: true,
-    //             user: result.user
-    //         });
-
-      
-    //     } catch (error) {
-    //         return res
-    //         .status(500)
-    //         .json({ msg: 'Internal Server Error', success: false, error });
-    //     }
-    // }
-
-    // async uploadKyc(req: Request, res: Response) {
-    //     const { idType, idNumber, idFront, idBack, userId } = req.body;
-
-    //     console.log('body',req.body)
-
-    //     try {
-
-    //         let createdKyc;
-
-    //         const userExist = await prisma.user.findUnique({
-    //         where: { id:userId },
-    //         });
-
-    //         const kycExist = await prisma.kyc.findFirst({
-    //             where: { userId }
-    //         });
-
-    //         if (!userExist) {
-    //             return res.status(400).json({
-    //                 msg: 'User Not Found',
-    //                 success: false,
-    //             });
-    //         }
-
-    //         const result = await prisma.$transaction(
-    //             async (prisma) => {
-
-    //                 if(kycExist){
-
-    //                     createdKyc = await prisma.kyc.update({
-    //                         where: { id: kycExist.id },
-    //                         data: {
-    //                           idType,
-    //                           idFront,
-    //                           idBack,
-    //                           userId,
-    //                           idNumber 
-    //                         },
-    //                     });
-
-                      
-    //                 }else{
-
-    //                     createdKyc = await prisma.kyc.create({
-    //                         data: {
-    //                             idType,
-    //                             idFront,
-    //                             idBack,
-    //                             userId,
-    //                             idNumber
-    //                         },
-    //                     }); 
-
-    //                 }
-
-                    
-    //                 return {
-    //                   kyc: createdKyc
-    //                 }
-    //             },
-    //             {
-    //              maxWait: 50000, // default: 2000
-    //              timeout: 50000, // default: 5000
-    //             }
-    //         )
-
-    //         console.log('newKyc',result.kyc)
-
-
-    //         return res.status(201).json({
-    //             msg: 'identity Uploaded Successfully',
-    //             success: true
-    //         });
-
-
-    //     } catch (error) {
-    //         return res
-    //         .status(500)
-    //         .json({ msg: 'Error please Try Again', success: false, error });
-    //     }
-    // }
-
-    // async addVehicle(req: Request, res: Response) {8
-    //     const { vehicleInfo, documents, images, userId } = req.body;
-
-    //     console.log('body',req.body)
-
-    //     try {
-
-    //         let newVehicle
-
-    //         const userExist = await prisma.user.findUnique({
-    //           where: { id: userId },
-    //         });
-
-    //         const vehicleExist = await prisma.vehicle.findFirst({
-    //             where: { userId },
-    //         });
-
-    //         if (!userExist) {
-    //             return res.status(400).json({
-    //                 msg: 'User Not Found',
-    //                 success: false,
-    //             });
-    //         }
-    //         console.log('checked existed')
-
-
-    //         const result = await prisma.$transaction(
-    //             async (prisma) => {
-
-    //                 if(vehicleExist){
-
-    //                     newVehicle = await prisma.vehicle.update({
-    //                         where: { id: vehicleExist.id },
-    //                         data: {
-    //                             brand: vehicleInfo.brand,
-    //                             model: vehicleInfo.model,
-    //                             colour: vehicleInfo.colour,
-    //                             year: vehicleInfo.year,
-    //                             document: vehicleInfo.document,
-    //                             insurance: documents.insurance,
-    //                             ownership: documents.ownership,
-    //                             capacity: vehicleInfo.capacity,
-    //                             images,
-    //                             userId,
-    //                             plateNumber: vehicleInfo.plateNumber,
-    //                             type: vehicleInfo.vehicleType      
-    //                         },
-    //                     });
-
-    //                 }else{
-
-    //                     newVehicle = await prisma.vehicle.create({
-    //                         data: {
-    //                             brand: vehicleInfo.brand,
-    //                             model: vehicleInfo.model,
-    //                             colour: vehicleInfo.colour,
-    //                             year: vehicleInfo.year,
-    //                             document: vehicleInfo.document,
-    //                             insurance: documents.insurance,
-    //                             ownership: documents.ownership,
-    //                             capacity: vehicleInfo.capacity,
-    //                             images,
-    //                             userId,
-    //                             plateNumber: vehicleInfo.plateNumber,
-    //                             type: vehicleInfo.vehicleType      
-    //                         },
-    //                     });
-    //                 }
-
-    //                 return {
-    //                   vehicle: newVehicle
-    //                 }
-    //             },
-    //             {
-    //              maxWait: 50000, // default: 2000
-    //              timeout: 50000, // default: 5000
-    //             }
-    //         )
-
-    //         console.log('newVehicle', result.vehicle)
-
-
-    //         return res.status(201).json({
-    //             msg: 'vehicle added Successfully',
-    //             success: true
-    //         });
-
-
-
-    //     } catch (error) {
-    //         return res
-    //         .status(500)
-    //         .json({ msg: 'Error Try Again', success: false, error });
-    //     }
-    // }
 
     async verifyEmail(req: Request, res: Response) {
         const { code, email } = req.body;

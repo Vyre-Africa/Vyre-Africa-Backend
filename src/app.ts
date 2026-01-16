@@ -16,8 +16,9 @@ dotenv.config();
 
 // FOR WEBHOOK handler
 app.use('/api/v1/webhook/fern', express.raw({ type: 'application/json', limit: '10mb' }));
-app.use('/api/v1/tatum/events', express.raw({ type: 'application/json', limit: '10mb' }));
-app.use('/api/v1/webhook', express.raw({ type: 'application/json', limit: '10mb' }));
+app.use('/api/v1/webhook/clerk', express.raw({ type: 'application/json', limit: '10mb' }));
+// app.use('/api/v1/tatum/events', express.raw({ type: 'application/json', limit: '10mb' }));
+// app.use('/api/v1/webhook', express.raw({ type: 'application/json', limit: '10mb' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -45,7 +46,8 @@ const corsOptions = {
       'https://app.vyre.africa',
       'https://p2p.vyre.africa',
       'https://payments.vyre.africa',
-      'https://swap.vyre.africa'
+      'https://swap.vyre.africa',
+      'https://ideal-hedgehog-13788.upstash.io'
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: [

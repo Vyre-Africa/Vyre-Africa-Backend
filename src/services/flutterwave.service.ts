@@ -7,6 +7,7 @@ import axios from "axios";
 import { UserBank } from "@prisma/client";
 import { generateRefCode } from "../utils";
 const Flutterwave = require('flutterwave-node-v3');
+// import Flutterwave from 'flutterwave-node-v3'
 
 class FlutterwaveService {
     flw: any;

@@ -23,6 +23,21 @@ class UserValidator {
         ];
     }
 
+    generatePin(){
+        return [
+            body('email').notEmpty().withMessage('email is required'),
+            body('phoneNumber').notEmpty().withMessage('phoneNumber is required')
+        ];
+    }
+
+    verifyPin(){
+        return [
+            body('email').notEmpty().withMessage('email is required'),
+            body('phoneNumber').notEmpty().withMessage('phoneNumber is required'),
+            body('pin').notEmpty().withMessage('pin is required')
+        ];
+    }
+
     uploadKyc() {
         return [
             // body('DETAILS').isObject().withMessage('DETAILS must be an object'),

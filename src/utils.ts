@@ -7,6 +7,8 @@ import config from './config/env.config';
 import { User } from './globals';
 import Decimal from 'decimal.js';
 import crypto from 'crypto';
+import { ulid } from 'ulid';
+import logger from './config/logger';
 
 const algorithm: string = 'aes-256-cbc';
 const key: Buffer = crypto.randomBytes(32);
@@ -91,37 +93,6 @@ const getKey = (header:any, callback:any) => {
     callback(err, key?.getPublicKey());
   });
 };
-
-
-// export const verifyAccessToken = (token: string): Promise<VerificationResult> => {
-//   return new Promise((resolve) => {
-//     jwt.verify(
-//       token,
-//       getKey,
-//       {
-//         audience: 'https://api.vyre.africa',
-//         issuer: 'https://auth.vyre.africa/',
-//         algorithms: ['RS256']
-//       },
-//       (err, decoded) => {
-//         if (err) {
-//           console.error('Token verification failed:', err);
-//           return resolve({ success: false, error: 'verification failed' });
-//         }
-        
-//         if (!decoded) {
-//           return resolve({ success: false, error: 'Token decoded as empty' });
-//         }
-
-//         console.log('Token successfully verified:', decoded);
-//         resolve({ 
-//           success: true, 
-//           data: decoded as Auth0JwtPayload 
-//         });
-//       }
-//     );
-//   });
-// };
 
 
 export const verifyAccessToken = (token: string): VerificationResult => {
@@ -475,6 +446,80 @@ type PaymentMethod =
   export const getISOByCountry = (countryName: string): string | undefined => {
     return countryToISOMap[countryName];
   };
+
+type PaymentSystem = 
+  | 'BANK_TRANSFER'
+  | 'MOMO'
+  | 'CARD'
+  | 'MOBILE_MONEY'
+  | 'MPESA'
+  | 'PAYPAL'
+  | 'SEPA'
+  | 'FASTER_PAYMENTS'
+  | 'EWALLET';
+
+type CurrencyISO = 
+  | 'NGN'  // Nigerian Naira
+  | 'GHS'  // Ghanaian Cedi
+  | 'KSH'  // Kenyan Shilling
+  | 'KES'  // Kenyan Shilling (alternative)
+  | 'USD'  // US Dollar
+  | 'EUR'  // Euro
+  | 'GBP'  // British Pound
+  | 'ZAR'  // South African Rand
+  | string; // Allow other strings for flexibility
+
+
+  // Basic version: Returns array of payment method codes
+export function getPaymentSystems(currencyISO: CurrencyISO): PaymentSystem[] {
+  const currency = currencyISO.toUpperCase();
+  
+  const PaymentSystemsMap: Record<string, PaymentSystem[]> = {
+    'NGN': ['BANK_TRANSFER', 'MOMO', 'CARD'],
+    'GHS': ['BANK_TRANSFER', 'MOMO', 'MOBILE_MONEY'],
+    'KSH': ['BANK_TRANSFER', 'MOMO', 'MPESA'],
+    'KES': ['BANK_TRANSFER', 'MOMO', 'MPESA'],
+    'USD': ['CARD', 'PAYPAL', 'BANK_TRANSFER'],
+    'EUR': ['CARD', 'BANK_TRANSFER', 'SEPA'],
+    'GBP': ['CARD', 'BANK_TRANSFER', 'FASTER_PAYMENTS'],
+    'ZAR': ['BANK_TRANSFER', 'CARD', 'EWALLET'],
+  };
+  
+  return PaymentSystemsMap[currency] || [];
+}
+
+export function generateOrderId(): string {
+  return `ORD-${ulid()}`; // e.g., "ORD-01HN8X9ZYQR8XJKM9T5WN3QVBP"
+}
+
+export function generateAccessPin(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+export async function hashPin(pin: string): Promise<string> {
+  const bcrypt = require('bcryptjs');
+  return await bcrypt.hash(pin, 10);
+}
+
+/**
+ * Verify PIN against hashed version
+ */
+export async function verifyPin(inputPin: string, hashedPin: string): Promise<boolean> {
+  const bcrypt = require('bcryptjs');
+  try {
+    return await bcrypt.compare(inputPin, hashedPin);
+  } catch (error) {
+    logger.error('PIN verification error', { error });
+    return false;
+  }
+}
+
+export function maskEmail(email: string): string {
+  const [username, domain] = email.split('@');
+  const masked = username.slice(0, 2) + '***' + username.slice(-1);
+  return `${masked}@${domain}`;
+}
+
 
   
   
