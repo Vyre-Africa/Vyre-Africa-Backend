@@ -1,0 +1,31 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.RESOURCES = exports.Actions = void 0;
+var Actions;
+(function (Actions) {
+    Actions["Manage"] = "manage";
+    Actions["Create"] = "create";
+    Actions["Read"] = "read";
+    Actions["Update"] = "update";
+    Actions["Delete"] = "delete";
+    Actions["Search"] = "search";
+    Actions["View"] = "view";
+    Actions["StatusChange"] = "statusChange";
+})(Actions || (exports.Actions = Actions = {}));
+var RESOURCES;
+(function (RESOURCES) {
+    RESOURCES["users"] = "User";
+    RESOURCES["store"] = "Store";
+    RESOURCES["category"] = "Category";
+    RESOURCES["rating"] = "Rating";
+    RESOURCES["orderVariant"] = "OrderVariant";
+    RESOURCES["variationOption"] = "VariantOption";
+    RESOURCES["variant"] = "Variant";
+    RESOURCES["roles"] = "Role";
+    RESOURCES["order"] = "Order";
+    RESOURCES["product"] = "Product";
+    RESOURCES["userRole"] = "UserRole";
+    RESOURCES["permission"] = "Permission";
+    RESOURCES["rolePermission"] = "RolePermission ";
+    RESOURCES["transaction"] = "Transaction";
+})(RESOURCES || (exports.RESOURCES = RESOURCES = {}));
