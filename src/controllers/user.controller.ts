@@ -88,7 +88,8 @@ class UserController {
             // ============================================
             const existingUser = await prisma.user.findFirst({
                 where: {
-                    email
+                    email,
+                    phoneNumber  // ✅ Also check phone number
                 },
                 select: {
                     id: true,
@@ -109,8 +110,8 @@ class UserController {
                 if (timeSinceLastPin < oneMinute) {
                     const secondsLeft = Math.ceil((oneMinute - timeSinceLastPin) / 1000);
                     return res.status(429).json({
-                    msg: `Please wait ${secondsLeft} seconds before requesting a new PIN`,
-                    success: false
+                        msg: `Please wait ${secondsLeft} seconds before requesting a new PIN`,
+                        success: false
                     });
                 }
 
@@ -120,8 +121,8 @@ class UserController {
 
                 if (currentCount >= 10) {
                     return res.status(429).json({
-                    msg: 'PIN generation limit reached. Please try again tomorrow or contact support.',
-                    success: false
+                        msg: 'PIN generation limit reached. Please try again tomorrow or contact support.',
+                        success: false
                     });
                 }
             }
@@ -133,10 +134,9 @@ class UserController {
             const hashedPin = await hashPin(newPin);
             
             // ✅ ONLY TEMP USERS GET EXPIRY
-            // Existing users regenerating PIN = no expiry
             const expiresAt:any = existingUser 
-                ? null  // ✅ No expiry for existing users
-                : new Date(Date.now() + 15 * 60 * 1000); // 15 min expiry for temp users
+                ? null
+                : new Date(Date.now() + 15 * 60 * 1000);
 
             let user;
 
@@ -144,70 +144,96 @@ class UserController {
                 // ============================================
                 // EXISTING USER: Regenerate reusable PIN
                 // ============================================
-                if (existingUser.email !== email || existingUser.phoneNumber !== phoneNumber) {
-                    return res.status(400).json({
-                    msg: 'Email and phone number do not match',
-                    success: false
-                    });
-                }
-
                 const isNewDay = new Date().toDateString() !== new Date(existingUser.pinGeneratedAt || 0).toDateString();
 
-                user = await prisma.user.update({
-                    where: { id: existingUser.id },
-                    data: {
-                        accessPin: hashedPin,
-                        pinExpiresAt: null, // ✅ No expiry for existing users
-                        pinGeneratedAt: new Date(),
-                        pinGenerationCount: isNewDay ? 1 : (existingUser.pinGenerationCount || 0) + 1,
-                        pinAttempts: 0,
-                        pinLockedUntil: null
-                    },
-                    select: {
-                        id: true,
-                        email: true,
-                        firstName: true
-                    }
-                });
+                try {
+                    user = await prisma.user.update({
+                        where: { id: existingUser.id },
+                        data: {
+                            accessPin: hashedPin,
+                            pinExpiresAt: null,
+                            pinGeneratedAt: new Date(),
+                            pinGenerationCount: isNewDay ? 1 : (existingUser.pinGenerationCount || 0) + 1,
+                            pinAttempts: 0,
+                            pinLockedUntil: null
+                        },
+                        select: {
+                            id: true,
+                            email: true,
+                            firstName: true
+                        }
+                    });
 
-                logger.info('✅ Reusable PIN regenerated for existing user', { userId: user.id });
+                    logger.info('✅ Reusable PIN regenerated for existing user', { userId: user.id });
+                } catch (updateError: any) {
+                    logger.error('❌ Failed to update user PIN', {
+                        userId: existingUser.id,
+                        error: updateError.message,
+                        stack: updateError.stack
+                    });
+                    throw new Error('Failed to update PIN in database');
+                }
             } else {
                 // ============================================
                 // NEW USER: Create temp record with expiring PIN
                 // ============================================
-                user = await prisma.tempUser.create({
-                    data: {
-                        email,
-                        phoneNumber,
-                        accessPin: hashedPin,
-                        pinExpiresAt: expiresAt, // ✅ Expires in 15 min
-                        pinGeneratedAt: new Date(),
-                        pinGenerationCount: 1
+                try {
+                    user = await prisma.tempUser.create({
+                        data: {
+                            email,
+                            phoneNumber,
+                            accessPin: hashedPin,
+                            pinExpiresAt: expiresAt,
+                            pinGeneratedAt: new Date(),
+                            pinGenerationCount: 1
                         },
                         select: {
-                        id: true,
-                        email: true
+                            id: true,
+                            email: true
                         }
-                });
+                    });
 
-                logger.info('✅ Temporary PIN generated for new user', { tempUserId: user.id });
+                    logger.info('✅ Temporary PIN generated for new user', { tempUserId: user.id });
+                } catch (createError: any) {
+                    logger.error('❌ Failed to create temp user', {
+                        email,
+                        error: createError.message,
+                        stack: createError.stack
+                    });
+                    throw new Error('Failed to create temporary user record');
+                }
             }
 
             // ============================================
-            // SEND PIN TO EMAIL
+            // SEND PIN TO EMAIL (NON-BLOCKING)
             // ============================================
-            await this.sendAccessPinEmail({
-                email,
-                firstName: existingUser?.firstName || 'there',
-                pin: newPin,
-                isReusable: !!existingUser, // ✅ Tell user if PIN is reusable
-                expiresInMinutes: existingUser ? null : 15
+            // ✅ Send email in background to not block response
+            setImmediate(async () => {
+                try {
+                    await this.sendAccessPinEmail({
+                        email,
+                        firstName: existingUser?.firstName || 'there',
+                        pin: newPin,
+                        isReusable: !!existingUser,
+                        expiresInMinutes: existingUser ? null : 15
+                    });
+                    logger.info('📧 PIN email sent successfully', { email: maskEmail(email) });
+                } catch (emailError: any) {
+                    logger.error('📧 Failed to send PIN email (non-critical)', {
+                        email: maskEmail(email),
+                        error: emailError.message
+                    });
+                    // Don't fail the request - PIN was generated successfully
+                }
             });
 
+            // ============================================
+            // RETURN SUCCESS RESPONSE
+            // ============================================
             return res.status(200).json({
                 msg: existingUser 
-                    ? 'New reusable PIN sent to your email. Save it for future orders!'
-                    : 'PIN sent to your email. Valid for 15 minutes.',
+                    ? 'New reusable PIN generated. Check your email!'
+                    : 'PIN generated. Check your email (valid for 15 minutes).',
                 success: true,
                 data: {
                     email: maskEmail(email),
@@ -219,15 +245,15 @@ class UserController {
         } catch (error: any) {
             logger.error('🔴 PIN generation failed', {
                 email,
-                error: error.message
+                error: error.message,
+                stack: error.stack
             });
 
             return res.status(500).json({
-              msg: 'Failed to generate PIN. Please try again.',
-              success: false
+                msg: error.message || 'Failed to generate PIN. Please try again.',
+                success: false
             });
         }
-
     }
 
     async verifyPin(req: Request, res: Response) {
