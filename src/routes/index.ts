@@ -22,6 +22,7 @@ import walletController from '../controllers/wallet.controller';
 import swapController from '../controllers/swap.controller';
 import swapValidator from '../validators/swap.validator';
 import eventController from '../controllers/event.controller';
+import { requireAuth } from '@clerk/express';
 
 const router = Router();
 
@@ -63,6 +64,7 @@ router.post(
 
 router.post(
   '/user/upload_kyc',
+  requireAuth(),
   authMiddleware,
   userValidator.uploadKyc(),
   middleware.handleValidationError,
@@ -134,6 +136,7 @@ router.post(
 // swap
 router.post(
   '/paymentAccount/fiat',
+  requireAuth(),
   authMiddleware,
   swapValidator.addFiatAccount(),
   middleware.handleValidationError,
@@ -142,6 +145,7 @@ router.post(
 
 router.post(
   '/paymentAccount/crypto',
+  requireAuth(),
   authMiddleware,
   swapValidator.addCryptoAccount(),
   middleware.handleValidationError,
@@ -150,18 +154,21 @@ router.post(
 
 router.delete(
   '/paymentAccount/:accountId',
+  requireAuth(),
   authMiddleware,
   swapController.deletePaymentAccount
 );
 
 router.get(
   '/linkedAccounts',
+  requireAuth(),
   authMiddleware,
   swapController.getLinkedAccounts
 );
 
 router.post(
   '/swap/quote',
+  requireAuth(),
   authMiddleware,
   swapValidator.generateQuote(),
   middleware.handleValidationError,
@@ -170,6 +177,7 @@ router.post(
 
 router.post(
   '/swap/initiate',
+  requireAuth(),
   authMiddleware,
   swapValidator.initiateSwap(),
   middleware.handleValidationError,
@@ -178,12 +186,14 @@ router.post(
 
 router.get(
   '/swaps',
+  requireAuth(),
   authMiddleware,
   swapController.fetchSwaps
 );
 
 router.get(
   '/swaps/:id',
+  requireAuth(),
   authMiddleware,
   swapController.fetchSwap
 )
@@ -194,12 +204,14 @@ router.get(
 // Wallet
 router.post(
   '/wallet/create/:currencyId',
+  requireAuth(),
   authMiddleware,
   walletController.createWallet
 )
 
 router.post(
   '/wallet/deposit',
+  requireAuth(),
   authMiddleware,
   walletValidator.initDeposit(),
   middleware.handleValidationError,
@@ -208,6 +220,7 @@ router.post(
 
 router.post(
   '/wallet/authorize_fiat_withdrawal',
+  requireAuth(),
   authMiddleware,
   walletValidator.initDeposit(),
   middleware.handleValidationError,
@@ -216,6 +229,7 @@ router.post(
 
 router.post(
   '/wallet/vyre_tranfer',
+  requireAuth(),
   authMiddleware,
   walletValidator.initVyreTransfer(),
   middleware.handleValidationError,
@@ -224,6 +238,7 @@ router.post(
 
 router.post(
   '/wallet/blockchain_tranfer',
+  requireAuth(),
   authMiddleware,
   walletValidator.initBlockchainTransfer(),
   middleware.handleValidationError,
@@ -232,6 +247,7 @@ router.post(
 
 router.post(
   '/wallet/bank_tranfer',
+  requireAuth(),
   authMiddleware,
   walletValidator.initBankTransfer(),
   middleware.handleValidationError,
@@ -240,30 +256,35 @@ router.post(
 
 router.get(
   '/wallet/all',
+  requireAuth(),
   authMiddleware,
   walletController.fetchWallets
 )
 
 router.get(
   '/wallet/:id',
+  requireAuth(),
   authMiddleware,
   walletController.fetchWallet
 )
 
 router.get(
   '/wallet_by_name/:name',
+  requireAuth(),
   authMiddleware,
   walletController.fetchWalletByName
 )
 
 router.get(
   '/rate',
+  requireAuth(),
   authMiddleware,
   walletController.getRate
 )
 
 router.get(
   '/transactions',
+  requireAuth(),
   authMiddleware,
   walletController.fetchTransactions
 )
@@ -274,12 +295,14 @@ router.get(
 //orders
 router.get(
   '/orders',
+  requireAuth(),
   authMiddleware,
   orderController.fetchOrders
 );
 
 router.get(
   '/orders/user',
+  requireAuth(),
   authMiddleware,
   orderController.fetch_user_orders
 );
@@ -292,6 +315,7 @@ router.get(
 
 router.post(
   '/orders/create',
+  requireAuth(),
   authMiddleware,
   orderValidator.createOrder(),
   middleware.handleValidationError,
@@ -308,6 +332,7 @@ router.post(
 
 router.post(
   '/orders/process',
+  requireAuth(),
   authMiddleware,
   orderValidator.processOrder(),
   middleware.handleValidationError,
@@ -316,24 +341,28 @@ router.post(
 
 router.post(
   '/order/cancel/:id',
+  requireAuth(),
   authMiddleware,
   orderController.cancelOrder
 )
 
 router.get(
   '/orders/pairs',
+  requireAuth(),
   authMiddleware,
   orderController.fetchPairs
 );
 
 router.get(
   '/orders/pairs/rate',
+  requireAuth(),
   authMiddleware,
   orderController.getRatebyPair
 )
 
 router.get(
   '/orders/getPairWallets',
+  requireAuth(),
   authMiddleware,
   orderController.fetchPairWallets
 );
@@ -343,18 +372,21 @@ router.get(
 
 router.get(
   '/user/portfolio',
+  requireAuth(),
   authMiddleware,
   walletController.fetchPortfolio,
 );
 
 router.get(
   '/user/get-profile',
+  requireAuth(),
   authMiddleware,
   userController.getProfile,
 );
 
 router.post(
   '/user/query',
+  requireAuth(),
   authMiddleware,
   userController.queryUser
 )
@@ -362,6 +394,7 @@ router.post(
 
 router.post(
   '/user/update-profile',
+  requireAuth(),
   authMiddleware,
   userValidator.updateProfile(),
   middleware.handleValidationError,
@@ -370,6 +403,7 @@ router.post(
 
 router.post(
   '/user/change-password',
+  requireAuth(),
   authMiddleware,
   userValidator.changePassword(),
   middleware.handleValidationError,
@@ -405,6 +439,7 @@ router.get(
 
 router.post(
   '/user/verify-account-detail',
+  requireAuth(),
   authMiddleware,
   userValidator.verifyAccountDetail(),
   middleware.handleValidationError,
@@ -414,6 +449,7 @@ router.post(
 //add user bank
 router.post(
   '/user/bank/create',
+  requireAuth(),
   authMiddleware,
   userValidator.addBank(),
   middleware.handleValidationError,
@@ -423,12 +459,14 @@ router.post(
 //get user bank
 router.get(
   '/user/bank',
+  requireAuth(),
   authMiddleware,
   userController.getUserBank,
 );
 
 router.get(
   '/user/wallet/balance',
+  requireAuth(),
   authMiddleware,
   userController.getUserWalletBalance,
 );
@@ -436,6 +474,7 @@ router.get(
 //delete user bank
 router.delete(
   '/user/bank/:userBankId',
+  requireAuth(),
   authMiddleware,
   userController.deleteUserBank,
 );
@@ -443,6 +482,7 @@ router.delete(
 //user save notification setting
 router.post(
   '/user/notification-setting',
+  requireAuth(),
   authMiddleware,
   userValidator.setNotificationMethod(),
   middleware.handleValidationError,
@@ -452,6 +492,7 @@ router.post(
 //user get notification setting
 router.get(
   '/user/notification-setting',
+  requireAuth(),
   authMiddleware,
   userController.getNotificationMethod,
 );
@@ -459,12 +500,14 @@ router.get(
 //user get auth secret for third party authenticator
 router.get(
   '/user/get-Auth-secret',
+  requireAuth(),
   authMiddleware,
   userController.getAuthSecret,
 );
 
 router.get(
   '/user/get-two-factor-authentication-status',
+  requireAuth(),
   authMiddleware,
   userController.getTwoFactorAuthenticationMethod,
 );
@@ -472,6 +515,7 @@ router.get(
 //save 2FA method
 router.post(
   '/user/two-factor-authentication',
+  requireAuth(),
   authMiddleware,
   userValidator.setTwoFactorAuthenticationMethod(),
   middleware.handleValidationError,
@@ -481,6 +525,7 @@ router.post(
 //save 2FA method
 router.post(
   '/user/disable-two-factor-authentication',
+  requireAuth(),
   authMiddleware,
   userValidator.disableTwoFactorAuthenticationMethod(),
   middleware.handleValidationError,
@@ -490,6 +535,7 @@ router.post(
 //delete account
 router.delete(
   '/user/account/delete',
+  requireAuth(),
   authMiddleware,
   userValidator.deleteAccount(),
   middleware.handleValidationError,
@@ -499,6 +545,7 @@ router.delete(
 //get user notifications
 router.get(
   '/user/notification',
+  requireAuth(),
   authMiddleware,
   userController.getNotification,
 );
@@ -506,6 +553,7 @@ router.get(
 //filter user notifications
 router.get(
   '/user/notification/filter',
+  requireAuth(),
   authMiddleware,
   userController.filterNotification,
 );
@@ -513,6 +561,7 @@ router.get(
 //get user transactions
 router.get(
   '/user/transactions',
+  requireAuth(),
   authMiddleware,
   userController.getTransactions,
 );
@@ -538,6 +587,7 @@ router.get(
 //fund user wallet
 router.post(
   '/user/wallet/fund',
+  requireAuth(),
   authMiddleware,
   userValidator.fundUserWallet(),
   middleware.handleValidationError,
@@ -547,6 +597,7 @@ router.post(
 //verify carsd
 router.post(
   '/user/card/verify',
+  requireAuth(),
   authMiddleware,
   userValidator.verifyCard(),
   middleware.handleValidationError,
@@ -557,6 +608,7 @@ router.post(
 //add atm card
 router.post(
   '/user/card/add',
+  requireAuth(),
   authMiddleware,
   userValidator.addCard(),
   middleware.handleValidationError,
@@ -566,6 +618,7 @@ router.post(
 //get cards
 router.get(
   '/user/card/fetch',
+  requireAuth(),
   authMiddleware,
   mobileUserController.getCards,
 );
@@ -573,6 +626,7 @@ router.get(
 //set card as preferred
 router.post(
   '/user/card/set-as-preferred/:card_id',
+  requireAuth(),
   authMiddleware,
   mobileUserController.setCardAsPreferred,
 );
@@ -580,6 +634,7 @@ router.post(
 //unset card as preferred
 router.post(
   '/user/card/unset-as-preferred/:card_id',
+  requireAuth(),
   authMiddleware,
   mobileUserController.unSetCardAsPreferred,
 );
@@ -587,6 +642,7 @@ router.post(
 //delete card
 router.post(
   '/user/card/delete/:card_id',
+  requireAuth(),
   authMiddleware,
   mobileUserController.deleteCard,
 );
