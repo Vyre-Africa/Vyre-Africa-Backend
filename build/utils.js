@@ -117,6 +117,7 @@ const verifyAccessToken = (token) => {
         // issuer: 'https://your-auth0-domain.auth0.com/',
         // audience: 'your-api-identifier',
     };
+    console.log('key used here', env_config_1.default.clerk.PEM_PUBLICKEY);
     try {
         const decoded = jsonwebtoken_1.default.verify(token, env_config_1.default.clerk.PEM_PUBLICKEY, options);
         //  console.log('decoded',decoded)
