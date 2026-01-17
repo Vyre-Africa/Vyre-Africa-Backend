@@ -106,6 +106,8 @@ export const verifyAccessToken = (token: string): VerificationResult => {
     // audience: 'your-api-identifier',
   };
 
+  console.log('key used here', config.clerk.PEM_PUBLICKEY)
+
   try {
     const decoded = jwt.verify(token, config.clerk.PEM_PUBLICKEY, options) as unknown as Auth0JwtPayload;
      
