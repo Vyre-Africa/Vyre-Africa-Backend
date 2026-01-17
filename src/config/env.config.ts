@@ -34,7 +34,16 @@ const config = {
 
     clerk: {
         jwtPublicKey: process.env.clerk_JWT_PUBLICKEY || '',
-        PEM_PUBLICKEY: process.env.PEM_PUBLICKEY || '',
+        PEM_PUBLICKEY: `-----BEGIN PUBLIC KEY-----
+            MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqFb8OD9i9vQ/RZKzk6qQ
+            6LGRChTzfabWjvKeZmby2etWie/ALUv6FKBnY1xXIVYmoeGzxjY7cF6RpemIaZeG
+            DgkCg7xgOw+Ua4Ik/0zmh6JmL+Y8JDGllmmRXuQkTf0tQ41fIKx056q4b3Iblqzg
+            js0Lu7v7DZoPMjrZQSPGtr5tmQmPQ+ByqXi1Ngpd8esgCr2Wzq7yShaQYT/Ab4Lr
+            wLAUdWJr5+szpUX7NTUPbm9Rl+Q8rr7tFCRlHt1XyDtlpNYogMxJP6KLNJp8Kx3I
+            CB1D8bkFV3ZCpX8VzVQAYUvKvaz7HYAogpeXNtMtApKce0QkcYeOVb4YwzNKoUvq
+            YQIDAQAB
+            -----END PUBLIC KEY-----`,
+        // PEM_PUBLICKEY: process.env.PEM_PUBLICKEY || '',
         SIGNING_SECRET: process.env.CLERK_WEBHOOK_SIGNING_SECRET || ''
     },
 
