@@ -207,6 +207,12 @@ enum ProofOfAddressType {
   LEASE_AGREEMENT
 }
 
+enum beneficiaryType {
+  USER
+  CRYPTO
+  BANK
+}
+
 model Rating {
   id        Int      @id @default(autoincrement())
   stars     Int
@@ -243,13 +249,21 @@ model User {
   otpCodeUsed       Boolean  @default(false)
   otpCodeExpiryTime String?
 
-  // PIN fields
-  accessPin           String?   // Hashed PIN
-  pinExpiresAt        DateTime? // For regenerated PINs
-  pinAttempts         Int       @default(0)
-  pinLockedUntil      DateTime?
-  pinGeneratedAt      DateTime? // Last PIN generation time
-  pinGenerationCount  Int       @default(0) // Daily counter
+  // ✅ ACCESS PIN (for anonymous orders - 6 digits)
+  accessPin          String? // Hashed PIN
+  pinExpiresAt       DateTime? // For regenerated PINs
+  pinAttempts        Int       @default(0)
+  pinLockedUntil     DateTime?
+  pinGeneratedAt     DateTime? // Last PIN generation time
+  pinGenerationCount Int       @default(0) // Daily counter
+
+  // ✅ TRANSACTION PIN (for transfers - 4 digits)
+  transactionPin               String? // Hashed 4-digit PIN
+  transactionPinSalt           String? // Salt for transaction PIN
+  transactionPinCreatedAt      DateTime?
+  transactionPinLastChangedAt  DateTime?
+  transactionPinFailedAttempts Int       @default(0)
+  transactionPinLockedUntil    DateTime?
 
   fernUserId                    String?
   fernKycLink                   String?
@@ -264,42 +278,58 @@ model User {
   isDeactivated                 Boolean                       @default(false)
   deactivationReason            String?
 
-  createdAt                     DateTime                      @default(now())
-  updatedAt                     DateTime           @updatedAt @default(now())
-  
-  Order                         Order[]
-  PendingActivity               PendingActivity[]
-  Card                          Card?
-  fiatAccount                   fiatAccount[]
-  cryptoAccount                 cryptoAccount[]
-  Swap                          Swap[]
-  userKyc                       UserKyc[]                     @relation("UserKycToUser")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
-  Awaiting    Awaiting[]
-  postDetails postDetails[]
-  
+  Order           Order[]
+  PendingActivity PendingActivity[]
+  Card            Card?
+  fiatAccount     fiatAccount[]
+  cryptoAccount   cryptoAccount[]
+  Swap            Swap[]
+  userKyc         UserKyc[]         @relation("UserKycToUser")
+
+  Awaiting      Awaiting[]
+  postDetails   postDetails[]
+  beneficiaries beneficiary[]
+  transfers     TransferRequest[]
+  PinAttempt    PinAttempt[]
+
   // 🚀 PERFORMANCE INDEXES - ADD THESE
-  @@index([userStatus])                // Fast status lookups
-  @@index([type])                      // Fast type lookups
-  @@index([emailVerified])             // For verification checks
-  @@index([accountVerified])           // For verification checks
-  @@index([createdAt])                 // For time-based queries
-  @@index([phoneNumber])               // For phone lookups
+  @@index([userStatus]) // Fast status lookups
+  @@index([type]) // Fast type lookups
+  @@index([emailVerified]) // For verification checks
+  @@index([accountVerified]) // For verification checks
+  @@index([createdAt]) // For time-based queries
+  @@index([phoneNumber]) // For phone lookups
 }
 
 // ✅ Temporary table for new users (before account creation)
 model TempUser {
-  id                  String    @id @default(cuid())
-  email               String    @unique
-  phoneNumber         String
-  accessPin           String    // Hashed PIN
-  pinExpiresAt        DateTime  // Always has expiry
-  pinGeneratedAt      DateTime  @default(now())
-  pinGenerationCount  Int       @default(1)
-  
-  createdAt           DateTime  @default(now())
-  
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  phoneNumber        String
+  accessPin          String // Hashed PIN
+  pinExpiresAt       DateTime // Always has expiry
+  pinGeneratedAt     DateTime @default(now())
+  pinGenerationCount Int      @default(1)
+
+  createdAt DateTime @default(now())
+
   @@index([phoneNumber])
+}
+
+model PinAttempt {
+  id        String   @id @default(uuid())
+  userId    String
+  success   Boolean
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model UserKyc {
@@ -408,6 +438,47 @@ model UserBank {
   createdAt     DateTime @default(now())
 }
 
+model beneficiary {
+  id     String          @id @default(cuid())
+  userId String
+  ISO    String
+  type   beneficiaryType
+
+  bank   Json?
+  crypto Json?
+  user   Json?
+
+  userData  User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model TransferRequest {
+  id             String          @id @default(uuid())
+  idempotencyKey String          @unique
+  type           beneficiaryType
+
+  bank   Json?
+  crypto Json?
+  vyre   Json?
+
+  currencyId String
+  amount     Decimal
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status       String // PENDING, PROCESSING, COMPLETED, FAILED
+  reference    String? // reference once processed
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime? // Auto-cleanup old records
+  completedAt  DateTime?
+  failedAt     DateTime?
+  errorMessage String?
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
 model fiatAccount {
   id            String @id @default(cuid())
   name          String
@@ -468,15 +539,15 @@ model Transaction {
   description String
   createdAt   DateTime          @default(now())
   metadata    Json?
-  
+
   // 🚀 PERFORMANCE INDEXES - ADD THESE
-  @@index([userId])                    // Fast user lookups
-  @@index([walletId])                  // Fast wallet lookups
-  @@index([status])                    // Fast status lookups
-  @@index([type])                      // Fast type lookups
-  @@index([reference])                 // For reference lookups
-  @@index([userId, status])            // Compound for user transactions
-  @@index([createdAt])                 // For time-based queries
+  @@index([userId]) // Fast user lookups
+  @@index([walletId]) // Fast wallet lookups
+  @@index([status]) // Fast status lookups
+  @@index([type]) // Fast type lookups
+  @@index([reference]) // For reference lookups
+  @@index([userId, status]) // Compound for user transactions
+  @@index([createdAt]) // For time-based queries
   @@index([userId, createdAt(sort: Desc)]) // For recent user transactions
 }
 
@@ -500,14 +571,13 @@ model Currency {
   quotePairs   Pair[]        @relation("quoteCurrency")
   Awaiting     Awaiting[]
   postDetails  postDetails[]
-  
-  // 🚀 PERFORMANCE INDEXES - ADD THESE
-  @@index([ISO])                       // Fast ISO lookups
-  @@index([type])                      // Fast type lookups
-  @@index([chain])                     // For chain-based queries
-  @@index([isStablecoin])              // For filtering stablecoins
-}
 
+  // 🚀 PERFORMANCE INDEXES - ADD THESE
+  @@index([ISO]) // Fast ISO lookups
+  @@index([type]) // Fast type lookups
+  @@index([chain]) // For chain-based queries
+  @@index([isStablecoin]) // For filtering stablecoins
+}
 
 model Wallet {
   id String @id @default(cuid())
@@ -528,8 +598,8 @@ model Wallet {
   derivationKey  Int?
   frozen         Boolean
 
-  accountBalance   Decimal @db.Decimal(20, 8) @default(0.00)
-  availableBalance Decimal @db.Decimal(20, 8) @default(0.00)
+  accountBalance   Decimal @default(0.00) @db.Decimal(20, 8)
+  availableBalance Decimal @default(0.00) @db.Decimal(20, 8)
 
   Transaction Transaction[]
   Block       Block[]
@@ -537,65 +607,64 @@ model Wallet {
   quotePairs  Pair[]        @relation("QuoteWallet")
   Awaiting    Awaiting[]
   postDetails postDetails[]
-  
+
   // 🚀 PERFORMANCE INDEXES - ADD THESE
-  @@index([userId])                    // Fast user lookups
-  @@index([currencyId])                // Fast currency lookups
-  @@index([depositAddress])            // For deposit tracking
-  @@index([userId, currencyId])        // Compound for user wallets
-  @@index([frozen])                    // For filtering frozen wallets
+  @@index([userId]) // Fast user lookups
+  @@index([currencyId]) // Fast currency lookups
+  @@index([depositAddress]) // For deposit tracking
+  @@index([userId, currencyId]) // Compound for user wallets
+  @@index([frozen]) // For filtering frozen wallets
 }
 
-
 model Order {
-  id                  String      @id @default(cuid())
-  type                OrderType   @default(BUY)
-  blockId             String?
-  userId              String?
-  pairId              String
-  amountMinimum       Decimal     @db.Decimal(20, 8)  @default(0.00)
-  user                User?       @relation(fields: [userId], references: [id])
-  pair                Pair        @relation(fields: [pairId], references: [id])
-  block               Block?      @relation(fields: [blockId], references: [id])
-  amount              Decimal     @db.Decimal(20, 8)
-  version             Int         @default(0)
+  id            String    @id @default(cuid())
+  type          OrderType @default(BUY)
+  blockId       String?
+  userId        String?
+  pairId        String
+  amountMinimum Decimal   @default(0.00) @db.Decimal(20, 8)
+  user          User?     @relation(fields: [userId], references: [id])
+  pair          Pair      @relation(fields: [pairId], references: [id])
+  block         Block?    @relation(fields: [blockId], references: [id])
+  amount        Decimal   @db.Decimal(20, 8)
+  version       Int       @default(0)
 
-  amountProcessed     Decimal       @default(0.0)
-  amountReserved      Decimal       @db.Decimal(20, 8) @default(0)
+  amountProcessed Decimal @default(0.0)
+  amountReserved  Decimal @default(0) @db.Decimal(20, 8)
 
-  percentageProcessed Decimal       @db.Decimal(20, 2) @default(0.0)
-  price               Decimal       @db.Decimal(20, 8)
+  percentageProcessed Decimal     @default(0.0) @db.Decimal(20, 2)
+  price               Decimal     @db.Decimal(20, 8)
   status              OrderStatus @default(OPEN)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
   Awaiting            Awaiting[]
   OrderLog            OrderLog[]
-  
+
   // 🚀 PERFORMANCE INDEXES - ADD THESE
-  @@index([userId])                    // Fast user lookups
-  @@index([pairId])                    // Fast pair lookups
-  @@index([status])                    // Fast status lookups
-  @@index([type])                      // Fast type lookups
-  @@index([userId, status])            // Compound for user orders
-  @@index([pairId, status])            // For pair-based queries
-  @@index([createdAt])                 // For time-based queries
+  @@index([userId]) // Fast user lookups
+  @@index([pairId]) // Fast pair lookups
+  @@index([status]) // Fast status lookups
+  @@index([type]) // Fast type lookups
+  @@index([userId, status]) // Compound for user orders
+  @@index([pairId, status]) // For pair-based queries
+  @@index([createdAt]) // For time-based queries
 }
 
 model OrderLog {
-  id         String  @id @default(cuid())
-  userId     String?
-  orderId    String?
+  id      String  @id @default(cuid())
+  userId  String?
+  orderId String?
 
   baseAmount  Decimal @db.Decimal(20, 8)
   quoteAmount Decimal @db.Decimal(20, 8)
   rate        Decimal @db.Decimal(20, 8)
 
-  baseCurrency String?
+  baseCurrency  String?
   quoteCurrency String?
 
   orderType OrderType
 
-  order    Order?    @relation(fields: [orderId], references: [id])
+  order Order? @relation(fields: [orderId], references: [id])
 
   createdAt DateTime @default(now())
   metadata  Json?
@@ -633,7 +702,7 @@ model Block {
   active      Boolean  @default(true)
   walletId    String?
   wallet      Wallet?  @relation(fields: [walletId], references: [id])
-  amount      Decimal   @db.Decimal(20, 8)
+  amount      Decimal  @db.Decimal(20, 8)
   description String
   createdAt   DateTime @default(now())
   Order       Order[]
@@ -652,17 +721,17 @@ model PendingActivity {
 }
 
 model Awaiting {
-  id             String         @id @default(cuid())
+  id             String  @id @default(cuid())
   triggerAddress String?
   reference      String?
   walletId       String?
   userId         String?
   orderId        String?
-  amount         Decimal        @db.Decimal(20, 8)
-  
-  orderType      OrderType
-  status         AwaitingStatus @default(PENDING)
-  currencyId     String?
+  amount         Decimal @db.Decimal(20, 8)
+
+  orderType  OrderType
+  status     AwaitingStatus @default(PENDING)
+  currencyId String?
 
   method String?
 
@@ -671,10 +740,10 @@ model Awaiting {
   bank_Account_Name   String?
   bank_expires_At     DateTime?
 
-  bank              Json?
-  crypto            Json?
-  paymentDetails    Json?
-  log               Json?
+  bank           Json?
+  crypto         Json?
+  paymentDetails Json?
+  log            Json?
 
   currency Currency? @relation(fields: [currencyId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])
@@ -685,18 +754,18 @@ model Awaiting {
   duration    DateTime      @default(now())
   postDetails postDetails[]
   metadata    Json?
-  
+
   // 🚀 PERFORMANCE INDEXES - ADD THESE
-  @@index([status])                    // Fast status lookups
-  @@index([userId])                    // Fast user lookups
-  @@index([orderId])                   // Fast order lookups
-  @@index([walletId])                  // Fast wallet lookups
-  @@index([status, userId])            // Compound for common queries
-  @@index([status, orderId])           // For order status checks
-  @@index([createdAt])                 // For time-based queries
-  @@index([duration])                  // For expiry checks
-  @@index([triggerAddress])            // For webhook lookups
-  @@index([reference])                 // For payment reference lookups
+  @@index([status]) // Fast status lookups
+  @@index([userId]) // Fast user lookups
+  @@index([orderId]) // Fast order lookups
+  @@index([walletId]) // Fast wallet lookups
+  @@index([status, userId]) // Compound for common queries
+  @@index([status, orderId]) // For order status checks
+  @@index([createdAt]) // For time-based queries
+  @@index([duration]) // For expiry checks
+  @@index([triggerAddress]) // For webhook lookups
+  @@index([reference]) // For payment reference lookups
 }
 
 model postDetails {
@@ -705,7 +774,7 @@ model postDetails {
   walletId   String?
   userId     String?
   orderId    String?
-  amount     Decimal  @db.Decimal(20, 8)
+  amount     Decimal @db.Decimal(20, 8)
   currencyId String?
 
   status PostDetailStatus @default(PENDING)
@@ -725,14 +794,14 @@ model postDetails {
   wallet   Wallet?   @relation(fields: [walletId], references: [id])
 
   createdAt DateTime @default(now())
-  
+
   // 🚀 PERFORMANCE INDEXES - ADD THESE
-  @@index([awaitingId])                // Fast awaiting lookups
-  @@index([userId])                    // Fast user lookups
-  @@index([status])                    // Fast status lookups
-  @@index([awaitingId, userId])        // Compound for your updateMany query
-  @@index([awaitingId, status])        // For status-based awaiting queries
-  @@index([createdAt])                 // For time-based queries
+  @@index([awaitingId]) // Fast awaiting lookups
+  @@index([userId]) // Fast user lookups
+  @@index([status]) // Fast status lookups
+  @@index([awaitingId, userId]) // Compound for your updateMany query
+  @@index([awaitingId, status]) // For status-based awaiting queries
+  @@index([createdAt]) // For time-based queries
 }
 
 model Card {

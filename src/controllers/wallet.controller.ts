@@ -277,10 +277,37 @@ class WalletController {
     const {
       amount,
       currencyId,
-      receipient_id
+      recipient_id,
+      idempotencyKey
     } = req.body;
 
+    // Validate idempotency key
+    if (!idempotencyKey) {
+      return res.status(400).json({
+        msg: 'idempotencyKey is required',
+        success: false
+      });
+    }
+
     try {
+
+      // ✅ Check if this request was already processed
+      const existingTransfer = await prisma.transferRequest.findUnique({
+        where: { idempotencyKey }
+      });
+
+      if (existingTransfer) {
+        // Return the original result (not an error!)
+        return res.status(200).json({
+          msg: 'Transfer already processed',
+          success: true,
+          transferId: existingTransfer.id,
+          status: existingTransfer.status,
+          duplicate: true
+        });
+      }
+
+
 
       const currency = await prisma.currency.findUnique({
         where:{id:currencyId}
@@ -325,28 +352,66 @@ class WalletController {
         // const result = await walletService.offchain_Transfer
         // ({
         //   userId: user.id,
-        //   receipientId: receipient_id,
+        //   receipientId: recipient_id,
         //   currencyId: currencyId,
         //   amount
         // })
 
-        await walletService.queue({
-          userId: user.id,
-          receipientId: receipient_id,
-          currencyId: currencyId,
-          amount,
-          type:'OFFCHAIN'
-        })
-
-        return res
-        .status(200)
-        .json({
-          msg: 'Transfer Successful',
-          success: true
-          // wallet:result
+        const transfer = await prisma.transferRequest.create({
+          data: {
+            idempotencyKey,
+            userId: user.id,
+            currencyId,
+            amount: amount.toString(),
+            type:'USER',
+            status: 'PENDING',
+            vyre:{
+              amount,
+              currencyId,
+              recipient_id,
+              idempotencyKey,
+              currencyISO: currency.ISO
+            }
+          }
         });
 
-    } catch (error) {
+ 
+        await walletService.queue({
+          transferId: transfer.id,
+          type: 'OFFCHAIN'
+        })
+
+        await notificationService.queue({
+          userId: user.id,
+          title: 'Vyre transfer Initiated',
+          type: 'GENERAL',
+          content: `Your vyre transfer of <strong>${amount} ${currency.ISO}</strong> is being processed. You will receive a notification once the transfer is complete.`
+        });
+
+        return res
+        .status(202)
+        .json({
+          msg: 'Vyre transfer initiated',
+          success: true,
+          transferId: transfer.id,
+          status: 'PENDING'
+        });
+
+    } catch (error: any) {
+      if (error.code === 'P2002' && error.meta?.target?.includes('idempotencyKey')) {
+        const existingTransfer = await prisma.transferRequest.findUnique({
+          where: { idempotencyKey }
+        });
+        
+        return res.status(200).json({
+          msg: 'Vyre transfer already processed',
+          success: true,
+          transferId: existingTransfer?.id,
+          status: existingTransfer?.status,
+          duplicate: true
+        });
+      }
+
       console.log(error)
       res.status(500)
         .json({
@@ -362,10 +427,36 @@ class WalletController {
       amount,
       currencyId,
       address, 
-      destinationTag
+      destinationTag,
+      idempotencyKey
     } = req.body;
 
+    // Validate idempotency key
+    if (!idempotencyKey) {
+      return res.status(400).json({
+        msg: 'idempotencyKey is required',
+        success: false
+      });
+    }
+
+
     try {
+
+       // ✅ Check if this request was already processed
+      const existingTransfer = await prisma.transferRequest.findUnique({
+        where: { idempotencyKey }
+      });
+
+      if (existingTransfer) {
+        // Return the original result (not an error!)
+        return res.status(200).json({
+          msg: 'Transfer already processed',
+          success: true,
+          transferId: existingTransfer.id,
+          status: existingTransfer.status,
+          duplicate: true
+        });
+      }
 
       const currency = await prisma.currency.findUnique({
         where:{id: currencyId}
@@ -416,35 +507,66 @@ class WalletController {
           });
         }
 
-        // Handle crypto withdrawal logic here
-        // const result = await walletService.blockchain_Transfer
-        // ({
-        //   userId: user.id, 
-        //   currencyId: currency.id,
-        //   amount: amount,
-        //   address: address,
-        //   destination_Tag: destinationTag
-        // })
+        const transfer = await prisma.transferRequest.create({
+          data: {
+            idempotencyKey,
+            userId: user.id,
+            currencyId,
+            amount: amount.toString(),
+            type:'CRYPTO',
+            status: 'PENDING',
+            crypto:{
+              amount,
+              currencyId,
+              address, 
+              destinationTag,
+              idempotencyKey,
+              currencyISO: currency.ISO,
+              chain: currency.chain as string
+            }
+          }
+        });
 
+ 
         await walletService.queue({
-          userId: user.id, 
-          currencyId: currency.id,
-          amount: amount,
-          address: address,
-          destination_Tag: destinationTag,
-          type:'BLOCKCHAIN'
+          transferId: transfer.id,
+          type: 'BLOCKCHAIN'
         })
 
-        return res
-        .status(200)
-        .json({
-          msg: 'Transfer Initiated',
-          success: true
-          // wallet:result
+        await notificationService.queue({
+          userId: user.id,
+          title: 'Blockchain transfer initiated',
+          type: 'GENERAL',
+          content: `Your blockchain transfer of <strong>${amount} ${currency.ISO}</strong> is being processed. You will receive a notification once the transfer is complete.`
         });
 
 
-    } catch (error) {
+        return res
+        .status(202)
+        .json({
+          msg: 'Blockchain transfer initiated',
+          success: true,
+          transferId: transfer.id,
+          status: 'PENDING'
+        });
+
+
+    } catch (error:any) {
+
+      if (error.code === 'P2002' && error.meta?.target?.includes('idempotencyKey')) {
+        const existingTransfer = await prisma.transferRequest.findUnique({
+          where: { idempotencyKey }
+        });
+        
+        return res.status(200).json({
+          msg: 'Blockchain transfer already processed',
+          success: true,
+          transferId: existingTransfer?.id,
+          status: existingTransfer?.status,
+          duplicate: true
+        });
+      }
+
       console.log(error)
       res.status(500)
         .json({
@@ -459,38 +581,142 @@ class WalletController {
     const {
       account_number,
       bank_code,
-      recipient_name, 
-      endpoint_url
+      bank_name,
+      account_name,
+      amount, 
+      currencyId,
+      idempotencyKey
     } = req.body;
+
+    // Validate idempotency key
+    if (!idempotencyKey) {
+      return res.status(400).json({
+        msg: 'idempotencyKey is required',
+        success: false
+      });
+    }
 
     try {
 
-        const result = await walletService.bank_Transfer
-        ({
-          account_number,
-          bank_code,
-          recipient_name: recipient_name,
-          endpoint: endpoint_url
+      // ✅ Check if this request was already processed
+      const existingTransfer = await prisma.transferRequest.findUnique({
+        where: { idempotencyKey }
+      });
+
+      if (existingTransfer) {
+        // Return the original result (not an error!)
+        return res.status(200).json({
+          msg: 'Transfer already processed',
+          success: true,
+          transferId: existingTransfer.id,
+          status: existingTransfer.status,
+          duplicate: true
+        });
+      }
+
+      const currency = await prisma.currency.findUnique({
+        where:{id:currencyId}
+      })
+
+      if(!currency){
+        return res.status(400)
+          .json({
+            msg: `currency not found`,
+            success: false,
+          });
+      }
+
+      const walletExists = await prisma.wallet.findFirst({
+        where: { 
+          userId: user.id,
+          currencyId
+        }
+      })
+  
+      if(!walletExists){
+        return res.status(400)
+          .json({
+            msg: 'User wallet does not exist',
+            success: false,
+          });
+      }
+
+      // ✅ Convert amount to Decimal immediately
+      const amountDecimal = new Decimal(amount);
+      // ✅ Check balance with Decimal comparison
+      const availableBalance = new Decimal(walletExists.availableBalance);
+
+      if(availableBalance.lessThan(amountDecimal)){
+        return res.status(400)
+          .json({
+            msg: 'Available balance not sufficient',
+            success: false,
+          });
+      }
+
+
+      // Create transfer request
+      const transfer = await prisma.transferRequest.create({
+          data: {
+            idempotencyKey,
+            userId: user.id,
+            currencyId,
+            amount: amount.toString(),
+            type:'BANK',
+            status: 'PENDING',
+            bank:{
+              amount,
+              currencyId,
+              email: user.email,
+              phone: user.phoneNumber!,
+              account_number,
+              bank_code,
+              bank_name,
+              account_name,
+              idempotencyKey,
+              currencyISO: currency.ISO
+            }
+          }
+      });
+
+        await walletService.queue({
+          transferId: transfer.id,
+          type: 'BANK'
         })
 
-        // await walletService.queue({
-        //   account_number,
-        //   bank_code,
-        //   recipient_name: recipient_name,
-        //   endpoint: endpoint_url,
-        //   type:'BANK'
-        // })
+        await notificationService.queue({
+          userId: user.id,
+          title: 'Bank transfer initiated',
+          type: 'GENERAL',
+          content: `Your bank transfer of <strong>${amount} ${currency.ISO}</strong> is being processed. You will receive a notification once the transfer is complete.`
+        });
 
         return res
-        .status(200)
+        .status(202)
         .json({
-          msg: 'Transfer Initiated',
+          msg: 'Bank transfer initiated',
           success: true,
-          result
+          transferId: transfer.id,
+          status: 'PENDING'
         });
 
 
-    } catch (error) {
+    } catch (error:any) {
+
+      if (error.code === 'P2002' && error.meta?.target?.includes('idempotencyKey')) {
+        const existingTransfer = await prisma.transferRequest.findUnique({
+          where: { idempotencyKey }
+        });
+        
+        return res.status(200).json({
+          msg: 'Bank transfer already processed',
+          success: true,
+          transferId: existingTransfer?.id,
+          status: existingTransfer?.status,
+          duplicate: true
+        });
+      }
+
       console.log(error)
       res.status(500)
         .json({
@@ -502,162 +728,6 @@ class WalletController {
 
 
 
-  // async withdrawal(req: Request & Record<string, any>, res: Response) {
-  //   const { user } = req;
-  //   const {
-  //     TRANSFER_TYPE,
-  //     AMOUNT,
-  //     CURRENCY,
-  //     RECEIPIENT_ID,
-  //     BLOCKCHAIN,
-  //     BANK,
-  //     bank_Account_Number, 
-  //     bank
-  //   } = req.body;
-
-  //   try {
-
-  //     const walletExists = await prisma.wallet.findFirst({
-  //       where: { 
-  //         userId: user.id,
-  //         currency: CURRENCY
-  //       }
-  //     })
-  
-  //     if(!walletExists){
-  //       return res.status(400)
-  //         .json({
-  //           msg: 'User wallet does not exist',
-  //           success: false,
-  //         });
-  //     }
-
-  //     if(AMOUNT > walletExists.availableBalance){
-  //       return res.status(400)
-  //         .json({
-  //           msg: 'Available balance not sufficient',
-  //           success: false,
-  //         });
-  //     }
-
-  //     if ( TRANSFER_TYPE == 'VYRE') {
-  //       // offchain transfer
-  //       if (!blockchain_Address) {
-  //         return res.status(400)
-  //         .json({
-  //           msg: 'Blockchain address is required for crypto withdrawals',
-  //           success: false,
-  //         });
-  //       }
-
-  //       if(CURRENCY === 'XRP' && !destination_Tag){
-  //         return res.status(400)
-  //         .json({
-  //           msg: 'destination_Tag required for ripple widthdrawal',
-  //           success: false,
-  //         });
-  //       }
-
-  //       // Handle crypto withdrawal logic here
-  //       const result = await walletService.blockchain_Transfer
-  //       (
-  //         user.id,
-  //         CURRENCY,
-  //         AMOUNT,
-  //         blockchain_Address,
-  //         destination_Tag
-  //       )
-
-  //       return res
-  //       .status(200)
-  //       .json({
-  //         msg: 'Withdrawal Initiated',
-  //         success: true,
-  //         wallet:result
-  //       });
-
-
-
-  //     }
-
-  //     if (walletExists.type === 'CRYPTO' && TRANSFER_TYPE == 'BLOCKCHAIN') {
-  //       // Crypto withdrawal
-  //       if (!BLOCKCHAIN.address) {
-  //         return res.status(400)
-  //         .json({
-  //           msg: 'Blockchain address is required for crypto withdrawals',
-  //           success: false,
-  //         });
-  //       }
-
-  //       if(CURRENCY === 'XRP' && !BLOCKCHAIN.destinationTag){
-  //         return res.status(400)
-  //         .json({
-  //           msg: 'destination_Tag required for ripple widthdrawal',
-  //           success: false,
-  //         });
-  //       }
-
-  //       // Handle crypto withdrawal logic here
-  //       const result = await walletService.blockchain_Transfer
-  //       (
-  //         user.id,
-  //         CURRENCY,
-  //         AMOUNT,
-  //         BLOCKCHAIN.address,
-  //         BLOCKCHAIN.destinationTag
-  //       )
-
-  //       return res
-  //       .status(200)
-  //       .json({
-  //         msg: 'Withdrawal Initiated',
-  //         success: true,
-  //         wallet:result
-  //       });
-
-
-
-  //     }
-
-  //     if (walletExists.type === 'FIAT' && TRANSFER_TYPE == 'BANK') {
-  //       // Fiat withdrawal
-  //       if (!bank_Account_Number || !bank) {
-  //         return res.status(400)
-  //         .json({
-  //           msg: 'Bank account number and bank name are required for fiat withdrawals',
-  //           success: false,
-  //         });
-  //       }
-  //     }
-
-
-  //       // Handle fiat withdrawal logic here
-  //     // } else {
-  //     //   return res.status(400).json({ error: 'Invalid withdrawal type' });
-  //     // }
-
-
-
-  
-      
-  //     // return res
-  //     //   .status(200)
-  //     //   .json({
-  //     //     msg: 'Wallet created Successfully',
-  //     //     success: true,
-  //     //     wallet:result
-  //     //   });
-
-  //   } catch (error) {
-  //     console.log(error)
-  //     res.status(500)
-  //       .json({
-  //         msg: 'Internal Server Error',
-  //         success: false,
-  //       });
-  //   }
-  // }
 
 
   async fetchPortfolio(req: Request & Record<string, any>, res: Response) {

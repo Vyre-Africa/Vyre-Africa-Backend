@@ -9,11 +9,13 @@ import eventService from '../services/event.service';
 import orderService from '../services/order.service';
 import connection from '../config/redis.config';
 import anonService from '../services/anon.service';
+import prisma from '../config/prisma.config';
 
 const worker = new Worker('general-process',
   async (job) => {
     try {
       console.info(`Processing job ${job.id} of type ${job.name}`);
+      let transferRequest;
       
       switch (job.name) {
 
@@ -21,14 +23,15 @@ const worker = new Worker('general-process',
 
         case 'user-notification':
           return await notificationService.UserNotify(job.data)
+
         case 'blockchain-transfer':
-          return await walletService.blockchain_Transfer(job.data);
+          return await walletService.handle_Blockchain_Transfer(job.data.transferId);
 
         case 'offchain-transfer':
-          return await walletService.offchain_Transfer(job.data);
+            return await walletService.handle_Vyre_Transfer(job.data.transferId)
 
         case 'bank-transfer':
-          return await walletService.direct_bank_Transfer(job.data);
+          return await walletService.handle_Bank_Transfer(job.data.transferId);
 
 
         // ORDER CASES

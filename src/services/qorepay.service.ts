@@ -182,7 +182,7 @@ class QorepayService {
               payment: {
                 amount: (Number(amount)) * 100,
                 currency,
-                description: `${currency} withdrawal `,
+                description: `${currency} withdrawal to ${recipient_name} `,
               },
               sender_name:'Vyre Africa',
               brand_id: config.QOREPAY_BRAND_ID,

@@ -18,6 +18,7 @@ import Decimal from 'decimal.js';
 import logger from '../config/logger';
 import { DecimalUtil } from './decimal.util';
 import { Wallet } from '@prisma/client';
+import { createBeneficiary } from './beneficiary.service';
 
 // import connection from '../config/redis.config';
 
@@ -456,66 +457,66 @@ class WalletService
 
 
 
-    private complete_Withdrawal = async(
-        withdrawal_Id: string,
-        txId: string
-    )=>{
+    // private complete_Withdrawal = async(
+    //     withdrawal_Id: string,
+    //     txId: string
+    // )=>{
 
-        await tatumAxios.put(`/offchain/withdrawal/${withdrawal_Id}/${txId}`)
+    //     await tatumAxios.put(`/offchain/withdrawal/${withdrawal_Id}/${txId}`)
 
-        const updatedTransaction = await prisma.transaction.update({
-            where:{id: withdrawal_Id },
-            data:{
-              status:'SUCCESSFUL',
-            }
-        })
+    //     const updatedTransaction = await prisma.transaction.update({
+    //         where:{id: withdrawal_Id },
+    //         data:{
+    //           status:'SUCCESSFUL',
+    //         }
+    //     })
 
-        return updatedTransaction
+    //     return updatedTransaction
 
-    }
+    // }
 
 
-    private Withdraw_USDC_ETH = async(
-        userId: string, 
-        account_ID: string,
-        address: string,
-        amount: number,
-    )=>{
-        const data = {
-            senderAccountId: account_ID,
-            mnemonic: config.USDT.ETH_MNEMONIC,
-            index: 1,
-            address,
-            amount
-        };
+    // private Withdraw_USDC_ETH = async(
+    //     userId: string, 
+    //     account_ID: string,
+    //     address: string,
+    //     amount: number,
+    // )=>{
+    //     const data = {
+    //         senderAccountId: account_ID,
+    //         mnemonic: config.USDT.ETH_MNEMONIC,
+    //         index: 1,
+    //         address,
+    //         amount
+    //     };
 
-        let transaction;
+    //     let transaction;
 
-        const response = await tatumAxios.post('/offchain/ethereum/erc20/transfer', data)
-        console.log(response)
-        const result = response.data
+    //     const response = await tatumAxios.post('/offchain/ethereum/erc20/transfer', data)
+    //     console.log(response)
+    //     const result = response.data
 
-        transaction = await prisma.transaction.create({
-            data:{
-                id: result.id,
-                userId: userId,
-                currency: 'USDC',
-                amount,
-                status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                walletId: account_ID,
-                type:'DEBIT_PAYMENT',
-                description:'USD COIN transfer'
-            }
-        })
+    //     transaction = await prisma.transaction.create({
+    //         data:{
+    //             id: result.id,
+    //             userId: userId,
+    //             currency: 'USDC',
+    //             amount,
+    //             status: result.completed ? 'SUCCESSFUL' : 'PENDING',
+    //             walletId: account_ID,
+    //             type:'DEBIT_PAYMENT',
+    //             description:'USD COIN transfer'
+    //         }
+    //     })
 
-        if(!result.completed){
-            transaction = await this.complete_Withdrawal(result.id, result.txId)
-        }
+    //     if(!result.completed){
+    //         transaction = await this.complete_Withdrawal(result.id, result.txId)
+    //     }
 
-        return transaction
+    //     return transaction
 
         
-    }
+    // }
 
     
     async subscribe_address(payload:{
@@ -657,8 +658,6 @@ class WalletService
                 throw error;
             }
 
-
-
             switch (currency.ISO) {
 
                 case 'USDC':
@@ -722,6 +721,7 @@ class WalletService
         const startTime = Date.now();
 
         try {
+
             // ✅ Convert amount to Decimal immediately
             const amountDecimal = new Decimal(amount);
 
@@ -900,6 +900,51 @@ class WalletService
                         ]
                     });
 
+                    const [sender, recipient] = await Promise.all([
+                        prisma.user.findUnique({ where: { id: userId }, select: { id: true, firstName: true } }),
+                        prisma.user.findUnique({ where: { id: receipientId }, select: { id: true, firstName: true, lastName:true, email: true, photoUrl: true } })
+                    ]);
+
+                    await Promise.all([
+                        // for sender 
+                        notificationService.queue({
+                            userId, 
+                            title: 'Transfer Sent', 
+                            content: 'Your transfer of ' + DecimalUtil.roundForDisplay(amountDecimal,currency.ISO) + currency.ISO + ' to ' + (recipient?.firstName || 'a user') + ' was successful',
+                            type: 'GENERAL'
+                        }),
+                        // for recipient
+                        notificationService.queue({
+                            userId: receipientId,
+                            title: 'Transfer Received',
+                            content: 'You have received ' + DecimalUtil.roundForDisplay(amountDecimal, currency.ISO) + currency.ISO + ' from ' + (sender?.firstName || 'a user'),
+                            type: 'GENERAL'
+                        })
+
+                    ]);
+
+
+                    try {
+                        await createBeneficiary({
+                            userId,
+                            ISO: currency.ISO,
+                            type: 'USER' as any,
+                            user: {
+                                userId: recipient?.id as string,
+                                firstName: recipient?.firstName as string,
+                                lastName: recipient?.lastName as string,
+                                email: recipient?.email as string,
+                                imgUrl: recipient?.photoUrl as string
+                            }
+                        });
+                    } catch (beneficiaryError: any) {
+                        // ✅ Don't fail the transfer if beneficiary creation fails
+                        logger.warn('Failed to create beneficiary', {
+                            reference: paymentData.reference,
+                            error: beneficiaryError.message
+                        });
+                    }
+
                     const postProcessDuration = Date.now() - postProcessStart;
                     logger.info('🔄 Background post-processing complete', {
                     reference: paymentData.reference,
@@ -914,7 +959,7 @@ class WalletService
                     // Don't throw - transfer already succeeded
                 }
             });
-
+        
             const totalDuration = Date.now() - startTime;
                 logger.info('✅ Offchain transfer COMPLETE', {
                 reference: paymentData.reference,
@@ -933,6 +978,7 @@ class WalletService
 
         } catch (error: any) {
             const totalDuration = Date.now() - startTime;
+
             logger.error('🔴 Offchain transfer FAILED', {
                 error: error.message,
                 userId,
@@ -1638,82 +1684,518 @@ class WalletService
     }
 
     async queue(payload:{
-        amount: number,
-        address?: string,
-        destination_Tag?: number
-
-        userId?: string,
-        receipientId?: string,
-        currencyId?: string,
-
-
-        currency?: string,
-        email?:string, 
-        phone?:string,
-     
-        account_number?: string,
-        bank_code?: string, 
-        recipient_name?: string
-
-
-        type: 'OFFCHAIN' | 'BLOCKCHAIN' | 'BANK'
+        transferId: string,
+        type: 'OFFCHAIN' | 'BLOCKCHAIN' | 'BANK',
     }){
 
         const {
-            amount,
-            address,
-            destination_Tag,
-
-            userId,
-            receipientId,
-            currencyId,
-
-
-            currency,
-            email, 
-            phone,
-        
-            account_number,
-            bank_code, 
-            recipient_name, 
+            transferId,
             type
         } = payload
 
         if(type === 'OFFCHAIN'){
             return await this.generalQueue.add('offchain-transfer', {
-                userId,
-                receipientId,
-                currencyId, 
-                amount
+                transferId,
             });
         }
 
         if(type === 'BLOCKCHAIN'){
 
             return await this.generalQueue.add('blockchain-transfer', {
-                userId, 
-                currencyId,
-                amount,
-                address,
-                destination_Tag
+                transferId
             });
         }
 
         if(type === 'BANK'){
 
             return await this.generalQueue.add('bank-transfer', {
-                userId,
+                transferId
+            });
+        }
+
+    }
+
+    // called by worker
+    async handle_Vyre_Transfer(transferId: string) {
+    try {
+        // ✅ Update status to PROCESSING if PENDING, else exit
+        const updated = await prisma.transferRequest.updateMany({
+            where: { 
+                id: transferId,
+                status: 'PENDING'
+            },
+            data: { 
+                status: 'PROCESSING'
+            }
+        });
+
+        if (updated.count === 0) {
+            logger.warn('Transfer already being processed or completed', { transferId });
+            return;
+        }
+
+        // ✅ Fetch transfer request (no status filter)
+        const transferRequest = await prisma.transferRequest.findUnique({
+            where: { id: transferId }
+        });
+
+        if (!transferRequest) {
+            logger.error('Transfer request not found', { transferId });
+            return;
+        }
+
+        // ✅ Validate vyre data exists
+        if (!transferRequest.vyre) {
+            throw new Error('Invalid transfer request - missing vyre transfer data');
+        }
+
+        const { amount, currencyId, recipient_id, currencyISO } = transferRequest.vyre as {
+            amount: string;
+            currencyId: string;
+            recipient_id: string;
+            idempotencyKey: string;
+            currencyISO: string;
+        };
+
+        // ✅ Execute the transfer
+        const result = await this.offchain_Transfer({
+            userId: transferRequest.userId,
+            receipientId: recipient_id,
+            currencyId,
+            amount
+        });
+
+        // ✅ Mark as completed 
+        await prisma.transferRequest.update({
+            where: { id: transferId },
+            data: { 
+                status: 'COMPLETED',
+                completedAt: new Date(),
+                reference: result?.reference
+            }
+        });
+
+        logger.info('Transfer completed successfully', {
+            transferId,
+            reference: result.reference
+        });
+
+        return result;
+
+    } catch (error: any) {
+        logger.error('Transfer handler failed', {
+            transferId,
+            error: error.message,
+            stack: error.stack
+        });
+
+        // ✅ Safe status update
+        try {
+            await prisma.transferRequest.update({
+                where: { id: transferId },
+                data: { 
+                    status: 'FAILED',
+                    errorMessage: error?.message,
+                    failedAt: new Date()
+                }
+            });
+        } catch (dbError: any) {
+            logger.error('Failed to update transfer status to FAILED', {
+                transferId,
+                originalError: error.message,
+                dbError: dbError.message
+            });
+        }
+
+        // ✅ Send failure notification (non-blocking)
+        setImmediate(async () => {
+            try {
+                // Fetch user data if not available
+                const transfer = await prisma.transferRequest.findUnique({
+                    where: { id: transferId },
+                    select: { userId: true, amount: true, vyre: true }
+                });
+
+                const { currencyISO } = transfer?.vyre as {
+                    amount: string;
+                    currencyId: string;
+                    recipient_id: string;
+                    idempotencyKey: string;
+                    currencyISO: string;
+                };
+
+                if (transfer) {
+                    await notificationService.queue({
+                        userId: transfer.userId,
+                        title: 'Transfer Failed',
+                        type: 'GENERAL',
+                        content: `Your transfer of ${transfer.amount} ${currencyISO} failed.  Reason: ${error?.message}. Please try again or contact support`
+                    });
+                }
+            } catch (notifError: any) {
+                logger.error('Failed to send failure notification', {
+                    transferId,
+                    error: notifError.message
+                });
+            }
+        });
+
+        throw error;
+    }
+    }
+    
+    // called by worker
+    async handle_Blockchain_Transfer(transferId: string)
+    {
+        try {
+
+            // ✅ Update status to PROCESSING if PENDING, else exit
+            const updated = await prisma.transferRequest.updateMany({
+                where: { 
+                    id: transferId,
+                    status: 'PENDING'
+                },
+                data: { 
+                    status: 'PROCESSING'
+                }
+            });
+
+            if (updated.count === 0) {
+                logger.warn('Transfer already being processed or completed', { transferId });
+                return;
+            }
+
+            // ✅ Fetch transfer request (no status filter)
+            const transferRequest = await prisma.transferRequest.findUnique({
+                where: { id: transferId }
+            });
+
+            if (!transferRequest) {
+                logger.error('Transfer request not found', { transferId });
+                return;
+            }
+
+            // ✅ Validate transfer data exists
+            if (!transferRequest.crypto) {
+                throw new Error('Invalid transfer request - missing crypto transfer data');
+            }
+
+            const { amount, currencyId, address, destinationTag, currencyISO, chain } = transferRequest.crypto as {
+                amount: string;
+                currencyId: string;
+                address: string; 
+                destinationTag: number | null;
+                idempotencyKey: string;
+                currencyISO: string;
+                chain: string;
+            };
+
+            const result = await this.blockchain_Transfer({
+                userId: transferRequest.userId,
                 currencyId,
                 amount,
+                address,
+                destination_Tag: destinationTag as number
+            });
+
+            // ✅ Mark as completed 
+            await prisma.transferRequest.update({
+                where: { id: transferId },
+                data: { 
+                    status: 'COMPLETED',
+                    completedAt: new Date(),
+                    reference: result?.reference
+                }
+            });
+
+            // ✅ Background post-processing (doesn't block return)
+            setImmediate(async () => {
+                try {
+
+                    // Create beneficiary
+                    await createBeneficiary({
+                        userId: transferRequest.userId,
+                        ISO: currencyISO,
+                        type: 'CRYPTO' as any,
+                        crypto: { address, chain }
+                    });
+
+                    logger.info('Background post-processing complete', { transferId });
+                } catch (bgError: any) {
+                    logger.error('Background post-processing failed (non-critical)', {
+                        transferId,
+                        error: bgError.message
+                    });
+                }
+            });
+
+            logger.info('Transfer completed successfully', {
+                transferId,
+                reference: result?.reference
+            });
+
+            return result
+
+        } catch (error:any) {
+
+            logger.error('Transfer handler failed', {
+                transferId,
+                error: error.message,
+                stack: error.stack
+            });
+
+            // ✅ Safe status update
+            try {
+                await prisma.transferRequest.update({
+                    where: { id: transferId },
+                    data: { 
+                        status: 'FAILED',
+                        errorMessage: error?.message,
+                        failedAt: new Date() 
+                    }
+                });
+            } catch (dbError: any) {
+                logger.error('Failed to update transfer status to FAILED', {
+                    transferId,
+                    originalError: error?.message,
+                    dbError: dbError?.message
+                });
+            }
+
+            // ✅ Send failure notification (non-blocking)
+            setImmediate(async () => {
+                try {
+                    // Fetch user data if not available
+                    const transfer = await prisma.transferRequest.findUnique({
+                        where: { id: transferId },
+                        select: { userId: true, amount: true, crypto: true }
+                    });
+
+                    const { amount, currencyId, address, destinationTag, currencyISO, chain } = transfer?.crypto as {
+                        amount: string;
+                        currencyId: string;
+                        address: string; 
+                        destinationTag: number | null;
+                        idempotencyKey: string;
+                        currencyISO: string;
+                        chain: string;
+                    };
+
+                    if (transfer) {
+                        await notificationService.queue({
+                            userId: transfer.userId,
+                            title: 'Transfer Failed',
+                            type: 'GENERAL',
+                            content: `Your transfer of ${transfer.amount} ${currencyISO} failed. Reason: ${error?.message}. Please try again or contact support.`
+                        });
+                    }
+                } catch (notifError: any) {
+                    logger.error('Failed to send failure notification', {
+                        transferId,
+                        error: notifError.message
+                    });
+                }
+            });
+
+            throw error;
+
+        }
+
+        
+        
+    }
+
+    // called by worker
+    async handle_Bank_Transfer(transferId: string)
+    {
+
+        interface BankTransferData {
+              amount: string;
+              currencyId: string;
+              email: string;
+              phone: string;
+              account_number: string;
+              bank_code: string;
+              bank_name: string;
+              account_name: string;
+              idempotencyKey: string;
+              currencyISO: string;
+              swiftCode?: string; // For international transfers
+              iban?: string; // For European banks
+              routingNumber?: string; // For US banks
+              sortCode?: string;
+        }
+
+        try {
+            // ✅ Update status to PROCESSING if PENDING, else exit
+            const updated = await prisma.transferRequest.updateMany({
+                where: { 
+                    id: transferId,
+                    status: 'PENDING'
+                },
+                data: { 
+                    status: 'PROCESSING'
+                }
+            });
+
+            if (updated.count === 0) {
+                logger.warn('Transfer already being processed or completed', { transferId });
+                return;
+            }
+
+            // ✅ Fetch transfer request (no status filter)
+            const transferRequest = await prisma.transferRequest.findUnique({
+                where: { id: transferId }
+            });
+
+            if (!transferRequest) {
+                logger.error('Transfer request not found', { transferId });
+                return;
+            }
+
+            // ✅ Validate transfer data exists
+            if (!transferRequest.bank) {
+                throw new Error('Invalid transfer request - missing bank transfer data');
+            }
+
+
+            const { 
+                amount, currencyId, email, phone, 
+                account_number, bank_code, bank_name, 
+                account_name, currencyISO, swiftCode, 
+                iban, routingNumber, sortCode 
+            } = transferRequest.bank as unknown as BankTransferData;
+
+            const result = await this.direct_bank_Transfer({
+                userId: transferRequest.userId,
+                currencyId,
+                amount,
+                
                 email, 
                 phone,
             
                 account_number,
                 bank_code, 
-                recipient_name
+                recipient_name: account_name
             });
+
+            // ✅ Mark as completed 
+            await prisma.transferRequest.update({
+                where: { id: transferId },
+                data: { 
+                    status: 'COMPLETED',
+                    completedAt: new Date(),
+                    reference: result?.id
+                }
+            });
+
+            // ✅ Background post-processing (doesn't block return)
+            setImmediate(async () => {
+                try {
+
+                    await notificationService.queue({
+                        userId: transferRequest.userId, 
+                        title: 'Transfer Sent',
+                        content: `Your bank transfer of <strong>${DecimalUtil.roundForDisplay(amount, currencyISO)} ${currencyISO}</strong> to ${account_name} (${bank_name}) was successful.
+                                    <br>Reference: ${result.id}
+                                    <br>Account: ${account_number.slice(0, 4)}****${account_number.slice(-4)}`,
+                        type: 'GENERAL'
+                    });
+
+                    // Create beneficiary
+                    await createBeneficiary({
+                        userId: transferRequest.userId,
+                        ISO: currencyISO,
+                        type: 'BANK' as any,
+                        bank: { 
+                            accountNumber: account_number,
+                            accountName: account_name,
+                            bankName: bank_name,
+                            bankCode: bank_code, // Optional - not all countries use bank codes
+                            swiftCode, // For international transfers
+                            iban, // For European banks
+                            routingNumber, // For US banks
+                            sortCode // For UK banks 
+                        }
+                    });
+
+                    logger.info('Background post-processing complete', { transferId });
+                } catch (bgError: any) {
+                    logger.error('Background post-processing failed (non-critical)', {
+                        transferId,
+                        error: bgError.message
+                    });
+                }
+            });
+
+            logger.info('Transfer completed successfully', {
+                transferId,
+                reference: result?.id
+            });
+
+            return result
+
+
+        } catch (error:any) {
+
+            logger.error('Transfer handler failed', {
+                transferId,
+                error: error.message,
+                stack: error.stack
+            });
+
+            // ✅ Safe status update
+            try {
+                await prisma.transferRequest.update({
+                    where: { id: transferId },
+                    data: { 
+                        status: 'FAILED',
+                        errorMessage: error?.message,
+                        failedAt: new Date()
+                    }
+                });
+            } catch (dbError: any) {
+                logger.error('Failed to update transfer status to FAILED', {
+                    transferId,
+                    originalError: error.message,
+                    dbError: dbError.message
+                });
+            }
+
+            // ✅ Send failure notification (non-blocking)
+            setImmediate(async () => {
+                try {
+                    // Fetch user data if not available
+                    const transfer = await prisma.transferRequest.findUnique({
+                        where: { id: transferId },
+                        select: { userId: true, amount: true, bank: true }
+                    });
+
+                    const {currencyISO} = transfer?.bank as unknown as BankTransferData;
+
+                    if (transfer) {
+                        await notificationService.queue({
+                            userId: transfer.userId,
+                            title: 'Transfer Failed',
+                            type: 'GENERAL',
+                            content: `Your transfer of ${transfer.amount} ${currencyISO} failed.  Reason: ${error?.message}. Please try again or contact support`
+                        });
+                    }
+                } catch (notifError: any) {
+                    logger.error('Failed to send failure notification', {
+                        transferId,
+                        error: notifError.message
+                    });
+                }
+            });
+
+            throw error;
+
+
         }
 
+        
+        
     }
 
    
