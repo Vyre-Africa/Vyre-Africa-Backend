@@ -7,7 +7,7 @@ export async function requireTransactionPin(
     next: NextFunction
 ) {
     const { user } = req;
-    const { transactionPin } = req.body; // ✅ Different field name
+    const { pin:transactionPin } = req.body; // ✅ Different field name
 
     try {
         // Check if user has transaction PIN
