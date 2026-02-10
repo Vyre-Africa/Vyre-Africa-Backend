@@ -103,8 +103,6 @@ class walletValidator {
             .withMessage('Recipient ID is required')
             .isString()
             .withMessage('Recipient ID must be a string')
-            .isUUID()
-            .withMessage('Recipient ID must be a valid UUID')
             .custom((value, { req }) => {
                 // Prevent self-transfers
                 if (value === req.user?.id) {
