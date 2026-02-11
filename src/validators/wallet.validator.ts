@@ -132,9 +132,7 @@ class walletValidator {
                 .notEmpty()
                 .withMessage('Currency ID is required')
                 .isString()
-                .withMessage('Currency ID must be a string')
-                .isUUID()
-                .withMessage('Currency ID must be a valid UUID'),
+                .withMessage('Currency ID must be a string'),
 
             // ✅ Amount
             body('amount')
