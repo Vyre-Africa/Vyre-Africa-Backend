@@ -23,6 +23,9 @@ import swapController from '../controllers/swap.controller';
 import swapValidator from '../validators/swap.validator';
 import eventController from '../controllers/event.controller';
 import { requireAuth } from '@clerk/express';
+import PinValidators from '../validators/pin.validator';
+import pinController from '../controllers/pin.controller';
+import { requireTransactionPin } from '../middleware/transactionPin';
 
 const router = Router();
 
@@ -198,6 +201,37 @@ router.get(
   swapController.fetchSwap
 )
 
+// Pin Routes
+router.post('/pin/transaction/create',
+    requireAuth(),
+    authMiddleware,
+    PinValidators.createTransactionPin(),
+    middleware.handleValidationError,
+    pinController.createTransactionPin
+);
+
+router.post('/pin/transaction/verify',
+    requireAuth(),
+    authMiddleware,
+    PinValidators.verifyTransactionPin(),
+    middleware.handleValidationError,
+    pinController.verifyTransactionPin
+);
+
+router.post('/pin/transaction/change',
+    requireAuth(),
+    authMiddleware,
+    PinValidators.changeTransactionPin(),
+    middleware.handleValidationError,
+    pinController.changeTransactionPin
+);
+
+router.get('/pin/transaction/check',
+    requireAuth(),
+    authMiddleware,
+    pinController.checkTransactionPin
+);
+
 
 // router.post('/sendOTP', userController.sendVerification);
 
@@ -233,6 +267,7 @@ router.post(
   authMiddleware,
   walletValidator.initVyreTransfer(),
   middleware.handleValidationError,
+  requireTransactionPin,
   walletController.init_VyreTransfer
 )
 
@@ -242,6 +277,7 @@ router.post(
   authMiddleware,
   walletValidator.initBlockchainTransfer(),
   middleware.handleValidationError,
+  requireTransactionPin,
   walletController.init_BlockchainTransfer
 )
 
@@ -251,6 +287,7 @@ router.post(
   authMiddleware,
   walletValidator.initBankTransfer(),
   middleware.handleValidationError,
+  requireTransactionPin,
   walletController.init_BankTransfer
 )
 

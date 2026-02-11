@@ -98,6 +98,8 @@ class ClerkService{
 
 
     private async handleUserCreated(userData: any) {
+        console.log('handling with data', userData)
+        
         if (!userData?.email_addresses?.[0]?.email_address) {
             throw new Error('No email address in user.created event');
         }

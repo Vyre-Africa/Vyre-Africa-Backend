@@ -1251,7 +1251,24 @@ class UserController {
         try {
 
             const userData = await prisma.user.findUnique({
-                where: { id: user.id }
+                where: { id: user.id },
+                select:{
+                    id:true,
+                    firstName: true,
+                    lastName: true,
+                    BusinessName: true,
+                    referralId: true,
+                    referreeId: true,
+                    email: true,
+                    userStatus: true,
+                    type: true,
+                    photoUrl: true,
+                    phoneNumber: true,
+                    country: true,
+                    emailVerified: true,
+                    accountVerified: true,
+                    transactionPin: true
+                }
             });
 
             console.log('started', userData)
@@ -1268,7 +1285,7 @@ class UserController {
             return res.status(201).json({
                 msg: 'Profile fetched successfully',
                 success: true,
-                user: userData,
+                user: {...userData, hasPin: !!userData?.transactionPin},
                 isNewUser,
                 hasAnyPaymentMethod
             });

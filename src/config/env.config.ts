@@ -9,6 +9,7 @@ const config = {
     redisHost: process.env.REDIS_HOST || 'redis',
     redisPort: process.env.REDIS_PORT || '6379',
     redisPassWord: process.env.REDIS_PASSWORD || '',
+    redisServerName: process.env.REDIS_SERVER_NAME || '',
 
     queueConcurrency: process.env.ORDER_QUEUE_CONCURRENCY || '5',
     queueRetryAttempts: process.env.ORDER_QUEUE_RETRY_ATTEMPTS || '5',
