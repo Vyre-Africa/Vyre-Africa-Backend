@@ -1696,7 +1696,15 @@ class WalletService
         if(type === 'OFFCHAIN'){
             return await this.generalQueue.add('offchain-transfer', {
                 transferId,
-            });
+            },
+                {
+                    attempts: 1, // No retries - fail fast and notify user
+                    backoff: {
+                    type: 'exponential',
+                    delay: 5000 // 3s first retry, 6s if there were more
+                    }
+                }
+            );
         }
 
         if(type === 'BLOCKCHAIN'){

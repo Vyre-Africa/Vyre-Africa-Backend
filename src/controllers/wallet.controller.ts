@@ -381,12 +381,12 @@ class WalletController {
           type: 'OFFCHAIN'
         })
 
-        await notificationService.queue({
-          userId: user.id,
-          title: 'Vyre transfer Initiated',
-          type: 'GENERAL',
-          content: `Your vyre transfer of <strong>${amount} ${currency.ISO}</strong> is being processed. You will receive a notification once the transfer is complete.`
-        });
+        // await notificationService.queue({
+        //   userId: user.id,
+        //   title: 'Vyre transfer Initiated',
+        //   type: 'GENERAL',
+        //   content: `Your vyre transfer of <strong>${amount} ${currency.ISO}</strong> is being processed. You will receive a notification once the transfer is complete.`
+        // });
 
         return res
         .status(202)
