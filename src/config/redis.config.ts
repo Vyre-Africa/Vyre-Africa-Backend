@@ -13,7 +13,7 @@ const connection = new IORedis({
   connectTimeout: 15000,
 //   username: "default",
   tls: {
-    servername: 'ideal-hedgehog-13788.upstash.io', // IMPORTANT: SNI for TLS
+    servername: config.redisServerName, // IMPORTANT: SNI for TLS
   },
 //   tls: {}, // Required for Upstash
   maxRetriesPerRequest: null,
