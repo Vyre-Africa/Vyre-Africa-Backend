@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Request, Response, Router } from 'express';
 import { adminRouter } from './admin';
 import config from '../config/env.config';
