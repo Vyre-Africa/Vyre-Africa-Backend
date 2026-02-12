@@ -41,16 +41,20 @@ server.listen(env.port, async() => {
 	console.log(`Listening on port ${env.port}`);
 	logger.info(`Server running on port ${env.port}`);
 
-	// if (process.env.NODE_ENV !== 'dev') {
+	// Only start workers if enabled via environment variable
+	const START_WORKERS = process.env.START_WORKERS === 'true';
+	
+	if (START_WORKERS) {
 		try {
-		//   await import('./workers/order.worker');
-		  await import('./workers/general.worker');
-		//   await startWorker();
-		  console.log('All workers started successfully');
+			console.log('🔧 Starting background workers...');
+			await import('./workers/general.worker');
+			console.log('✅ All workers started successfully');
 		} catch (err) {
-		  console.error('Failed to start workers:', err);
-		  // Don't crash the server if worker fails
+			console.error('❌ Failed to start workers:', err);
+			// Don't crash the server if worker fails
 		}
-	//   }
+	} else {
+		console.log('⏭️  Workers disabled (API only mode)');
+	}
 });
 
