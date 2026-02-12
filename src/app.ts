@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
@@ -7,6 +8,7 @@ import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import swaggerUi from 'swagger-ui-express';
 import swaggerDocument from '../swagger-output.json';
+import { clerkMiddleware } from '@clerk/express';
 
 const app = express();
 
@@ -43,6 +45,8 @@ dotenv.config();
 
 // // Handle preflight requests
 // app.options('*', cors(corsOptions));
+
+app.use(clerkMiddleware());
 
 const corsOptions = {
   origin: true,  // Reflects back the requesting origin
