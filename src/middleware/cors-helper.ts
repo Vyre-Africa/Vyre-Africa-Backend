@@ -14,6 +14,7 @@ export const requireAuthWithCORS = () => {
     
     // // Apply Clerk auth
     // return requireAuth()(req, res, next);
+    console.log('CORS helper called');
     return next();
   };
 };
