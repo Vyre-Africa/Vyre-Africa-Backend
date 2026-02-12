@@ -22,10 +22,11 @@ import walletController from '../controllers/wallet.controller';
 import swapController from '../controllers/swap.controller';
 import swapValidator from '../validators/swap.validator';
 import eventController from '../controllers/event.controller';
-import { requireAuth } from '@clerk/express';
+// import {  requireAuth } from '@clerk/express';
 import PinValidators from '../validators/pin.validator';
 import pinController from '../controllers/pin.controller';
 import { requireTransactionPin } from '../middleware/transactionPin';
+import { requireAuthWithCORS } from '../middleware/cors-helper';
 
 const router = Router();
 
@@ -67,7 +68,7 @@ router.post(
 
 router.post(
   '/user/upload_kyc',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.uploadKyc(),
   middleware.handleValidationError,
@@ -139,7 +140,7 @@ router.post(
 // swap
 router.post(
   '/paymentAccount/fiat',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   swapValidator.addFiatAccount(),
   middleware.handleValidationError,
@@ -148,7 +149,7 @@ router.post(
 
 router.post(
   '/paymentAccount/crypto',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   swapValidator.addCryptoAccount(),
   middleware.handleValidationError,
@@ -157,21 +158,21 @@ router.post(
 
 router.delete(
   '/paymentAccount/:accountId',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   swapController.deletePaymentAccount
 );
 
 router.get(
   '/linkedAccounts',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   swapController.getLinkedAccounts
 );
 
 router.post(
   '/swap/quote',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   swapValidator.generateQuote(),
   middleware.handleValidationError,
@@ -180,7 +181,7 @@ router.post(
 
 router.post(
   '/swap/initiate',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   swapValidator.initiateSwap(),
   middleware.handleValidationError,
@@ -189,21 +190,21 @@ router.post(
 
 router.get(
   '/swaps',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   swapController.fetchSwaps
 );
 
 router.get(
   '/swaps/:id',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   swapController.fetchSwap
 )
 
 // Pin Routes
 router.post('/pin/transaction/create',
-    requireAuth(),
+     requireAuthWithCORS(),
     authMiddleware,
     PinValidators.createTransactionPin(),
     middleware.handleValidationError,
@@ -211,7 +212,7 @@ router.post('/pin/transaction/create',
 );
 
 router.post('/pin/transaction/verify',
-    requireAuth(),
+     requireAuthWithCORS(),
     authMiddleware,
     PinValidators.verifyTransactionPin(),
     middleware.handleValidationError,
@@ -219,7 +220,7 @@ router.post('/pin/transaction/verify',
 );
 
 router.post('/pin/transaction/change',
-    requireAuth(),
+     requireAuthWithCORS(),
     authMiddleware,
     PinValidators.changeTransactionPin(),
     middleware.handleValidationError,
@@ -227,7 +228,7 @@ router.post('/pin/transaction/change',
 );
 
 router.get('/pin/transaction/check',
-    requireAuth(),
+     requireAuthWithCORS(),
     authMiddleware,
     pinController.checkTransactionPin
 );
@@ -238,14 +239,14 @@ router.get('/pin/transaction/check',
 // Wallet
 router.post(
   '/wallet/create/:currencyId',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletController.createWallet
 )
 
 router.post(
   '/wallet/deposit',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletValidator.initDeposit(),
   middleware.handleValidationError,
@@ -254,7 +255,7 @@ router.post(
 
 router.post(
   '/wallet/authorize_fiat_withdrawal',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletValidator.initDeposit(),
   middleware.handleValidationError,
@@ -263,7 +264,7 @@ router.post(
 
 router.post(
   '/wallet/vyre_tranfer',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletValidator.initVyreTransfer(),
   middleware.handleValidationError,
@@ -273,7 +274,7 @@ router.post(
 
 router.post(
   '/wallet/blockchain_tranfer',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletValidator.initBlockchainTransfer(),
   middleware.handleValidationError,
@@ -283,7 +284,7 @@ router.post(
 
 router.post(
   '/wallet/bank_tranfer',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletValidator.initBankTransfer(),
   middleware.handleValidationError,
@@ -293,35 +294,35 @@ router.post(
 
 router.get(
   '/wallet/all',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletController.fetchWallets
 )
 
 router.get(
   '/wallet/:id',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletController.fetchWallet
 )
 
 router.get(
   '/wallet_by_name/:name',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletController.fetchWalletByName
 )
 
 router.get(
   '/rate',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletController.getRate
 )
 
 router.get(
   '/transactions',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletController.fetchTransactions
 )
@@ -332,14 +333,14 @@ router.get(
 //orders
 router.get(
   '/orders',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   orderController.fetchOrders
 );
 
 router.get(
   '/orders/user',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   orderController.fetch_user_orders
 );
@@ -352,7 +353,7 @@ router.get(
 
 router.post(
   '/orders/create',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   orderValidator.createOrder(),
   middleware.handleValidationError,
@@ -369,7 +370,7 @@ router.post(
 
 router.post(
   '/orders/process',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   orderValidator.processOrder(),
   middleware.handleValidationError,
@@ -378,28 +379,28 @@ router.post(
 
 router.post(
   '/order/cancel/:id',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   orderController.cancelOrder
 )
 
 router.get(
   '/orders/pairs',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   orderController.fetchPairs
 );
 
 router.get(
   '/orders/pairs/rate',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   orderController.getRatebyPair
 )
 
 router.get(
   '/orders/getPairWallets',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   orderController.fetchPairWallets
 );
@@ -409,21 +410,21 @@ router.get(
 
 router.get(
   '/user/portfolio',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   walletController.fetchPortfolio,
 );
 
 router.get(
   '/user/get-profile',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.getProfile,
 );
 
 router.post(
   '/user/query',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.queryUser
 )
@@ -431,7 +432,7 @@ router.post(
 
 router.post(
   '/user/update-profile',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.updateProfile(),
   middleware.handleValidationError,
@@ -440,7 +441,7 @@ router.post(
 
 router.post(
   '/user/change-password',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.changePassword(),
   middleware.handleValidationError,
@@ -476,7 +477,7 @@ router.get(
 
 router.post(
   '/user/verify-account-detail',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.verifyAccountDetail(),
   middleware.handleValidationError,
@@ -486,7 +487,7 @@ router.post(
 //add user bank
 router.post(
   '/user/bank/create',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.addBank(),
   middleware.handleValidationError,
@@ -496,14 +497,14 @@ router.post(
 //get user bank
 router.get(
   '/user/bank',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.getUserBank,
 );
 
 router.get(
   '/user/wallet/balance',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.getUserWalletBalance,
 );
@@ -511,7 +512,7 @@ router.get(
 //delete user bank
 router.delete(
   '/user/bank/:userBankId',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.deleteUserBank,
 );
@@ -519,7 +520,7 @@ router.delete(
 //user save notification setting
 router.post(
   '/user/notification-setting',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.setNotificationMethod(),
   middleware.handleValidationError,
@@ -529,7 +530,7 @@ router.post(
 //user get notification setting
 router.get(
   '/user/notification-setting',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.getNotificationMethod,
 );
@@ -537,14 +538,14 @@ router.get(
 //user get auth secret for third party authenticator
 router.get(
   '/user/get-Auth-secret',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.getAuthSecret,
 );
 
 router.get(
   '/user/get-two-factor-authentication-status',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.getTwoFactorAuthenticationMethod,
 );
@@ -552,7 +553,7 @@ router.get(
 //save 2FA method
 router.post(
   '/user/two-factor-authentication',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.setTwoFactorAuthenticationMethod(),
   middleware.handleValidationError,
@@ -562,7 +563,7 @@ router.post(
 //save 2FA method
 router.post(
   '/user/disable-two-factor-authentication',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.disableTwoFactorAuthenticationMethod(),
   middleware.handleValidationError,
@@ -572,7 +573,7 @@ router.post(
 //delete account
 router.delete(
   '/user/account/delete',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.deleteAccount(),
   middleware.handleValidationError,
@@ -582,7 +583,7 @@ router.delete(
 //get user notifications
 router.get(
   '/user/notification',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.getNotification,
 );
@@ -590,7 +591,7 @@ router.get(
 //filter user notifications
 router.get(
   '/user/notification/filter',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.filterNotification,
 );
@@ -598,7 +599,7 @@ router.get(
 //get user transactions
 router.get(
   '/user/transactions',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userController.getTransactions,
 );
@@ -624,7 +625,7 @@ router.get(
 //fund user wallet
 router.post(
   '/user/wallet/fund',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.fundUserWallet(),
   middleware.handleValidationError,
@@ -634,7 +635,7 @@ router.post(
 //verify carsd
 router.post(
   '/user/card/verify',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.verifyCard(),
   middleware.handleValidationError,
@@ -645,7 +646,7 @@ router.post(
 //add atm card
 router.post(
   '/user/card/add',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   userValidator.addCard(),
   middleware.handleValidationError,
@@ -655,7 +656,7 @@ router.post(
 //get cards
 router.get(
   '/user/card/fetch',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   mobileUserController.getCards,
 );
@@ -663,7 +664,7 @@ router.get(
 //set card as preferred
 router.post(
   '/user/card/set-as-preferred/:card_id',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   mobileUserController.setCardAsPreferred,
 );
@@ -671,7 +672,7 @@ router.post(
 //unset card as preferred
 router.post(
   '/user/card/unset-as-preferred/:card_id',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   mobileUserController.unSetCardAsPreferred,
 );
@@ -679,7 +680,7 @@ router.post(
 //delete card
 router.post(
   '/user/card/delete/:card_id',
-  requireAuth(),
+   requireAuthWithCORS(),
   authMiddleware,
   mobileUserController.deleteCard,
 );

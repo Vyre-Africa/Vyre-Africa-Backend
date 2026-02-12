@@ -13,43 +13,13 @@ export const authMiddleware = async (
   res: Response,
   next: NextFunction
 ) => {
-  // 1. Extract Token
-  // const { authorization } = req.headers;
-  // if (!authorization) {
-  //   return res.status(401).json({ 
-  //     success: false,
-  //     error: 'Missing authorization token' 
-  //   });
-  // }
 
-  // const token = authorization.split(' ')[1];
-  // if (!token) {
-  //   return res.status(401).json({
-  //     success: false,
-  //     error: 'Malformed authorization header'
-  //   });
-  // }
-
+  // Skip OPTIONS requests (CORS preflight)
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+  
   try {
-    // 2. Validate Token (choose ONE approach)
-    
-    // OPTION A: Local verification (recommended)
-    // const { success, data } = verifyAccessToken(token);
-    // if (!success || !data?.userId) {
-    //   console.log('token data',data)
-        
-    //   return res.status(403).json({
-    //     success: false,
-    //     error: 'Invalid or expired token'
-    //   });
-    // }
-
-    // OPTION B: Remote verification (if you need fresh claims)
-    // const userInfo = await userInfoClient.getUserInfo(token);
-    // if (!userInfo.data?.sub) {
-    //   return res.status(403).json(...);
-    // }
-    // const authId = userInfo.data.sub;
 
     const { userId } = getAuth(req)
     const data = await clerkClient.users.getUser(userId as string)
