@@ -46,7 +46,7 @@ dotenv.config();
 // // Handle preflight requests
 // app.options('*', cors(corsOptions));
 
-app.use(clerkMiddleware());
+// app.use(clerkMiddleware());
 
 const corsOptions = {
   origin: true,  // Reflects back the requesting origin
