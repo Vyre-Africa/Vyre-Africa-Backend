@@ -38,11 +38,30 @@ const corsOptions = {
     optionsSuccessStatus: 200
 };
 
-// Apply CORS FIRST
-app.use(cors(corsOptions));
+// // Apply CORS FIRST
+// app.use(cors(corsOptions));
 
-// Handle preflight requests
-app.options('*', cors(corsOptions));
+// // Handle preflight requests
+// app.options('*', cors(corsOptions));
+
+app.options('*', (req, res) => {
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'https://app.vyre.africa',
+    'https://p2p.vyre.africa',
+    'https://payments.vyre.africa',
+    'https://swap.vyre.africa',
+  ];
+  
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.sendStatus(200);
+});
 
 // FOR WEBHOOK handlers (these need raw body)
 app.use('/api/v1/webhook/fern', express.raw({ type: 'application/json', limit: '10mb' }));
