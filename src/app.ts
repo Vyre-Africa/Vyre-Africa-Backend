@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
@@ -8,8 +7,6 @@ import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import swaggerUi from 'swagger-ui-express';
 import swaggerDocument from '../swagger-output.json';
-import { clerkMiddleware } from '@clerk/express';
-
 const app = express();
 
 import { initializeAdmin } from './config/firebaseConfig.js';
@@ -17,69 +14,22 @@ import { router } from './routes';
 
 dotenv.config();
 
-// CORS Configuration - MUST be before other middleware
-// const corsOptions = {
-//     origin: [
-//       'http://localhost:3000',
-//       'http://localhost:3001',
-//       'https://app.vyre.africa',
-//       'https://p2p.vyre.africa',
-//       'https://payments.vyre.africa',
-//       'https://swap.vyre.africa',
-//       'https://ideal-hedgehog-13788.upstash.io'
-//     ],
-//     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-//     allowedHeaders: [
-//       'Origin',
-//       'X-Requested-With',
-//       'Content-Type',
-//       'Accept',
-//       'Authorization'
-//     ],
-//     credentials: true,
-//     optionsSuccessStatus: 200
-// };
-
-// // Apply CORS FIRST
-// app.use(cors(corsOptions));
-
-// // Handle preflight requests
-// app.options('*', cors(corsOptions));
-
-// app.use(clerkMiddleware());
-
-const corsOptions = {
-  origin: true,  // Reflects back the requesting origin
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Origin',
-    'X-Requested-With',
-    'Content-Type',
-    'Accept',
-    'Authorization',
-  ],
-  optionsSuccessStatus: 200
-};
-
-app.use(cors(corsOptions));
-
-
-
-// FOR WEBHOOK handlers (these need raw body)
+// FOR WEBHOOK handler
 app.use('/api/v1/webhook/fern', express.raw({ type: 'application/json', limit: '10mb' }));
 app.use('/api/v1/webhook/clerk', express.raw({ type: 'application/json', limit: '10mb' }));
+// app.use('/api/v1/tatum/events', express.raw({ type: 'application/json', limit: '10mb' }));
+// app.use('/api/v1/webhook', express.raw({ type: 'application/json', limit: '10mb' }));
 
-// Body parsers
 app.use(express.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true }));
+app.get('/', (req, res) => res.send('Vyre Backend!'));
 
-// Other middleware
+// initializeAdmin();
+
 app.use(compression());
 app.use(morgan('dev'));
 app.use(cookieParser());
 
-// ❌ REMOVE THIS - It's conflicting with cors package
 // app.use(function (req, res, next) {
 //     res.header(
 //         'Access-Control-Allow-Headers',
@@ -89,11 +39,31 @@ app.use(cookieParser());
 //     next();
 // });
 
-// Routes
-app.get('/', (req, res) => res.send('Vyre Backend!'));
+const corsOptions = {
+    origin: [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'https://app.vyre.africa',
+      'https://p2p.vyre.africa',
+      'https://payments.vyre.africa',
+      'https://swap.vyre.africa',
+      'https://ideal-hedgehog-13788.upstash.io'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Origin',
+      'X-Requested-With',
+      'Content-Type',
+      'Accept',
+      'Authorization'
+    ],
+    credentials: true,
+    optionsSuccessStatus: 200 // For legacy browsers
+};
+
+app.use(cors(corsOptions));
+
 app.use('/api/v1', router);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-
-// initializeAdmin();
 
 export default app;

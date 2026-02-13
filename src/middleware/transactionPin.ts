@@ -9,10 +9,10 @@ export async function requireTransactionPin(
     const { user } = req;
     const { pin:transactionPin } = req.body; // ✅ Different field name
 
-    // Skip OPTIONS requests
-    if (req.method === 'OPTIONS') {
-        return next();
-    }
+    // // Skip OPTIONS requests
+    // if (req.method === 'OPTIONS') {
+    //     return next();
+    // }
 
     try {
         // Check if user has transaction PIN
