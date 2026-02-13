@@ -27,7 +27,7 @@ export const authMiddleware = async (
 
     // 3. Find/Create User
     let user = await prisma.user.findUnique({
-      where: { id: userId as string || 'user_31pAELHBN8y1eoV7Jo3gCtwPsxv' },
+      where: { id: userId as string },
       select: {
         id: true,
         firstName: true,
