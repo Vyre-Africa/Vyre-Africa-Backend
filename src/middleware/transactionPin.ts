@@ -21,7 +21,7 @@ export async function requireTransactionPin(
         if (!hasPin) {
             return res.status(400).json({
                 success: false,
-                message: 'Please create a transaction PIN first',
+                msg: 'Please create a transaction PIN first',
                 requiresTransactionPin: true
             });
         }
@@ -30,7 +30,7 @@ export async function requireTransactionPin(
         if (!transactionPin) {
             return res.status(400).json({
                 success: false,
-                message: 'Transaction PIN is required for transfers',
+                msg: 'Transaction PIN is required for transfers',
                 requiresTransactionPin: true
             });
         }
@@ -47,7 +47,7 @@ export async function requireTransactionPin(
     } catch (error: any) {
         return res.status(400).json({
             success: false,
-            message: error.message,
+            msg: error.message,
             requiresTransactionPin: true
         });
     }
