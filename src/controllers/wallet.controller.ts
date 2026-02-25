@@ -729,7 +729,7 @@ class WalletController {
 
 
 
-  async fetchBeneficiaries(req: Request & Record<string, any>, res: Response) {
+  async fetchBeneficiaries_Handler(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
 
     try {
@@ -743,6 +743,8 @@ class WalletController {
         type,
         ...(chain && { chain })
       });
+
+      console.log('beneficiaries', beneficiaries)
 
       return res.status(200).json({
         msg: 'beneficiaries fetched Successfully',
