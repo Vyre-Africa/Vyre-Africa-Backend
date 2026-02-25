@@ -315,6 +315,14 @@ router.get(
 )
 
 router.get(
+  '/wallet/beneficiaries',
+   requireAuthWithCORS(),
+  authMiddleware,
+  walletController.fetchBeneficiaries
+)
+
+
+router.get(
   '/rate',
    requireAuthWithCORS(),
   authMiddleware,

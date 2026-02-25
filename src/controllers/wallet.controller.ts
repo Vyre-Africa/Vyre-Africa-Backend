@@ -11,7 +11,7 @@ import config from '../config/env.config';
 import smsService from '../services/sms.service';
 import mobilePushService from '../services/mobilePush.service';
 import walletService from '../services/wallet.service';
-import {currencyType} from '@prisma/client';
+import { beneficiaryType, currencyType } from '@prisma/client';
 import { subMinutes } from 'date-fns';
 import * as crypto from 'crypto';
 import {createHmac} from 'node:crypto';
@@ -19,6 +19,7 @@ import { generateRefCode, generateSignature, isValidSignature } from '../utils';
 import Decimal from 'decimal.js';
 import transactionService from '../services/transaction.service';
 import fernService from '../services/fern.service';
+import { fetchBeneficiaries,deleteBeneficiary } from '../services/beneficiary.service';
 
 
 class WalletController {
@@ -728,6 +729,31 @@ class WalletController {
 
 
 
+  async fetchBeneficiaries(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+
+    try {
+      const ISO = (req.query.ISO as string) || 'NGN';
+      const chain = req.query.chain as string | undefined;
+      const type = req.query.type as beneficiaryType
+
+      const beneficiaries = await fetchBeneficiaries({
+        userId: user.id,
+        ISO: ISO,
+        type,
+        ...(chain && { chain })
+      });
+
+      return res.status(200).json({
+        msg: 'beneficiaries fetched Successfully',
+        success: true,
+        beneficiaries
+      });
+    } catch (error) {
+      console.log(error);
+      return res.status(500).send({ msg: 'Internal Server Error', success: false, error });
+    }
+  }
 
 
   async fetchPortfolio(req: Request & Record<string, any>, res: Response) {
@@ -806,7 +832,16 @@ class WalletController {
 
     try {
 
-      const wallet = await walletService.getAccount(walletId)
+      // const wallet = await 
+      const wallet = await walletService.getAccount(walletId);
+
+      // const beneficiaries = await fetchBeneficiaries({
+      //   userId: user.id,
+      //   ISO: wallet.currency?.ISO,
+      //   type: wallet.currency?.type,
+      //   ...(wallet.currency?.chain && { chain: wallet.currency?.chain })
+      // });
+
       console.log('main wallet data', wallet)
       //  const wallet = await prisma.wallet.findUnique({
       //     where: {
