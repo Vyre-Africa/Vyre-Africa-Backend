@@ -226,10 +226,10 @@ export const fetchBeneficiaries = async (input: FetchBeneficiariesInput) => {
     }
 
     // Validate ISO if provided
-    if (input.ISO && !validateISO(input.ISO)) {
+    if (!input.ISO) {
       return {
         success: false,
-        msg: 'Invalid ISO currency code (must be 3 uppercase letters)',
+        msg: 'Invalid ISO currency code',
         beneficiaries: []
       };
     }
