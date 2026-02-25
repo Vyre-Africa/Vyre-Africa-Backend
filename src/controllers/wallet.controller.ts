@@ -737,19 +737,20 @@ class WalletController {
       const chain = req.query.chain as string | undefined;
       const type = req.query.type as beneficiaryType
 
-      const beneficiaries = await fetchBeneficiaries({
+      const result = await fetchBeneficiaries({
         userId: user.id,
         ISO: ISO,
         type,
         ...(chain && { chain })
       });
 
-      console.log('beneficiaries', beneficiaries)
+      console.log('beneficiaries', result)
 
       return res.status(200).json({
         msg: 'beneficiaries fetched Successfully',
         success: true,
-        beneficiaries
+        beneficiaries: result.beneficiaries,
+        count: result.count
       });
     } catch (error) {
       console.log(error);
