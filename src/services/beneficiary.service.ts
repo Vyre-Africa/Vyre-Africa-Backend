@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma.config';
+import { beneficiaryType } from '@prisma/client';
 
 // Types
 enum BeneficiaryType {
@@ -44,7 +45,8 @@ interface CreateBeneficiaryInput {
 interface FetchBeneficiariesInput {
   userId: string;
   ISO?: string;
-  type?: BeneficiaryType;
+  type?: beneficiaryType;
+  chain?: string;
 }
 
 // Validation Functions
@@ -188,6 +190,7 @@ export const createBeneficiary = async (input: CreateBeneficiaryInput) => {
         userId: input.userId,
         ISO: input.ISO,
         type: input.type,
+        chain: input.crypto?.chain,
         bank: {...input.bank},
         crypto: {...input.crypto},
         user: {...input.user}
@@ -232,7 +235,7 @@ export const fetchBeneficiaries = async (input: FetchBeneficiariesInput) => {
     }
 
     // Validate type if provided
-    if (input.type && !Object.values(BeneficiaryType).includes(input.type)) {
+    if (input.type && !Object.values(beneficiaryType).includes(input.type)) {
       return {
         success: false,
         msg: 'Invalid beneficiary type (must be BANK, CRYPTO, or USER)',
@@ -251,6 +254,10 @@ export const fetchBeneficiaries = async (input: FetchBeneficiariesInput) => {
 
     if (input.type) {
       where.type = input.type;
+    }
+
+    if (input.chain) {
+      where.chain = input.chain;
     }
 
     // Fetch beneficiaries

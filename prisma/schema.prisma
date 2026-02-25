@@ -442,6 +442,7 @@ model beneficiary {
   id     String          @id @default(cuid())
   userId String
   ISO    String
+  chain  String?
   type   beneficiaryType
 
   bank   Json?
