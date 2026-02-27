@@ -14,6 +14,31 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum OtcUserType {
+  individual
+  business
+}
+
+enum OtcContactMethod {
+  whatsapp
+  email
+  call
+}
+
+enum OtcTradeType {
+  crypto_to_fiat
+  fiat_to_crypto
+  fiat_to_fiat
+}
+
+enum OtcStatus {
+  pending     // Just submitted, awaiting review
+  in_review   // OTC desk is reviewing
+  contacted   // Team has reached out to the user
+  completed   // Trade completed successfully
+  cancelled   // Request cancelled
+}
+
 enum Status {
   PENDING
   ACTIVE
@@ -211,6 +236,47 @@ enum beneficiaryType {
   USER
   CRYPTO
   BANK
+}
+
+model OtcRequest {
+  id                String           @id @default(uuid())
+  fullName          String
+  email             String
+  phoneNumber       String
+  userType          OtcUserType
+
+  preferredContact  OtcContactMethod
+
+  tradeType         OtcTradeType
+  fromCurrency      String
+  toCurrency        String
+  amount            Decimal          @db.Decimal(20, 8)
+  additionalNotes   String?
+
+  // ── Receiving Details ──────────────────────────
+  // Stored as a JSON array of { label: string, value: string } pairs.
+  // Examples:
+  //   Crypto → Fiat: [{ label: "Bank Name", value: "Zenith Bank" }, { label: "Account Number", value: "0123456789" }]
+  //   Fiat → Crypto: [{ label: "Wallet Address", value: "0x1a2b..." }, { label: "Network", value: "TRC-20" }]
+  //   Fiat → Fiat:   [{ label: "IBAN", value: "GB29NWBK..." }, { label: "SWIFT / BIC", value: "NWBKGB2L" }]
+  receivingDetails  Json             @default("[]")
+
+  idDocumentUrl     String?
+  proofOfAddressUrl String?
+  invoiceUrl        String?          // Required only for business accounts
+
+  status            OtcStatus        @default(pending)
+  adminNotes        String?          // Internal notes from OTC desk
+
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([status])
+  @@index([email])
+  @@index([createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+
+  @@map("otc_requests")
 }
 
 model Rating {

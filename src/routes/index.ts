@@ -28,6 +28,8 @@ import PinValidators from '../validators/pin.validator';
 import pinController from '../controllers/pin.controller';
 import { requireTransactionPin } from '../middleware/transactionPin';
 import { requireAuthWithCORS } from '../middleware/cors-helper';
+import otcValidator from '../validators/otc.validator';
+import otcController from '../controllers/otc.controller';
 
 const router = Router();
 
@@ -693,6 +695,17 @@ router.post(
   authMiddleware,
   mobileUserController.deleteCard,
 );
+
+
+// OTC 
+router.post(
+  '/otc/request',
+  //  requireAuthWithCORS(),
+  // authMiddleware,
+  otcValidator.submitOtc(),
+  middleware.handleValidationError,
+  otcController.submitOtcRequest
+)
 
 // router.get(
 //   '/user/two-factor-authentication',
