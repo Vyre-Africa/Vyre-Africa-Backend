@@ -44,10 +44,11 @@ const corsOptions = {
       'http://localhost:3000',
       'http://localhost:3001',
       'https://app.vyre.africa',
+      'https://vyre.africa',
       'https://p2p.vyre.africa',
       'https://payments.vyre.africa',
       'https://swap.vyre.africa',
-      'https://api-dev.vyre.africa/',
+      'https://api-dev.vyre.africa',
       'https://ideal-hedgehog-13788.upstash.io',
       'https://vyre-backend-production-472864161605.europe-west1.run.app'
     ],
