@@ -32,11 +32,11 @@ enum OtcTradeType {
 }
 
 enum OtcStatus {
-  pending     // Just submitted, awaiting review
-  in_review   // OTC desk is reviewing
-  contacted   // Team has reached out to the user
-  completed   // Trade completed successfully
-  cancelled   // Request cancelled
+  pending // Just submitted, awaiting review
+  in_review // OTC desk is reviewing
+  contacted // Team has reached out to the user
+  completed // Trade completed successfully
+  cancelled // Request cancelled
 }
 
 enum Status {
@@ -238,20 +238,25 @@ enum beneficiaryType {
   BANK
 }
 
+enum bankDetailStatus {
+  PENDING
+  ACTIVE
+}
+
 model OtcRequest {
-  id                String           @id @default(uuid())
-  fullName          String
-  email             String
-  phoneNumber       String
-  userType          OtcUserType
+  id          String      @id @default(uuid())
+  fullName    String
+  email       String
+  phoneNumber String
+  userType    OtcUserType
 
-  preferredContact  OtcContactMethod
+  preferredContact OtcContactMethod
 
-  tradeType         OtcTradeType
-  fromCurrency      String
-  toCurrency        String
-  amount            Decimal          @db.Decimal(20, 8)
-  additionalNotes   String?
+  tradeType       OtcTradeType
+  fromCurrency    String
+  toCurrency      String
+  amount          Decimal      @db.Decimal(20, 8)
+  additionalNotes String?
 
   // ── Receiving Details ──────────────────────────
   // Stored as a JSON array of { label: string, value: string } pairs.
@@ -259,23 +264,22 @@ model OtcRequest {
   //   Crypto → Fiat: [{ label: "Bank Name", value: "Zenith Bank" }, { label: "Account Number", value: "0123456789" }]
   //   Fiat → Crypto: [{ label: "Wallet Address", value: "0x1a2b..." }, { label: "Network", value: "TRC-20" }]
   //   Fiat → Fiat:   [{ label: "IBAN", value: "GB29NWBK..." }, { label: "SWIFT / BIC", value: "NWBKGB2L" }]
-  receivingDetails  Json             @default("[]")
+  receivingDetails Json @default("[]")
 
   idDocumentUrl     String?
   proofOfAddressUrl String?
-  invoiceUrl        String?          // Required only for business accounts
+  invoiceUrl        String? // Required only for business accounts
 
-  status            OtcStatus        @default(pending)
-  adminNotes        String?          // Internal notes from OTC desk
+  status     OtcStatus @default(pending)
+  adminNotes String? // Internal notes from OTC desk
 
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([email])
   @@index([createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
-
   @@map("otc_requests")
 }
 
@@ -314,6 +318,11 @@ model User {
   otpCode           String?
   otpCodeUsed       Boolean  @default(false)
   otpCodeExpiryTime String?
+
+  bvnSubmitted Boolean @default(false)
+  bvnVerified  Boolean @default(false)
+  bvn          String?
+  bvnDetails   Json?
 
   // ✅ ACCESS PIN (for anonymous orders - 6 digits)
   accessPin          String? // Hashed PIN
@@ -665,6 +674,8 @@ model Wallet {
   derivationKey  Int?
   frozen         Boolean
 
+  qorepay_customerId String?
+
   accountBalance   Decimal @default(0.00) @db.Decimal(20, 8)
   availableBalance Decimal @default(0.00) @db.Decimal(20, 8)
 
@@ -674,6 +685,8 @@ model Wallet {
   quotePairs  Pair[]        @relation("QuoteWallet")
   Awaiting    Awaiting[]
   postDetails postDetails[]
+  
+  bankDetails bankDetails[]
 
   // 🚀 PERFORMANCE INDEXES - ADD THESE
   @@index([userId]) // Fast user lookups
@@ -681,6 +694,18 @@ model Wallet {
   @@index([depositAddress]) // For deposit tracking
   @@index([userId, currencyId]) // Compound for user wallets
   @@index([frozen]) // For filtering frozen wallets
+}
+
+model bankDetails {
+  id             String           @id @default(uuid())
+  customer_id    String?
+  account_number String?
+  account_name   String?
+  bank_name      String?
+  status         bankDetailStatus @default(PENDING)
+
+  walletId String?
+  wallet   Wallet? @relation(fields: [walletId], references: [id])
 }
 
 model Order {

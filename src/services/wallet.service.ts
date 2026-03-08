@@ -558,7 +558,7 @@ class WalletService
             }
         })
 
-        if(walletExists)return walletExists
+        if(walletExists) return walletExists
 
         const currency = await prisma.currency.findUnique({
             where:{id:currencyId},
@@ -1255,43 +1255,55 @@ class WalletService
     {
         const {amount,currencyId, userId} = payload
 
-        const wallet = await prisma.wallet.findFirst({
-            where:{
-             userId:userId,
-             currencyId
-            },
-            include:{
-              currency: true
+        try {
+
+            const wallet = await prisma.wallet.findFirst({
+                where:{
+                userId:userId,
+                currencyId
+                },
+                include:{
+                currency: true
+                }
+            })
+
+            if(!wallet){
+                console.log('---------Wallet not found--------')
+                throw new Error('Wallet not found - wallet required');
             }
-        })
 
-        if(!wallet){
+            const result = await qorepayService.bank_Transfer({...payload, currency: wallet?.currency?.ISO as string})
 
+            console.log('---------Wallet to bank withdrawal initiated--------')
+
+            // deduct amount from wallet
+            // // debit user wallet
+            await this.debit_Wallet(amount as any, wallet?.id as string)
+
+            // record transaction
+            await prisma.transaction.create({
+                data:{
+                userId,
+                currency: wallet?.currency?.ISO,
+                amount,
+                reference: result.id,
+                status: 'PENDING',
+                walletId: wallet?.id,
+                type:'FIAT_WITHDRAWAL',
+                description:`${currency} bank withdrawal transfer`
+                }
+            })  
+
+            return result
+
+        } catch (error:any) {
+            logger.error('Bank withdrawal failed:', error);
+            throw error;
         }
 
-        const result = await qorepayService.bank_Transfer({...payload, currency: wallet?.currency?.ISO as string})
+        
 
-        console.log('---------Wallet to bank withdrawal initiated--------')
-
-        // deduct amount from wallet
-        // // debit user wallet
-        await this.debit_Wallet(amount as any, wallet?.id as string)
-
-        // record transaction
-        await prisma.transaction.create({
-            data:{
-              userId,
-              currency: wallet?.currency?.ISO,
-              amount,
-              reference: result.id,
-              status: 'PENDING',
-              walletId: wallet?.id,
-              type:'FIAT_WITHDRAWAL',
-              description:`${currency} bank withdrawal transfer`
-            }
-        })
-
-        return result
+        
     }
 
     async depositFiat(payload:{
@@ -1334,6 +1346,7 @@ class WalletService
         userId: string;
         walletId: string;
         method?: string;
+        awaitingId?: string;
     }) {
         const { method = 'BANK_TRANSFER' } = payload;
 

@@ -32,7 +32,9 @@ export const authMiddleware = async (
         id: true,
         firstName: true,
         lastName: true,
-        email: true
+        email: true,
+        bvnSubmitted: true,
+        bvnVerified: true
       }
     });
 
@@ -51,7 +53,9 @@ export const authMiddleware = async (
           id: true,
           firstName: true,
           lastName: true,
-          email: true
+          email: true,
+          bvnSubmitted: true,
+          bvnVerified: true
         }
       });
 

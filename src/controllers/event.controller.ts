@@ -434,8 +434,8 @@ class EventController {
 
       await eventService.queue({
         type: 'QOREPAY', 
-        QorePay_Event: body.type,
-        QorePay_EventType: body.event_type, 
+        // QorePay_Event: body.type,
+        QorePay_Event: body.event, 
         QorePay_Reference: body.id, 
       })
   

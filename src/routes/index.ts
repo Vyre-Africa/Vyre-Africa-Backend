@@ -460,6 +460,15 @@ router.post(
 );
 
 router.post(
+  '/user/bvn/submit',
+  requireAuthWithCORS(),
+  authMiddleware,
+  userValidator.submitBvn(),
+  middleware.handleValidationError,
+  userController.submitBvn,
+);
+
+router.post(
   '/user/generate-pin',
   userValidator.generatePin(),
   middleware.handleValidationError,

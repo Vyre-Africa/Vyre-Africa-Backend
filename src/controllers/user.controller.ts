@@ -70,6 +70,80 @@ interface KycDetails {
 
 class UserController {
 
+     async submitBvn(req: Request & Record<string, any>, res: Response) {
+        const user = req.user
+
+        const { bvn,bankId,accountNumber,accountName, firstName,lastName} = req.body;
+
+        try {
+
+            const bank = await prisma.bank.findUnique({
+               where: { id: bankId }
+            })
+
+            if(!bank){
+                return res.status(400).json({
+                    msg: 'Selected Bank not found',
+                    success: false
+                });
+            }
+
+            if(user.bvnSubmitted){
+                return res.status(200).json({
+                    msg: 'Bvn already submitted',
+                    success: false
+                });
+            }
+
+
+            const updatedUser = await prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    bvnSubmitted: true,
+                    bvnVerified: false, // Will be verified by your KYC service
+                    bvnDetails: {
+                        submittedAt: new Date().toISOString(),
+                        bvn,
+                        bank_code: bank.code,
+                        account_number: accountNumber,
+                        account_name: accountName,
+                        firstName,
+                        lastName
+                    },
+                },
+                select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                    bvnSubmitted: true,
+                    bvnVerified: true,
+                },
+            })
+
+            
+
+            // ============================================
+            // RETURN SUCCESS RESPONSE
+            // ============================================
+            return res.status(200).json({
+                msg:'BVN Details submitted succesfully',
+                success: true
+            });
+
+        } catch (error: any) {
+            logger.error('BVN Submission failed', {
+                error: error.message,
+                stack: error.stack
+            });
+
+            return res.status(500).json({
+                msg: error.message || 'Failed to submit details. Please try again.',
+                success: false
+            });
+        }
+    }
+
     async generatePin(req: Request, res: Response) {
         const { email, phoneNumber } = req.body;
 
@@ -1267,7 +1341,9 @@ class UserController {
                     country: true,
                     emailVerified: true,
                     accountVerified: true,
-                    transactionPin: true
+                    transactionPin: true,
+                    bvnSubmitted: true,
+                    bvnVerified: true
                 }
             });
 
