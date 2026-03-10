@@ -228,7 +228,8 @@ class QorepayService {
       };
 
       const response = await qorepayAxios.post('/v1/virtual-accounts', data);
-      const result = response.data;
+      const axiosData = response.data;
+      const result = axiosData.data;
       console.log('bank generation data',result)
 
       if (!result) throw new Error('Could not initialize virtual account');
