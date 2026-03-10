@@ -125,6 +125,10 @@ class WalletService
                     id: bankResult?.id,
                     customer_id: bankResult?.customer_id,
                     walletId: walletId,
+                    account_number: bankResult?.account_number,
+                    account_name: bankResult?.account_name,
+                    bank_name: bankResult?.bank_name,
+                    status: bankResult?.status
                 }
             });
 

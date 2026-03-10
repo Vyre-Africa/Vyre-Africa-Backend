@@ -9,6 +9,7 @@ import Decimal from 'decimal.js';
 import logger from '../config/logger';
 import { currency } from '../globals';
 import qorepayService from './qorepay.service';
+import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
 
   type SupportedCoin = 'BTC' | 'ETH' | 'LTC' | 'TRON' | 'BNB' | 'XRP' | 'NGN' | 'USD';
 
@@ -386,7 +387,11 @@ class nativeCoinService
                         data: {
                             id: bankResult?.id,
                             customer_id: bankResult?.customer_id,
-                            walletId: wallet?.id
+                            walletId: wallet?.id,
+                            account_number: bankResult?.account_number,
+                            account_name: bankResult?.account_name,
+                            bank_name: bankResult?.bank_name,
+                            status: bankResult?.status
                         }
                     })
                 }
