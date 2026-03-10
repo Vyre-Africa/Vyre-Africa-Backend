@@ -71,7 +71,75 @@ class WalletService
         });
     }
 
-    // Add these methods to the WalletService class
+    async generate_Bank_Account(payload: { userId: string, walletId: string }) {
+
+        const { userId, walletId } = payload;
+
+        try {
+            // Get wallet with currency
+            const wallet = await prisma.wallet.findUnique({
+                where: { id: walletId },
+                include: {
+                    currency: true,
+                    bankDetails: true  // Check if bank details already exist
+                }
+            });
+
+            if (!wallet) {
+                return { 
+                    success: false, 
+                    msg: 'Wallet not found' 
+                };
+            }
+
+            // Check if NGN currency
+            if (wallet?.currency?.ISO !== 'NGN') {
+                return { 
+                    success: false, 
+                    msg: 'Bank account only supported for NGN currency' 
+                };
+            }
+
+            // Check if bank details already exist
+            if (wallet?.bankDetails.length) {
+                return { 
+                    success: false, 
+                    msg: 'Bank account already exists for this wallet' 
+                };
+            }
+
+            // Create virtual account with Qorepay
+            const bankResult = await qorepayService.create_virtual_Account({ userId });
+            
+            if (!bankResult) {
+                return { 
+                    success: false, 
+                    msg: 'Failed to create virtual account' 
+                };
+            }
+
+            // ✅ SAVE ALL BANK DETAILS
+            await prisma.bankDetails.create({
+                data: {
+                    id: bankResult?.id,
+                    customer_id: bankResult?.customer_id,
+                    walletId: walletId,
+                }
+            });
+
+            return { 
+                success: true, 
+                msg: 'Bank account generated successfully',
+            };
+
+        } catch (error: any) {
+            console.error('Bank account generation error:', error);
+            return { 
+                success: false, 
+                msg: error.message || 'Failed to generate bank account' 
+            };
+        }
+    }
 
     /**
      * Aggregate total value of all fiat wallets for a user in a specified fiat currency

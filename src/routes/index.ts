@@ -248,6 +248,13 @@ router.post(
 )
 
 router.post(
+  '/wallet/generateBank/:walletId',
+   requireAuthWithCORS(),
+  authMiddleware,
+  walletController.generate_Bank_Account_handler
+)
+
+router.post(
   '/wallet/deposit',
    requireAuthWithCORS(),
   authMiddleware,
