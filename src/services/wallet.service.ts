@@ -81,7 +81,7 @@ class WalletService
                 where: { id: walletId },
                 include: {
                     currency: true,
-                    bankDetails: true  // Check if bank details already exist
+                    bankDetails: true
                 }
             });
 
@@ -100,7 +100,8 @@ class WalletService
                 };
             }
 
-            // Check if bank details already exist
+            console.log('banks', wallet?.bankDetails)
+
             if (wallet?.bankDetails.length) {
                 return { 
                     success: false, 
