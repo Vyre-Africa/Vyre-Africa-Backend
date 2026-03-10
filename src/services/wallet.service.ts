@@ -118,6 +118,7 @@ class WalletService
                     msg: 'Failed to create virtual account' 
                 };
             }
+            console.log('bankResult',bankResult)
 
             // ✅ SAVE ALL BANK DETAILS
             await prisma.bankDetails.create({
@@ -131,6 +132,15 @@ class WalletService
                     status: bankResult?.status
                 }
             });
+
+            const updatedWallet = await prisma.wallet.update({
+                where:{id:walletId},
+                data:{
+                    qorepay_customerId: bankResult?.customer_id
+                }
+            })
+
+            console.log('updatedWallet',updatedWallet)
 
             return { 
                 success: true, 
