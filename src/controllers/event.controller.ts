@@ -325,7 +325,7 @@ class EventController {
       const isValid = await verifySignature(rawBody, signatureHeader);
 
       console.log(isValid)
-      console.log('qorepay event type', body.type)
+      console.log('qorepay event type', body.event)
 
       // if (!isValid) {
       //   return res.status(401).json({ error: 'Invalid signature' });
