@@ -121,7 +121,7 @@ class WalletService
             console.log('bankResult',bankResult)
 
             // ✅ SAVE ALL BANK DETAILS
-            await prisma.bankDetails.create({
+            const details = await prisma.bankDetails.create({
                 data: {
                     id: bankResult?.id,
                     customer_id: bankResult?.customer_id,
@@ -145,6 +145,7 @@ class WalletService
             return { 
                 success: true, 
                 msg: 'Bank account generated successfully',
+                bankDetails: details
             };
 
         } catch (error: any) {

@@ -90,7 +90,8 @@ class WalletController {
         .status(200)
         .json({
           msg: result.msg,
-          success: true
+          success: true,
+          bankDetails: result?.bankDetails
         });
 
       }else{
