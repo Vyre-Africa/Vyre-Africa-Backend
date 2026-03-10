@@ -1544,7 +1544,8 @@ class WalletService
                             flagEmoji: true,
                             isStablecoin: true
                         }
-                    }
+                    },
+                    bankDetails: true
                 }
             });
 
