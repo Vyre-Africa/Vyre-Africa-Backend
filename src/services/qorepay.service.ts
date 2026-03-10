@@ -238,7 +238,7 @@ class QorepayService {
       logger.error('Virtual account initialization failed:', error);
       throw error;
     }
-  }
+    }
 
 
  
