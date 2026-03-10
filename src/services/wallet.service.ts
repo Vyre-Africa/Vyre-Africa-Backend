@@ -71,7 +71,76 @@ class WalletService
         });
     }
 
-    // Add these methods to the WalletService class
+    async generate_Bank_Account(payload: { userId: string, walletId: string }) {
+
+        const { userId, walletId } = payload;
+
+        try {
+            // Get wallet with currency
+            const wallet = await prisma.wallet.findUnique({
+                where: { id: walletId },
+                include: {
+                    currency: true,
+                    bankDetails: true
+                }
+            });
+
+            if (!wallet) {
+                return { 
+                    success: false, 
+                    msg: 'Wallet not found' 
+                };
+            }
+
+            // Check if NGN currency
+            if (wallet?.currency?.ISO !== 'NGN') {
+                return { 
+                    success: false, 
+                    msg: 'Bank account only supported for NGN currency' 
+                };
+            }
+
+            console.log('banks', wallet?.bankDetails)
+
+            if (wallet?.bankDetails.length) {
+                return { 
+                    success: false, 
+                    msg: 'Bank account already exists for this wallet' 
+                };
+            }
+
+            // Create virtual account with Qorepay
+            const bankResult = await qorepayService.create_virtual_Account({ userId });
+            
+            if (!bankResult) {
+                return { 
+                    success: false, 
+                    msg: 'Failed to create virtual account' 
+                };
+            }
+
+            // ✅ SAVE ALL BANK DETAILS
+            await prisma.bankDetails.create({
+                data: {
+                    id: bankResult?.id,
+                    customer_id: bankResult?.customer_id,
+                    walletId: walletId,
+                }
+            });
+
+            return { 
+                success: true, 
+                msg: 'Bank account generated successfully',
+            };
+
+        } catch (error: any) {
+            console.error('Bank account generation error:', error);
+            return { 
+                success: false, 
+                msg: error.message || 'Failed to generate bank account' 
+            };
+        }
+    }
 
     /**
      * Aggregate total value of all fiat wallets for a user in a specified fiat currency
@@ -558,7 +627,7 @@ class WalletService
             }
         })
 
-        if(walletExists)return walletExists
+        if(walletExists) return walletExists
 
         const currency = await prisma.currency.findUnique({
             where:{id:currencyId},
@@ -1255,43 +1324,55 @@ class WalletService
     {
         const {amount,currencyId, userId} = payload
 
-        const wallet = await prisma.wallet.findFirst({
-            where:{
-             userId:userId,
-             currencyId
-            },
-            include:{
-              currency: true
+        try {
+
+            const wallet = await prisma.wallet.findFirst({
+                where:{
+                userId:userId,
+                currencyId
+                },
+                include:{
+                currency: true
+                }
+            })
+
+            if(!wallet){
+                console.log('---------Wallet not found--------')
+                throw new Error('Wallet not found - wallet required');
             }
-        })
 
-        if(!wallet){
+            const result = await qorepayService.bank_Transfer({...payload, currency: wallet?.currency?.ISO as string})
 
+            console.log('---------Wallet to bank withdrawal initiated--------')
+
+            // deduct amount from wallet
+            // // debit user wallet
+            await this.debit_Wallet(amount as any, wallet?.id as string)
+
+            // record transaction
+            await prisma.transaction.create({
+                data:{
+                userId,
+                currency: wallet?.currency?.ISO,
+                amount,
+                reference: result.id,
+                status: 'PENDING',
+                walletId: wallet?.id,
+                type:'FIAT_WITHDRAWAL',
+                description:`${currency} bank withdrawal transfer`
+                }
+            })  
+
+            return result
+
+        } catch (error:any) {
+            logger.error('Bank withdrawal failed:', error);
+            throw error;
         }
 
-        const result = await qorepayService.bank_Transfer({...payload, currency: wallet?.currency?.ISO as string})
+        
 
-        console.log('---------Wallet to bank withdrawal initiated--------')
-
-        // deduct amount from wallet
-        // // debit user wallet
-        await this.debit_Wallet(amount as any, wallet?.id as string)
-
-        // record transaction
-        await prisma.transaction.create({
-            data:{
-              userId,
-              currency: wallet?.currency?.ISO,
-              amount,
-              reference: result.id,
-              status: 'PENDING',
-              walletId: wallet?.id,
-              type:'FIAT_WITHDRAWAL',
-              description:`${currency} bank withdrawal transfer`
-            }
-        })
-
-        return result
+        
     }
 
     async depositFiat(payload:{
@@ -1334,6 +1415,7 @@ class WalletService
         userId: string;
         walletId: string;
         method?: string;
+        awaitingId?: string;
     }) {
         const { method = 'BANK_TRANSFER' } = payload;
 

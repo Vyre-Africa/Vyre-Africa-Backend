@@ -248,6 +248,13 @@ router.post(
 )
 
 router.post(
+  '/wallet/generateBank/:walletId',
+   requireAuthWithCORS(),
+  authMiddleware,
+  walletController.generate_Bank_Account_handler
+)
+
+router.post(
   '/wallet/deposit',
    requireAuthWithCORS(),
   authMiddleware,
@@ -457,6 +464,15 @@ router.post(
   userValidator.changePassword(),
   middleware.handleValidationError,
   userController.changePassword,
+);
+
+router.post(
+  '/user/bvn/submit',
+  requireAuthWithCORS(),
+  authMiddleware,
+  userValidator.submitBvn(),
+  middleware.handleValidationError,
+  userController.submitBvn,
 );
 
 router.post(

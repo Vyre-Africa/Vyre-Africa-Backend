@@ -14,6 +14,33 @@ import { router } from './routes';
 
 dotenv.config();
 
+const corsOptions = {
+    origin: [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'https://app.vyre.africa',
+      'https://vyre.africa',
+      'https://p2p.vyre.africa',
+      'https://payments.vyre.africa',
+      'https://swap.vyre.africa',
+      'https://api-dev.vyre.africa',
+      'https://ideal-hedgehog-13788.upstash.io',
+      'https://vyre-backend-production-472864161605.europe-west1.run.app'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Origin',
+      'X-Requested-With',
+      'Content-Type',
+      'Accept',
+      'Authorization'
+    ],
+    credentials: true,
+    optionsSuccessStatus: 200 // For legacy browsers
+};
+
+app.use(cors(corsOptions));
+
 // FOR WEBHOOK handler
 app.use('/api/v1/webhook/fern', express.raw({ type: 'application/json', limit: '10mb' }));
 app.use('/api/v1/webhook/clerk', express.raw({ type: 'application/json', limit: '10mb' }));
@@ -39,29 +66,7 @@ app.use(cookieParser());
 //     next();
 // });
 
-const corsOptions = {
-    origin: [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'https://app.vyre.africa',
-      'https://p2p.vyre.africa',
-      'https://payments.vyre.africa',
-      'https://swap.vyre.africa',
-      'https://ideal-hedgehog-13788.upstash.io'
-    ],
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Origin',
-      'X-Requested-With',
-      'Content-Type',
-      'Accept',
-      'Authorization'
-    ],
-    credentials: true,
-    optionsSuccessStatus: 200 // For legacy browsers
-};
 
-app.use(cors(corsOptions));
 
 app.use('/api/v1', router);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));

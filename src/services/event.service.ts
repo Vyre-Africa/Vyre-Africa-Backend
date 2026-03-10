@@ -85,8 +85,8 @@ class eventService {
 
   async queue(payload:{
    
-    QorePay_Event?: 'purchase' | 'payout';
-    QorePay_EventType?: 'purchase.paid' | 'purchase.payment_failure' | 'payout.created' | 'payout.success';
+    // QorePay_Event?: 'purchase' | 'payout';
+    QorePay_Event?: 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
     QorePay_Reference?: string;
 
     Tatum_Address?: string;
@@ -104,7 +104,6 @@ class eventService {
     const {
       type, 
       QorePay_Event, 
-      QorePay_EventType, 
       QorePay_Reference, 
       
       Tatum_Address, 
@@ -118,7 +117,6 @@ class eventService {
     if(type === 'QOREPAY'){
       return await this.orderProcessingQueue.add('Qorepay_Event', {
         event: QorePay_Event,
-        eventType: QorePay_EventType,
         reference: QorePay_Reference
       });
     }
@@ -138,51 +136,45 @@ class eventService {
 
 
   public async handleQorepayEvent(payload: {
-    event: 'purchase' | 'payout';
-    eventType: 'purchase.paid' | 'purchase.payment_failure' | 'payout.created' | 'payout.success';
+    // event: 'purchase' | 'payout';
+    event: 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
     reference: string;
   }) {
-    const {event, eventType, reference } = payload;
+    const {event, reference } = payload;
 
 
     try {
 
       // FOR FIAT DEPOSITS
-
-      if(event === 'purchase'){
-
-        if(eventType === 'purchase.paid'){
-          const result = await this.handleFiatEvent({event:'CREDIT', reference })
-          return result
-        } 
+      if(event === 'purchase.success'){
+        const result = await this.handleFiatEvent({event:'CREDIT', reference })
+        return result
+      } 
         
-        if(eventType === 'purchase.payment_failure'){
-          const result = await this.handleFiatEvent({event:'CREDIT_FAILED', reference })
-          return result
-        }
-
+      if(event === 'purchase.failed'){
+        const result = await this.handleFiatEvent({event:'CREDIT_FAILED', reference })
+        return result
       }
+
 
       // FOR FIAT WITHDRAWALS
-
-      if(event === 'payout'){
-
-        if(eventType === 'payout.created'){
-
-          return { status: 'processed', action: 'wallet-payout-created' }
-
-        }else if(eventType === 'payout.success'){
-          const result = await this.handleFiatEvent({event:'DEBIT', reference })
-          return result
-        }else{
-          const result = await this.handleFiatEvent({event:'DEBIT_FAILED', reference })
-          return result
-        }
-
+      if(event === 'payout.pending'){
+        return { status: 'processed', action: 'wallet-payout-created' }
       }
+
+      if(event === 'payout.completed'){
+        const result = await this.handleFiatEvent({event:'DEBIT', reference })
+        return result
+      }
+        
+      if(event === 'payout.failed'){
+        const result = await this.handleFiatEvent({event:'DEBIT_FAILED', reference })
+        return result
+      }
+
      
 
-    } catch (error) {
+    } catch (error:any) {
       logger.error(`Error handling webhook for : ${reference}:`, error);
       console.error('Error handling webhook:', error);
       throw error;
@@ -483,12 +475,12 @@ class eventService {
     console.log('awaiting', awaiting)
 
     if (!transaction) {
-        logger.warn(`Transaction not found for reference: ${reference}`);
-        return { status: 'rejected', reason: 'transaction_not_found' };
+      logger.warn(`Transaction not found for reference: ${reference}`);
+      return { status: 'rejected', reason: 'transaction_not_found' };
     }
 
     if (transaction?.status !== 'PENDING') {
-        return { status: 'Already processed', reason: 'transaction_already_processed' };
+      return { status: 'Already processed', reason: 'transaction_already_processed' };
     }
 
 

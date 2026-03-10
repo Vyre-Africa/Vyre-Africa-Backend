@@ -277,6 +277,17 @@ class UserValidator {
         ];
     }
 
+    submitBvn() {
+        return [
+            body('firstName').notEmpty().withMessage('first name is required'),
+            body('lastName').notEmpty().withMessage('last name is required'),
+            
+            body('bvn').notEmpty().withMessage('BVN is required'),
+            body('bankId').notEmpty().withMessage('bankId is required'),
+            body('accountNumber').notEmpty().withMessage('accountNumber is required'),
+        ];
+    }
+
     changePassword() {
         return [
             body('currentPassword').notEmpty().withMessage('current password is required'),

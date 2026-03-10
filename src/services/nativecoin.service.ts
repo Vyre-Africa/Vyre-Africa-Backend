@@ -7,6 +7,8 @@ import axios, { AxiosInstance } from "axios";
 import { hasSufficientBalance } from '../utils';
 import Decimal from 'decimal.js';
 import logger from '../config/logger';
+import { currency } from '../globals';
+import qorepayService from './qorepay.service';
 
   type SupportedCoin = 'BTC' | 'ETH' | 'LTC' | 'TRON' | 'BNB' | 'XRP' | 'NGN' | 'USD';
 
@@ -376,6 +378,19 @@ class nativeCoinService
             }
 
             const wallet = await prisma.wallet.create({ data: walletData });
+
+            if (!isCrypto && coin === 'NGN') {
+                const bankResult = await qorepayService.create_virtual_Account({ userId })
+                if (bankResult) {
+                    await prisma.bankDetails.create({
+                        data: {
+                            id: bankResult?.id,
+                            customer_id: bankResult?.customer_id,
+                            walletId: wallet?.id
+                        }
+                    })
+                }
+            }
 
             logger.info(`${coin} wallet created successfully`, { 
                 walletId: wallet.id,

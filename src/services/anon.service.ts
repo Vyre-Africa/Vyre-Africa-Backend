@@ -511,7 +511,8 @@ class AnonService {
                   email: user.email,
                   userId: user.id,
                   walletId: quoteWallet.id,
-                  method: paymentMethod
+                  method: paymentMethod,
+                  awaitingId: reservation?.awaitingId
                 });
               },
               'Initialize payment method',

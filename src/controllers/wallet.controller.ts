@@ -65,6 +65,53 @@ class WalletController {
     }
   }
 
+  async generate_Bank_Account_handler(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+    const walletId = req.params.walletId
+
+    try {
+
+      if(!walletId){
+        return res.status(400)
+          .json({
+            msg: `walletId not found`,
+            success: false
+          });
+      }
+
+      const result = await walletService.generate_Bank_Account({
+        userId:user.id, 
+        walletId
+      })
+
+      if(result.success){
+
+        return res
+        .status(200)
+        .json({
+          msg: result.msg,
+          success: true
+        });
+
+      }else{
+        res.status(400)
+        .json({
+          msg: result.msg,
+          success: false
+        });
+      }
+      
+
+    } catch (error) {
+      console.log(error)
+      res.status(500)
+        .json({
+          msg: 'Internal Server Error',
+          success: false,
+        });
+    }
+  }
+
 
   async createWallet(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
