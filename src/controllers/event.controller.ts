@@ -434,9 +434,8 @@ class EventController {
 
       await eventService.queue({
         type: 'QOREPAY', 
-        // QorePay_Event: body.type,
         QorePay_Event: body.event, 
-        QorePay_Reference: body.id, 
+        data: body.data
       })
   
       return res.status(200).json({
@@ -508,3 +507,24 @@ class EventController {
 }
 
 export default new EventController();
+
+// DEFAULT 2026-03-10T16:07:34.120808Z qorepay request body {
+// DEFAULT 2026-03-10T16:07:34.120830Z event: 'transaction.created',
+// DEFAULT 2026-03-10T16:07:34.120834Z data: {
+// DEFAULT 2026-03-10T16:07:34.120838Z payment_intent_id: '39c9af83-8b54-4261-a59e-c1559be4ff2d',
+// DEFAULT 2026-03-10T16:07:34.120842Z reference: 'bf90272b-17dc-4ccb-843e-f4a36ffd772f',
+// DEFAULT 2026-03-10T16:07:34.120846Z paid_amount: 20000,
+// DEFAULT 2026-03-10T16:07:34.120849Z fees: 11073,
+// DEFAULT 2026-03-10T16:07:34.120852Z currency: 'NGN',
+// DEFAULT 2026-03-10T16:07:34.120856Z provider: 'PAYSTACK',
+// DEFAULT 2026-03-10T16:07:34.120859Z channel: 'TRANSFER',
+// DEFAULT 2026-03-10T16:07:34.120864Z customer_id: 'b78eb6a8-7142-4e5e-98ce-39ec56bdb820',
+// DEFAULT 2026-03-10T16:07:34.120868Z dva: {
+// DEFAULT 2026-03-10T16:07:34.120872Z id: '64f77d0d-2cfa-47ce-a842-1551cf9dccfb',
+// DEFAULT 2026-03-10T16:07:34.120877Z account_number: '9810185693',
+// DEFAULT 2026-03-10T16:07:34.120881Z account_name: 'QOREPAY/ANAFUWE HARVEY',
+// DEFAULT 2026-03-10T16:07:34.120886Z bank_name: 'Wema Bank',
+// DEFAULT 2026-03-10T16:07:34.120890Z customer_id: 'b78eb6a8-7142-4e5e-98ce-39ec56bdb820'
+// DEFAULT 2026-03-10T16:07:34.120895Z }
+// DEFAULT 2026-03-10T16:07:34.120899Z }
+// DEFAULT 2026-03-10T16:07:34.120903Z }

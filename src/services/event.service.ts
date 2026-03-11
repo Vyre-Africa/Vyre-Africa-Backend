@@ -29,6 +29,37 @@ import orderslotService from './orderslot.service';
   //   "subscriptionType": "ADDRESS_EVENT"
   // }
 
+  interface QorepayDVAPayload {
+      payment_intent_id: string;
+      reference: string;
+      paid_amount: number;
+      fees: number;
+      currency: string;
+      provider: 'PAYSTACK' | 'FLUTTERWAVE' | string;
+      channel: 'TRANSFER' | 'CARD' | 'BANK' | string;
+      customer_id: string;
+      dva: {
+        id: string;
+        account_number: string;
+        account_name: string;
+        bank_name: string;
+        customer_id: string;
+      };
+  }
+
+  interface QorepayPurchasePayload {
+    reference: string;
+    brand_id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    fees: number;
+    customer: {
+      name: string;
+      email: string;
+    };
+  }
+
 class eventService {
 
   private orderProcessingQueue: Queue;  
@@ -86,8 +117,8 @@ class eventService {
   async queue(payload:{
    
     // QorePay_Event?: 'purchase' | 'payout';
-    QorePay_Event?: 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
-    QorePay_Reference?: string;
+    QorePay_Event?: 'transaction.created' | 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
+    data?: object;
 
     Tatum_Address?: string;
     Tatum_SenderAddress?: string;
@@ -104,7 +135,7 @@ class eventService {
     const {
       type, 
       QorePay_Event, 
-      QorePay_Reference, 
+      data,
       
       Tatum_Address, 
       Tatum_SenderAddress, 
@@ -117,7 +148,7 @@ class eventService {
     if(type === 'QOREPAY'){
       return await this.orderProcessingQueue.add('Qorepay_Event', {
         event: QorePay_Event,
-        reference: QorePay_Reference
+        data
       });
     }
 
@@ -137,45 +168,51 @@ class eventService {
 
   public async handleQorepayEvent(payload: {
     // event: 'purchase' | 'payout';
-    event: 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
-    reference: string;
+    event: 'transaction.created' | 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
+    data: any;
   }) {
-    const {event, reference } = payload;
+    const {event, data} = payload;
 
 
     try {
 
+      // FOR DVA DEPOSITS
+      if(event === 'transaction.created'){
+        const result = await this.handle_DVA_Event(data)
+        return result
+      } 
+
       // FOR FIAT DEPOSITS
       if(event === 'purchase.success'){
-        const result = await this.handleFiatEvent({event:'CREDIT', reference })
+        const result = await this.handleFiatEvent({event:'CREDIT', data })
         return result
       } 
         
       if(event === 'purchase.failed'){
-        const result = await this.handleFiatEvent({event:'CREDIT_FAILED', reference })
+        const result = await this.handleFiatEvent({event:'CREDIT_FAILED', data })
         return result
       }
 
 
-      // FOR FIAT WITHDRAWALS
+      // FOR FIAT WITHDRAWALS OR PAYOUTS
       if(event === 'payout.pending'){
         return { status: 'processed', action: 'wallet-payout-created' }
       }
 
       if(event === 'payout.completed'){
-        const result = await this.handleFiatEvent({event:'DEBIT', reference })
+        const result = await this.handleFiatEvent({event:'DEBIT', data })
         return result
       }
         
       if(event === 'payout.failed'){
-        const result = await this.handleFiatEvent({event:'DEBIT_FAILED', reference })
+        const result = await this.handleFiatEvent({event:'DEBIT_FAILED', data })
         return result
       }
 
      
 
     } catch (error:any) {
-      logger.error(`Error handling webhook for : ${reference}:`, error);
+      logger.error(`Error handling webhook for : ${data.reference}:`, error);
       console.error('Error handling webhook:', error);
       throw error;
     }
@@ -442,10 +479,11 @@ class eventService {
   }
 
   public async handleFiatEvent(payload: {
-    reference: string;
+    data: QorepayPurchasePayload;
     event: 'CREDIT'|'DEBIT'|'CREDIT_FAILED'|'DEBIT_FAILED'
   }) {
-    const { reference, event} = payload;
+    const {event} = payload;
+    const {reference} = payload.data
     
     console.log('event', event)
 
@@ -631,6 +669,107 @@ class eventService {
       logger.error(`Error handling webhook for : ${reference}:`, error);
       console.error('Error handling webhook:', error);
       throw error;
+    }
+  }
+
+  public async handle_DVA_Event(payload: QorepayDVAPayload) {
+    
+    console.log('data', payload)
+
+    const {payment_intent_id,
+      reference,
+      paid_amount,
+      fees,
+      provider,
+      channel,
+      customer_id, 
+      currency, 
+      dva 
+    } = payload
+
+    try {
+
+      // 1. Check for duplicate
+      const existingTransaction = await prisma.transaction.findFirst({
+        where: { reference }
+      });
+
+      if (existingTransaction) {
+        console.log(`Duplicate webhook for reference: ${reference}`);
+        logger.warn(`Duplicate webhook for reference: ${reference}`);
+        return { status: 'success', reason: 'already_processed', transactionId: existingTransaction.id };
+      }
+
+      // 3. Find bank details
+      const bankDetails = await prisma.bankDetails.findUnique({
+        where: { id: dva.id },
+        include: { wallet: true }
+      });
+
+
+      if (!bankDetails || !bankDetails.wallet) {
+        logger.warn(`Bank details or wallet not found for DVA id: ${dva.id}`);
+        return { status: 'rejected', reason: 'wallet_not_found' };
+      }
+
+      const wallet = bankDetails.wallet;
+      const amount = paid_amount / 100; // convert back to naira from Kobo
+      const feeAmount = fees / 100;
+      const netAmount = amount - feeAmount;
+
+      await walletService.credit_Wallet(Number(amount), wallet.id)
+
+      // 1. create transaction record
+      const transaction = await prisma.transaction.create({
+          data: {
+            userId: wallet.userId,
+            currency,
+            amount,
+            reference,
+            status: 'SUCCESSFUL',
+            
+            walletId: wallet.id,
+            type: 'FIAT_DEPOSIT',
+            description: `${currency} deposit`,
+
+            metadata: {
+              payment_intent_id,
+              reference,
+              paid_amount,
+              fees,
+              currency,
+              provider,
+              channel,
+              customer_id,
+              dva
+            }
+          }
+      });
+
+      console.log('transaction',transaction)
+
+      await notificationService.queue({
+        userId: transaction.userId as string,
+        title: 'Deposit Successful',
+        type: 'GENERAL',
+        content: `Your deposit of <strong>${transaction.amount} ${currency}</strong> has been processed successfully. The funds are now available in your wallet.`
+      });
+
+      await walletService.getAccount(wallet.id)
+
+      return { status: 'success', transactionId: transaction.id };
+
+    } catch (error:any) {
+        logger.error(`Error handling webhook for: ${reference}`, {
+          error: error.message,
+          stack: error.stack
+        });
+        
+        return { 
+          status: 'error', 
+          reason: error.message || 'internal_error',
+          reference 
+        };
     }
   }
 
