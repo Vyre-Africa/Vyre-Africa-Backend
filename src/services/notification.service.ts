@@ -34,6 +34,7 @@ class NotificationService
     }) {
 
         console.log('new notification here')
+        console.log('payload', payload)
 
         try {
 
@@ -65,6 +66,8 @@ class NotificationService
 
             const userRecord = user || tempUser
 
+            console.log('userRecord',userRecord)
+
             if(user){
                 await prisma.notification.create({
                     data: {
@@ -78,7 +81,7 @@ class NotificationService
 
 
             await mailService.general(
-                user?.email as string,
+                userRecord?.email as string,
                 user?.firstName as string || 'there',
                 payload.title,
                 payload.content
