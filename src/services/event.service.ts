@@ -60,6 +60,16 @@ import orderslotService from './orderslot.service';
     };
   }
 
+  interface QorepayVirtualAccount {
+    id: string;
+    account_number: string;
+    account_name: string;
+    bank_name: string;
+    status: string;
+    customer_id: string;
+    merchant_id: string;
+  }
+
 class eventService {
 
   private orderProcessingQueue: Queue;  
@@ -117,7 +127,7 @@ class eventService {
   async queue(payload:{
    
     // QorePay_Event?: 'purchase' | 'payout';
-    QorePay_Event?: 'transaction.created' | 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
+    QorePay_Event?: 'transaction.created' | 'dva.created' | 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
     data?: object;
 
     Tatum_Address?: string;
@@ -168,13 +178,18 @@ class eventService {
 
   public async handleQorepayEvent(payload: {
     // event: 'purchase' | 'payout';
-    event: 'transaction.created' | 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
+    event: 'transaction.created'| 'dva.created' | 'purchase.success' | 'purchase.failed' | 'payout.pending' | 'payout.completed' | 'payout.failed' | 'payment.expired' | 'payment.failed' | 'payment.success';
     data: any;
   }) {
     const {event, data} = payload;
 
 
     try {
+
+      if(event ==='dva.created'){
+        const result = await this.handle_DVA_Created(data)
+        return result
+      }
 
       // FOR DVA DEPOSITS
       if(event === 'transaction.created'){
@@ -772,6 +787,101 @@ class eventService {
         };
     }
   }
+
+  public async handle_DVA_Created(payload: QorepayVirtualAccount) {
+
+    console.log('DVA Created webhook data:', payload);
+
+    const {
+      id,
+      account_number,
+      account_name,
+      bank_name,
+      status,
+      customer_id,
+      merchant_id
+    } = payload;
+
+    try {
+      // 1. Find bank details with wallet and currency
+      const bankDetails = await prisma.bankDetails.findUnique({
+        where: { id },
+        include: { 
+          wallet: {
+            include: {
+              currency: true
+            }
+          } 
+        }
+      });
+
+      if (!bankDetails || !bankDetails.wallet) {
+        logger.warn(`Bank details or wallet not found for DVA id: ${id}`);
+        return { status: 'rejected', reason: 'wallet_not_found' };
+      }
+
+      // 2. Check if already active (idempotency)
+      if (bankDetails.status === 'ACTIVE') {
+        logger.info(`Bank details already active for DVA id: ${id}`);
+        return { status: 'success', reason: 'already_active', id: bankDetails.id };
+      }
+
+      // 3. Check if status is PENDING
+      if (bankDetails.status !== 'PENDING') {
+        logger.warn(`Invalid status transition for DVA id: ${id}. Current status: ${bankDetails.status}`);
+        return { status: 'rejected', reason: 'invalid_status_transition' };
+      }
+
+      const wallet = bankDetails.wallet;
+      const currency = wallet.currency?.ISO || 'NGN';
+
+      // 4. Update bank details to ACTIVE
+      const updated = await prisma.bankDetails.update({
+        where: { id: bankDetails.id },
+        data: {
+          account_number,
+          account_name,
+          bank_name,
+          status: 'ACTIVE'
+        }
+      });
+
+      logger.info(`Bank account activated: ${updated.id}`, {
+        account_number,
+        bank_name,
+        customer_id
+      });
+
+      // 5. Send notification to user
+      await notificationService.queue({
+        userId: wallet.userId as string,
+        title: 'Bank Account Activated',
+        type: 'GENERAL',
+        content: `Your ${currency} bank account has been successfully activated! You can now deposit funds to <strong>${account_number}</strong> (${bank_name}). Deposits will be automatically credited to your wallet.`
+      });
+
+      return { 
+        status: 'success', 
+        id: updated.id,
+        account_number: updated.account_number 
+      };
+
+    } catch (error: any) {
+      logger.error(`Error handling DVA created webhook for: ${id}`, {
+        error: error.message,
+        stack: error.stack,
+        payload
+      });
+      
+      return { 
+        status: 'error', 
+        reason: error.message || 'internal_error',
+        id
+      };
+    }
+  }
+
+  
 
 
 
