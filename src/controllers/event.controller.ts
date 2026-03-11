@@ -288,27 +288,16 @@ class EventController {
 
   async qorepay_WebHook(req: Request | any, res: Response) {
 
-    async function verifySignature(content: any, signature: string) {
-      try {
-        // Step 1: Get the public key from the provided URL
-        const publicKey = config.QOREPAY_PUBLIC_KEY as string;
-        // Step 2: Decode the Base64-encoded signature
-        const decodedSignature = Buffer.from(signature, "base64");
-    
-        // Step 3: Create a verifier object with RSA + SHA256
-        const verifier = crypto.createVerify("RSA-SHA256");
-    
-        // Step 4: Update the verifier with the raw request body (exact form received)
-        verifier.update(content);
-    
-        // Step 5: Verify the signature using the public key
-        const isVerified = verifier.verify(publicKey, decodedSignature);
-    
-        return isVerified;
-      } catch (error) {
-        console.log("Error verifying signature:", error);
-        return false;
-      }
+    function verifyWebhook(rawBody:any, signature:any, secret:any) {
+      const expected = crypto
+        .createHmac('sha256', secret)
+        .update(rawBody)
+        .digest('hex');
+
+      return crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expected)
+      );
     }
 
     try {
@@ -316,16 +305,19 @@ class EventController {
 
       console.log('qorepay request body',body)
 
-      const signatureHeader = req.headers["x-signature"] as string;
+      const signature = req.headers['x-qorepay-signature'];
 
       const rawBody = JSON.stringify(req.body)
-      // const rawBody = await req.json();
       console.log('rawBody', rawBody)
 
-      const isValid = await verifySignature(rawBody, signatureHeader);
+      // if (!verifyWebhook(req.body, signature, process.env.WEBHOOK_SECRET)) {
+      //   return res.status(401).json({ error: 'Invalid signature' });
+      // }
 
-      console.log(isValid)
+      console.log("isValid", !verifyWebhook(req.body, signature, config.QOREPAY_WEBHOOK_SECRET))
       console.log('qorepay event type', body.event)
+
+      const { event, data } = JSON.parse(req.body);
 
       // if (!isValid) {
       //   return res.status(401).json({ error: 'Invalid signature' });
@@ -434,8 +426,8 @@ class EventController {
 
       await eventService.queue({
         type: 'QOREPAY', 
-        QorePay_Event: body.event, 
-        data: body.data
+        QorePay_Event: event, 
+        data
       })
   
       return res.status(200).json({
@@ -507,6 +499,24 @@ class EventController {
 }
 
 export default new EventController();
+
+
+// DEFAULT 2026-03-11T20:26:59.521813Z qorepay request body {
+// DEFAULT 2026-03-11T20:26:59.521848Z event: 'dva.created',
+// DEFAULT 2026-03-11T20:26:59.521855Z data: {
+// DEFAULT 2026-03-11T20:26:59.521861Z id: '787c78f8-d3f5-4789-961e-1eac487f71a6',
+// DEFAULT 2026-03-11T20:26:59.521867Z account_number: '9810268655',
+// DEFAULT 2026-03-11T20:26:59.521874Z account_name: 'QOREPAY/ANAFUWE CALEB',
+// DEFAULT 2026-03-11T20:26:59.521879Z bank_name: 'Wema Bank',
+// DEFAULT 2026-03-11T20:26:59.521884Z status: 'ACTIVE',
+// DEFAULT 2026-03-11T20:26:59.521890Z customer_id: '849bb283-90ea-4941-893e-947a263e78f0',
+// DEFAULT 2026-03-11T20:26:59.521895Z merchant_id: 'e8e8153f-de33-4441-b409-ffec0ad87cab'
+// DEFAULT 2026-03-11T20:26:59.521900Z }
+// DEFAULT 2026-03-11T20:26:59.521905Z }
+
+
+
+
 
 // DEFAULT 2026-03-10T16:07:34.120808Z qorepay request body {
 // DEFAULT 2026-03-10T16:07:34.120830Z event: 'transaction.created',
