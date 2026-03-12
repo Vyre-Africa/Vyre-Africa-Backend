@@ -13,6 +13,7 @@ import { subMinutes } from 'date-fns';
 import anonService from '../services/anon.service';
 // import {Currency,walletType} from '@prisma/client';
 import { generateOrderId, amountSufficient, getPaymentSystems } from '../utils';
+import { getMinimumOrderAmount, getMinimumOrderDescription } from '../config/minimum.config';
 import Decimal from 'decimal.js';
 import logger from '../config/logger';
 
@@ -103,6 +104,23 @@ class OrderController {
             msg: `Insufficient ${type === 'SELL' ? 'base' : 'quote'} balance`,
             success: false,
           });
+        }
+
+        // ✅ Get configured minimum for the base currency
+        const configuredMinimum = getMinimumOrderAmount(pair.baseCurrency?.ISO as string);
+
+        const userMinimum = minimumAmount ? new Decimal(minimumAmount) : new Decimal(0);
+        const enforcedMinimum = Decimal.max(userMinimum, configuredMinimum);
+
+        // ✅ Validate order amount meets minimum
+        if (amountDecimal.lessThan(enforcedMinimum)) {
+          const description = getMinimumOrderDescription(pair.baseCurrency?.ISO as string);
+
+          return res.status(400).json({
+            msg: `Order amount ${amountDecimal.toString()} ${pair.baseCurrency?.ISO as string} is below minimum requirement of ${description}`,
+            success: false
+          });
+
         }
 
         // ✅ PHASE 2: Generate order ID immediately
