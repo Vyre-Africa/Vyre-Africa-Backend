@@ -504,11 +504,11 @@ router.get(
 
 router.post(
   '/user/verify-account-detail',
-   requireAuthWithCORS(),
-  authMiddleware,
+  //  requireAuthWithCORS(),
+  // authMiddleware,
   userValidator.verifyAccountDetail(),
   middleware.handleValidationError,
-  userController.verifyAccountDetail,
+  userController.verifyAccountDetail
 );
 
 //add user bank
