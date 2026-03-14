@@ -161,10 +161,10 @@ class UserController {
             // CHECK IF USER EXISTS
             // ============================================
 
-            const existingUser = await prisma.user.findFirst({
+            const existingUser = await prisma.user.findUnique({
                 where: {
-                    email,
-                    phoneNumber  // ✅ Also check phone number
+                    email
+                    // phoneNumber  // ✅ Also check phone number
                 },
                 select: {
                     id: true,
