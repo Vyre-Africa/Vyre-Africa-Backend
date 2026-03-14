@@ -394,10 +394,10 @@ class UserController {
         // STEP 2: FIND USER RECORD
         // ============================================
         const [existingUser, tempUser] = await Promise.all([
-            prisma.user.findFirst({
+            prisma.user.findUnique({
                 where: {
-                    email: email as string,
-                    phoneNumber 
+                    email
+                    // phoneNumber 
                 },
                 select: {
                 id: true,
