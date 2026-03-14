@@ -136,8 +136,8 @@ class AnonService {
             }),
             prisma.user.findFirst({ // ✅ Changed from findUnique
               where: { 
-                email,
-                phoneNumber 
+                email
+                // phoneNumber 
               },
               select: {
                 id: true,
@@ -171,6 +171,9 @@ class AnonService {
         3,
         1500
       );
+
+      console.log('existingUser', existingUser)
+      console.log('tempUser',tempUser)
 
       if (!order) {
         throw new Error('Order not found');
@@ -247,6 +250,7 @@ class AnonService {
       let user: any;
 
       if (existingUser) {
+        console.log('Existing user - just update and reset attempts')
         // Existing user - just update and reset attempts
         user = await prisma.user.update({
           where: { id: existingUser.id },
@@ -269,6 +273,7 @@ class AnonService {
         
         logger.info('✅ Existing user updated', { userId: user.id });
       } else {
+        console.log('✅ NEW USER: Convert temp to permanent,')
         // ✅ NEW USER: Convert temp to permanent, remove expiry
         user = await prisma.user.create({
           data: {
