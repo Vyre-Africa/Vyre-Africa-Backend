@@ -679,19 +679,67 @@ class OrderService {
 
       const baseAmount = order.type === 'BUY' ? amount : amountProcessed;
       const quoteAmount = order.type === 'BUY' ? amountProcessed : amount;
+      const availableAmount = amountDecimal.minus(amountProcessed)
 
-      await notificationService.queue({
+      // await Promise.all([
+      //   notificationService.queue({
+      //       userId,
+      //       title: '🎉 Order Completed!',
+      //       type: 'GENERAL',
+      //       content: `Your ${order.type} order has been completed successfully!
+      //         You ${order.type === 'BUY' ? 'Sent' : 'Received'}: ${DecimalUtil.formatWithCurrency(baseAmount, baseCurrency as string)}
+      //         You ${order.type === 'BUY' ? 'Received' : 'Sent'}: ${DecimalUtil.formatWithCurrency(quoteAmount, quoteCurrency as string)}
+      //         Rate: ${Number(order.price)?.toLocaleString('en-US', {
+      //           minimumFractionDigits: 2,
+      //           maximumFractionDigits: 8
+      //         })} ${quoteCurrency}/${baseCurrency}`
+      //   }),
+
+      //   notificationService.queue({
+      //       userId: order?.userId as string,
+      //       title: '🎉 Your Order was traded!',
+      //       type: 'GENERAL',
+      //       content: `Your ${order.type} order was traded successfully!
+      //         You ${order.type === 'BUY' ? 'Sent' : 'Received'}: ${DecimalUtil.formatWithCurrency(quoteAmount, quoteCurrency as string)}
+      //         Order ${order.type === 'BUY' ? 'Received' : 'Sent'}: ${DecimalUtil.formatWithCurrency(baseAmount, baseCurrency as string)}
+      //         Rate: ${Number(order.price)?.toLocaleString('en-US', {
+      //           minimumFractionDigits: 2,
+      //           maximumFractionDigits: 8
+      //         })} ${quoteCurrency}/${baseCurrency}`
+      //   })
+      // ])
+
+      await Promise.all([
+        // Notification to the trader (person who traded with the order)
+        notificationService.queue({
           userId,
-          title: '🎉 Order Completed!',
+          title: '🎉 Trade Completed!',
           type: 'GENERAL',
-          content: `Your ${order.type} order has been completed successfully!
+          content: `Your ${order.type} trade was successful!
             You ${order.type === 'BUY' ? 'Sent' : 'Received'}: ${DecimalUtil.formatWithCurrency(baseAmount, baseCurrency as string)}
             You ${order.type === 'BUY' ? 'Received' : 'Sent'}: ${DecimalUtil.formatWithCurrency(quoteAmount, quoteCurrency as string)}
             Rate: ${Number(order.price)?.toLocaleString('en-US', {
-               minimumFractionDigits: 2,
+              minimumFractionDigits: 2,
               maximumFractionDigits: 8
             })} ${quoteCurrency}/${baseCurrency}`
-      });
+        }),
+
+        // Notification to the order owner (merchant)
+        notificationService.queue({
+          userId: order?.userId as string,
+          title: '💰 Your Order Has Activity!',
+          type: 'GENERAL',
+          content: `Someone traded with your ${order.type} order!
+            ${order.type === 'BUY' ? 'You bought' : 'You sold'}: ${DecimalUtil.formatWithCurrency(baseAmount, baseCurrency as string)}
+            ${order.type === 'BUY' ? 'You paid' : 'You received'}: ${DecimalUtil.formatWithCurrency(quoteAmount, quoteCurrency as string)}
+            Rate: ${Number(order.price)?.toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 8
+            })} ${quoteCurrency}/${baseCurrency}
+            Remaining: ${DecimalUtil.formatWithCurrency(availableAmount, baseCurrency as string)}`
+        })
+
+      ])
 
     }
 
