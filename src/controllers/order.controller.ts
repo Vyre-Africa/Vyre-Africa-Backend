@@ -204,6 +204,13 @@ class OrderController {
           });
         }
 
+        if(order.userId === user.id){
+          return res.status(400).json({
+            msg: 'Self trade not allowed',
+            success: false
+          });
+        }
+
         if (!order.pair) {
           return res.status(400).json({
             msg: 'Order pair not found',

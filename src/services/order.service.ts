@@ -121,7 +121,9 @@ class OrderService {
       // ✅ Fee calculation with Decimal (1.2% fee)
       const feeRate = new Decimal('0.012');
       const fee = amountDecimal.times(feeRate);
-      const adjustedAmount = amountDecimal.minus(fee);
+      const adjustedAmount = amountDecimal;
+
+      // const adjustedAmount = amountDecimal.minus(fee);
 
       // ✅ Ensure adjusted amount (after fee) still meets minimum
       if (adjustedAmount.lessThan(enforcedMinimum)) {
@@ -140,16 +142,16 @@ class OrderService {
       const result = await prisma.$transaction(
         async (tx) => {
           // Transfer fee to admin (if not admin creating the order)
-          if (config.Admin_Id !== userId) {
-            await walletService.offchain_Transfer({
-              userId,
-              receipientId: config.Admin_Id,
-              currencyId: orderType === 'SELL' 
-                ? pair?.baseCurrency?.id as string 
-                : pair?.quoteCurrency?.id as string,
-              amount: fee.toString() // ✅ Convert for wallet service
-            });
-          }
+          // if (config.Admin_Id !== userId) {
+          //   await walletService.offchain_Transfer({
+          //     userId,
+          //     receipientId: config.Admin_Id,
+          //     currencyId: orderType === 'SELL' 
+          //       ? pair?.baseCurrency?.id as string 
+          //       : pair?.quoteCurrency?.id as string,
+          //     amount: fee.toString() // ✅ Convert for wallet service
+          //   });
+          // }
 
           // Block the adjusted amount
           const blockId = await walletService.block_Amount(
