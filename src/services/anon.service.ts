@@ -134,7 +134,7 @@ class AnonService {
                 }
               }
             }),
-            prisma.user.findFirst({ // ✅ Changed from findUnique
+            prisma.user.findUnique({ // ✅ Changed from findUnique
               where: { 
                 email
                 // phoneNumber 
