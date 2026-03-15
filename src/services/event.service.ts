@@ -434,6 +434,15 @@ class eventService {
         txId
       });
 
+      console.log('Transfer analysis', {
+        previousBalance: previousBalance.toString(),
+        currentBalance: currentBalance.toString(),
+        balanceDifference: balanceDifference.toString(),
+        receivedAmount: receivedAmount.toString(),
+        transferType,
+        txId
+      })
+
       // ✅ Additional validation for CREDIT transactions
       if (transferType === 'CREDIT') {
         console.log('In credit transaction')
@@ -1020,7 +1029,7 @@ class eventService {
       type: 'GENERAL',
       content: `<strong>${DecimalUtil.formatWithCurrency(amount,wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
     })
-    
+
     await notificationService.queue({
       userId: wallet.userId,
       title: 'Transaction Notification',
