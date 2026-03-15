@@ -473,8 +473,8 @@ class EventController {
       await eventService.queue({
         type: 'TATUM', 
 
-        Tatum_Address: body?.address, 
-        Tatum_SenderAddress: body.counterAddress, 
+        Tatum_Address: body.counterAddress, 
+        Tatum_SenderAddress: body?.address, 
         Tatum_Amount: body.amount, 
         Tatum_SubscriptionId: body.subscriptionId, 
         Tatum_EventType: body.subscriptionType,
