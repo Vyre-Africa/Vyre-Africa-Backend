@@ -340,6 +340,8 @@ class eventService {
           }
       });
 
+      console.log('wallet',wallet)
+
       if (!wallet) {
           logger.warn('No matching wallet found', {
             address,
@@ -368,6 +370,7 @@ class eventService {
       });
 
       if (existingTx) {
+        console.log('transaction already processed')
         logger.info('Duplicate transaction detected', {
           txId,
           existingTxId: existingTx.id,
@@ -433,15 +436,20 @@ class eventService {
 
       // ✅ Additional validation for CREDIT transactions
       if (transferType === 'CREDIT') {
+        console.log('In credit transaction')
         // Verify the received amount makes sense
         const expectedIncrease = receivedAmount;
         const actualIncrease = balanceDifference;
+
+        console.log('expectedIncrease',expectedIncrease)
+        console.log('actualIncrease', actualIncrease)
 
         // Allow small discrepancy (gas fees, rounding)
         const discrepancy = actualIncrease.minus(expectedIncrease).abs();
         const maxDiscrepancy = new Decimal('0.00001'); // 0.00001 tolerance
 
         if (discrepancy.greaterThan(maxDiscrepancy)) {
+          console.log('There is a Balance increase mismatch')
           logger.warn('Balance increase mismatch', {
             expected: expectedIncrease.toString(),
             actual: actualIncrease.toString(),
@@ -455,6 +463,7 @@ class eventService {
       // 6. Use database transaction for atomicity
       return await prisma.$transaction(async (tx) => {
         if (transferType === 'CREDIT') {
+          console.log('-----------------Handling credit transaction------------')
           return await this.handleCreditTransaction({
             tx,
             wallet,
@@ -465,6 +474,7 @@ class eventService {
             txId,
           });
         } else if (transferType === 'DEBIT') {
+          console.log('-----------------Handling debit transaction------------')
           return await this.handleDebitTransaction({
             tx,
             wallet,
@@ -473,6 +483,7 @@ class eventService {
             txId
           });
         } else {
+          console.log('-----------------Unable to determine transfer------------')
           throw new Error(`Unable to determine transfer type.`);
         }
 
@@ -896,6 +907,8 @@ class eventService {
   }) {
     const { tx, wallet, syncedWallet, sender, awaiting, txId, amount} = params;
 
+    console.log('in credit transaction handling')
+
     // 1. Create transaction record
     const transaction = await tx.transaction.create({
       data: {
@@ -915,8 +928,11 @@ class eventService {
       }
     });
 
+    console.log('created transaction',transaction)
+
     // 2. Handle awaiting order
     if (awaiting) {
+      console.log('handling awaiting',awaiting)
       
       const expectedAmount = new Decimal(awaiting.amount.toString());
       const availableBalance = new Decimal(syncedWallet.availableBalance);
@@ -998,6 +1014,13 @@ class eventService {
     }
 
     // 3. No awaiting order - just notify user
+    console.log('finally queuing notification ', {
+      userId: wallet.userId,
+      title: 'Transaction Notification',
+      type: 'GENERAL',
+      content: `<strong>${DecimalUtil.formatWithCurrency(amount,wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
+    })
+    
     await notificationService.queue({
       userId: wallet.userId,
       title: 'Transaction Notification',
