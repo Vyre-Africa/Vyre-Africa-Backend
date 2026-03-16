@@ -351,8 +351,8 @@ router.get(
 //orders
 router.get(
   '/orders',
-   requireAuthWithCORS(),
-  authMiddleware,
+  //  requireAuthWithCORS(),
+  // authMiddleware,
   orderController.fetchOrders
 );
 
