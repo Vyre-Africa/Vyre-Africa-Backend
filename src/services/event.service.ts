@@ -15,6 +15,8 @@ import connection from '../config/redis.config';
 import anonService from './anon.service';
 import { DecimalUtil } from './decimal.util';
 import orderslotService from './orderslot.service';
+import sweepService from './sweep.service';
+import gaspumpService from './gaspump.service';
 
 
   // {
@@ -131,7 +133,11 @@ class eventService {
     data?: object;
 
     Tatum_Address?: string;
-    Tatum_SenderAddress?: string;
+    Tatum_CounterAddress?: string;
+    Tatum_Chain?: string; 
+    Tatum_Type?: string;
+    Tatum_ContractAddress?: string;
+    Tatum_Asset?: string;
     Tatum_Amount?: any;
     Tatum_SubscriptionId?: string;
     Tatum_EventType?: string;
@@ -148,12 +154,17 @@ class eventService {
       data,
       
       Tatum_Address, 
-      Tatum_SenderAddress, 
+      Tatum_CounterAddress,
+      Tatum_Chain,
+      Tatum_Type,
+      Tatum_ContractAddress,
+      Tatum_Asset,
       Tatum_Amount, 
       Tatum_SubscriptionId, 
       Tatum_EventType,
       Tatum_TxId
     } = payload
+
 
     if(type === 'QOREPAY'){
       return await this.orderProcessingQueue.add('Qorepay_Event', {
@@ -165,11 +176,19 @@ class eventService {
     if(type === 'TATUM'){
       return await this.orderProcessingQueue.add('Tatum_Event', {
         address: Tatum_Address,
-        senderAddress: Tatum_SenderAddress,
+        counterAddress: Tatum_CounterAddress,
+
+        chain: Tatum_Chain,
+        type: Tatum_Type,
+        contractAddress: Tatum_ContractAddress,
+        asset: Tatum_Asset,
+
         amount: Tatum_Amount,
         subscriptionId: Tatum_SubscriptionId,
-        type: Tatum_EventType,
-        txId: Tatum_TxId
+        eventType: Tatum_EventType,
+        txId: Tatum_TxId,
+
+        
       });
     }
 
@@ -235,16 +254,37 @@ class eventService {
 
   public async handleTatumEvent(payload: {
     address: string;
-    senderAddress: string;
+    // senderAddress: string;
+    counterAddress: string;
+    chain: string;
+    type: string;
+    contractAddress?: string;
+    asset: string;
+
+
     amount: any;
     subscriptionId: string;
     txId: string;
-    type: string;
+    eventType: string;
+
   }) {
     console.log('-----------handling tatum event current payload------------')
     console.log(payload)
 
-    const {address, amount, subscriptionId, type, txId, senderAddress } = payload;
+    const {
+      address, 
+      amount, 
+      subscriptionId, 
+      type, 
+      txId,
+
+
+      asset,
+      eventType,
+      chain, 
+      contractAddress,
+      counterAddress
+    } = payload;
 
     // const parseAmount = parseFloat(amount);
     // console.log('parseAmount', parseAmount)
@@ -259,8 +299,14 @@ class eventService {
         address,
         subscriptionId,
         amount,
-        sender: senderAddress,
-        txId
+        counterAddress,
+        contractAddress,
+        txId,
+
+        type, 
+        asset, 
+        eventType, 
+        chain
       })
 
     } catch (error) {
@@ -278,17 +324,24 @@ class eventService {
     address: string;
     subscriptionId: string;
     amount: string;
-    sender: string;
+    contractAddress?: string;
+    counterAddress: string;
     txId: string;
+
+    type: string;
+    asset: string;
+    eventType: string;
+    chain: string;
+
   }) {
-    const { address, amount, sender, subscriptionId, txId } = payload;
+    const { type, asset, eventType, chain, address, amount, contractAddress, counterAddress, subscriptionId, txId } = payload;
 
     try {
 
       logger.info('Received crypto webhook event', {
         address,
         amount,
-        sender,
+        counterAddress,
         txId
       });
 
@@ -316,7 +369,7 @@ class eventService {
       // 1. Find wallet with relations
       const wallet = await prisma.wallet.findFirst({
           where: {
-            depositAddress: address,
+            // depositAddress: address,
             subscriptionId
           },
           include: {
@@ -343,16 +396,8 @@ class eventService {
       console.log('wallet',wallet)
 
       if (!wallet) {
-          logger.warn('No matching wallet found', {
-            address,
-            subscriptionId,
-            txId
-          });
-          return { 
-            status: 'ignored', 
-            reason: 'wallet_not_found',
-            message: 'No matching wallet' 
-          };
+        logger.warn('No matching wallet found', { subscriptionId, txId })
+        return { status: 'ignored', reason: 'wallet_not_found', message: 'No matching wallet' }
       }
 
       logger.info('Wallet found', {
@@ -360,6 +405,10 @@ class eventService {
           currency: wallet.currency?.ISO,
           userId: wallet.userId
       });
+
+      const actualSender = wallet.depositAddress === address
+      ? counterAddress
+      : address
 
       // 2. Check for duplicate transaction (IDEMPOTENCY)
       const existingTx = await prisma.transaction.findFirst({
@@ -400,7 +449,7 @@ class eventService {
       // 4. Find awaiting payment
       const awaiting = await prisma.awaiting.findFirst({
         where: {
-          triggerAddress: address,
+          triggerAddress: wallet.depositAddress,
           status: 'PENDING'
         },
         include: {
@@ -478,9 +527,11 @@ class eventService {
             wallet,
             syncedWallet,
             amount: DecimalUtil.roundForStorage(receivedAmount,wallet.currency?.ISO as string).toString(),
-            sender,
+            sender: actualSender,
             awaiting,
             txId,
+            chain,
+            contractAddress
           });
         } else if (transferType === 'DEBIT') {
           console.log('-----------------Handling debit transaction------------')
@@ -913,8 +964,11 @@ class eventService {
     sender: string;
     awaiting: any;
     txId: string;
+
+    chain: string
+    contractAddress?: string
   }) {
-    const { tx, wallet, syncedWallet, sender, awaiting, txId, amount} = params;
+    const { tx, wallet, syncedWallet, sender, awaiting, txId, amount, chain, contractAddress } = params;
 
     console.log('in credit transaction handling')
 
@@ -938,6 +992,103 @@ class eventService {
     });
 
     console.log('created transaction',transaction)
+
+    // ── Queue sweep for ALL credit transactions ───────────────────────────
+    // Always sweep to master regardless of awaiting order
+    // VA handles accounting, master holds actual tokens
+    // The sweep is queued after the prisma transaction commits via setImmediate
+
+
+    const WEBHOOK_CHAIN_MAP: Record<string, string> = {
+        'ethereum-mainnet': 'ETHEREUM',
+        'base-mainnet':     'BASE',
+        'bsc-mainnet':      'BSC',
+        'polygon-mainnet':  'POLYGON',
+        'arb-one-mainnet':  'ARBITRUM',
+        'optimism-mainnet': 'OPTIMISM',
+        'tron-mainnet':     'TRON'
+    }
+
+    const internalChain = WEBHOOK_CHAIN_MAP[chain]
+
+    if (internalChain) {
+
+      setImmediate(async () => {
+          let sweepLog: any = null  // ← declare outside
+
+          try {
+              if (gaspumpService.isGasPumpChain(internalChain)) {
+                  console.log(`[GasPump] Activating ${wallet.depositAddress} on ${internalChain}`)
+                  await gaspumpService.activateAddress(
+                      wallet.depositAddress,
+                      internalChain,
+                      wallet.currencyId
+                  )
+                  console.log(`[GasPump] Activation complete — proceeding to sweep`)
+              }
+
+              const shouldSweep =
+                  wallet.userId !== config.Admin_Id &&
+                  wallet.derivationKey !== null &&
+                  wallet.derivationKey !== undefined &&
+                  wallet.depositAddress &&
+                  wallet.currencyId
+
+              if (shouldSweep) {
+
+                  // ✅ Use prisma directly, not tx
+                  sweepLog = await prisma.sweepLog.create({
+                      data: {
+                          walletId:    wallet.id,
+                          userId:      wallet.userId,
+                          depositTxId: txId,
+                          amount,
+                          stablecoin:  wallet.currency?.ISO || '',
+                          chain:       internalChain,
+                          status:      'QUEUED'
+                      }
+                  })
+
+                  const queue = sweepService.getSweepQueue(internalChain)
+
+                  await queue.add(
+                      `sweep-${txId}`,
+                      {
+                          currencyId:     wallet.currencyId,
+                          userId:         wallet.userId,
+                          depositAddress: wallet.depositAddress,
+                          derivationKey:  wallet.derivationKey,
+                          amount,
+                          chain:          internalChain,
+                          contractAddress,
+                          depositTxId:    txId,
+                          sweepLogId:     sweepLog.id
+                      },
+                      {
+                          jobId:    txId,
+                          attempts: 3,
+                          backoff:  { type: 'exponential', delay: 5000 }
+                      }
+                  )
+
+                  console.log(`[Sweep] Job queued — chain: ${internalChain}, txId: ${txId}`)
+              }
+
+          } catch (err) {
+              console.error(`[Sweep] Failed for ${txId}:`, err)
+
+              // ✅ Only update if sweepLog was successfully created
+              if (sweepLog?.id) {
+                  await prisma.sweepLog.update({
+                      where: { id: sweepLog.id },
+                      data:  { status: 'FAILED', error: (err as Error).message }
+                  }).catch(console.error)
+              }
+          }
+      })
+
+
+    }
 
     // 2. Handle awaiting order
     if (awaiting) {

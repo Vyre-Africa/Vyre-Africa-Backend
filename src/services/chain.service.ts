@@ -191,6 +191,49 @@ class chainService {
       return Boolean(this.USDT_CHAINS[chain as Supported_USDT_Chain]);
     }
   }
-}
+
+  // Maps Tatum webhookChain → your internal chain key used in chainService
+  public WEBHOOK_CHAIN_MAP: Record<string, string> = {
+    'ethereum-mainnet': 'ETHEREUM',
+    'base-mainnet':     'BASE',
+    'bsc-mainnet':      'BSC',
+    'polygon-mainnet':  'POLYGON',
+    'arb-one-mainnet':  'ARBITRUM',
+    'optimism-mainnet': 'OPTIMISM',
+    'tron-mainnet':     'TRON'
+  }
+
+  public CURRENCY_MAP: Record<string, Record<string, string>> = {
+
+    BASE: {
+      ETH:  'ETH_BASE',
+      USDC: 'USDC_BASE',
+      USDT: 'USDT_BASE'
+    },
+    ARBITRUM: {
+      ETH:  'ETH_ARB',
+      USDC: 'USDC_ARB',
+      USDT: 'USDT_ARB'
+    },
+    OPTIMISM: {
+      ETH:  'ETH_OP',
+      USDC: 'USDC_OP',
+      USDT: 'USDT_OP'
+    }
+  }
+
+  // Resolves the Tatum currency string for a given chain + asset
+  getTatumCurrency(chain: string, asset: string): string {
+    const currency = this.CURRENCY_MAP[chain]?.[asset]
+    if (!currency) throw new Error(`No currency mapping for ${asset} on ${chain}`)
+    return currency
+  }
+
+  // Gas pump supported chains (use custodial transfer endpoint)
+  public GAS_PUMP_CHAINS = new Set(['ETHEREUM', 'POLYGON', 'BSC', 'TRON'])
+
+  // L2 chains (use nonce chain strategy)
+  public NONCE_CHAIN_CHAINS = new Set(['BASE', 'ARBITRUM', 'OPTIMISM'])
+  }
 
 export default new chainService()

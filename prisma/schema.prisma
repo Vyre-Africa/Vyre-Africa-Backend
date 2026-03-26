@@ -669,6 +669,7 @@ model Wallet {
   accountingCurrency String
   depositAddress     String?
   subscriptionId     String?
+  gasPumpAddress    GasPumpAddress?
 
   destinationTag String?
   derivationKey  Int?
@@ -687,6 +688,7 @@ model Wallet {
   postDetails postDetails[]
   
   bankDetails bankDetails[]
+  SweepLogs   SweepLog[]
 
   // 🚀 PERFORMANCE INDEXES - ADD THESE
   @@index([userId]) // Fast user lookups
@@ -706,6 +708,62 @@ model bankDetails {
 
   walletId String?
   wallet   Wallet? @relation(fields: [walletId], references: [id])
+}
+
+model SweepLog {
+  id             String   @id @default(cuid())
+  walletId       String
+  userId         String
+  depositTxId    String   @unique  // prevents double processing
+  sweepTxId      String?
+  amount         String
+  stablecoin     String
+  chain          String
+  status         String   // QUEUED | PROCESSING | SUCCESS | FAILED
+  error          String?
+  createdAt      DateTime @default(now())
+
+  wallet         Wallet   @relation(fields: [walletId], references: [id])
+
+  @@index([walletId])
+  @@index([status])
+  @@index([depositTxId])
+}
+
+model GasPumpLog {
+  id           String   @id @default(cuid())
+  chain        String   
+  ownerAddress String   
+  nextIndex    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  addresses    GasPumpAddress[]
+
+  @@unique([chain, ownerAddress])
+  @@index([chain])
+}
+
+model GasPumpAddress {
+  id             String   @id @default(cuid())
+  chain          String
+  ownerAddress   String
+  depositAddress String   @unique
+  index          Int      
+  walletId       String?  @unique
+  activated      Boolean  @default(false)
+  activatedTxId  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  gasPumpLog     GasPumpLog @relation(fields: [chain, ownerAddress], references: [chain, ownerAddress])
+  wallet         Wallet?    @relation(fields: [walletId], references: [id])
+
+  @@unique([chain, index])           // same chain can't reuse an index
+  @@index([chain])
+  @@index([walletId])
+  @@index([depositAddress])
+  @@index([activated])
 }
 
 model Order {

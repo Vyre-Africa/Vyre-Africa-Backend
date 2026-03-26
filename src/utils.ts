@@ -14,6 +14,9 @@ const algorithm: string = 'aes-256-cbc';
 const key: Buffer = crypto.randomBytes(32);
 const iv: Buffer = crypto.randomBytes(16);
 
+const TATUM_BASE_URL = 'https://api.tatum.io/v3'
+const TATUM_API_KEY = config.TATUM_LIVE_KEY!
+
  
 
 export const generateSignature = (
@@ -520,6 +523,44 @@ export function maskEmail(email: string): string {
   const [username, domain] = email.split('@');
   const masked = username.slice(0, 2) + '***' + username.slice(-1);
   return `${masked}@${domain}`;
+}
+
+
+export async function tatumPost(path: string, body: object) {
+  const res = await fetch(`${TATUM_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': TATUM_API_KEY
+    },
+    body: JSON.stringify(body)
+  })
+
+  const data = await res.json()
+
+  if (!res.ok) {
+    throw new Error(
+      `Tatum ${path} failed [${res.status}]: ${data.message || JSON.stringify(data)}`
+    )
+  }
+
+  return data
+}
+
+export async function tatumGet(path: string) {
+  const res = await fetch(`${TATUM_BASE_URL}${path}`, {
+    headers: { 'x-api-key': TATUM_API_KEY }
+  })
+
+  const data = await res.json()
+
+  if (!res.ok) {
+    throw new Error(
+      `Tatum ${path} failed [${res.status}]: ${data.message || JSON.stringify(data)}`
+    )
+  }
+
+  return data
 }
 
 

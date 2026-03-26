@@ -15,6 +15,7 @@ import { NotificationType } from '@prisma/client';
 import logger from '../config/logger';
 import chainService from './chain.service';
 import { DecimalUtil } from './decimal.util';
+import gaspumpService from './gaspump.service';
 
 
     interface ChainConfig {
@@ -95,8 +96,10 @@ class stableCoinService
 
     private async generateAddress(accountId: string) {
         try {
-        const response = await this.tatumAxios.post(`/offchain/account/${accountId}/address`);
-        return response.data;
+            const response = await this.tatumAxios.post(`/offchain/account/${accountId}/address`);
+            const result = response.data;
+            return result
+
         } catch (error) {
         logger.error('Failed to generate address:', error);
           throw new Error('Failed to generate deposit address');
@@ -133,66 +136,103 @@ class stableCoinService
         userId: string,
         currencyId: string
     ): Promise<Wallet> {
+
+        // Declare wallet outside try so catch block can access it for cleanup
+        let wallet: any = null
+
         try {
-        // Validate chain support
-        if (!chainService.isChainSupported(stablecoin, chain)) {
-            throw new Error(`Chain ${chain} not supported for ${stablecoin}`);
-        }
-
-        const chainConfig = chainService.getChainConfig(stablecoin, chain);
-
-        logger.info(`Creating ${stablecoin} wallet on ${chain}`, { userId, currencyId });
-
-        // Create Tatum ledger account
-        const accountData = {
-            currency: chainConfig.tatumCurrency,
-            xpub: chainConfig.xpub,
-            customer: {
-            accountingCurrency: "USD",
-            externalId: userId
+            // 1. Validate chain support
+            if (!chainService.isChainSupported(stablecoin, chain)) {
+                throw new Error(`Chain ${chain} not supported for ${stablecoin}`)
             }
-        };
 
-        const accountResponse = await this.tatumAxios.post('/ledger/account', accountData);
-        const account = accountResponse.data;
+            const chainConfig = chainService.getChainConfig(stablecoin, chain)
 
-        // Generate deposit address
-        const depositAddress = await this.generateAddress(account.id);
+            logger.info(`Creating ${stablecoin} wallet on ${chain}`, { userId, currencyId })
 
-        // Subscribe to address events
-        const subscription = await this.subscribeAddress({
-            address: depositAddress.address,
-            chain: chainConfig.webhookChain
-        });
+            // 2. Create Tatum ledger account
+            const accountResponse = await this.tatumAxios.post('/ledger/account', {
+                currency: chainConfig.tatumCurrency,
+                xpub:     chainConfig.xpub,
+                customer: {
+                    accountingCurrency: 'USD',
+                    externalId:         userId
+                }
+            })
+            const account = accountResponse.data
 
-        // Create wallet in database
-        const wallet = await prisma.wallet.create({
-            data: {
-            id: account.id,
-            currencyId,
-            userId,
-            depositAddress: depositAddress.address,
-            subscriptionId: subscription.id,
-            derivationKey: depositAddress.derivationKey,
-            Tatum_customerId: account.customerId,
-            accountingCurrency: account.accountingCurrency,
-            frozen: account.frozen
+            // 3. Create wallet in DB first — no address yet
+            wallet = await prisma.wallet.create({
+                data: {
+                    id:                 account.id,
+                    currencyId,
+                    userId,
+                    // depositAddress:     null,
+                    // subscriptionId:     null,
+                    // derivationKey:      null,
+                    Tatum_customerId:   account.customerId,
+                    accountingCurrency: account.accountingCurrency,
+                    frozen:             account.frozen
+                }
+            })
+
+            // 4. Generate deposit address
+            let depositAddress: string
+            let derivationKey: number | null = null
+
+            if (gaspumpService.isGasPumpChain(chain)) {
+                const result = await gaspumpService.generateAddress(
+                    wallet.id,
+                    chain,
+                    currencyId
+                )
+                depositAddress = result?.address
+                derivationKey  = null  // gas pump index lives in GasPumpAddress, not wallet
+
+            } else {
+                const result = await this.generateAddress(account.id)
+                depositAddress = result.address
+                derivationKey  = result.derivationKey
             }
-        });
 
-        logger.info(`Wallet created successfully`, { 
-            walletId: wallet.id, 
-            address: wallet.depositAddress 
-        });
+            // 5. Subscribe to address events
+            const subscription = await this.subscribeAddress({
+                address: depositAddress,
+                chain:   chainConfig.webhookChain
+            })
 
-        return wallet
+            // 6. Update wallet with address + subscription + derivationKey
+            const updatedWallet = await prisma.wallet.update({
+                where: { id: wallet.id },
+                data: {
+                    depositAddress,
+                    subscriptionId: subscription.id,
+                    derivationKey
+                }
+            })
+
+            logger.info(`Wallet created successfully`, {
+                walletId: updatedWallet.id,
+                address:  updatedWallet.depositAddress
+            })
+
+            return updatedWallet
 
         } catch (error) {
-            logger.error(`Failed to create ${stablecoin} wallet on ${chain}:`, error);
-            throw error;
+
+            logger.error(`Failed to create ${stablecoin} wallet on ${chain}:`, error)
+
+            // Only clean up if wallet was created before the error
+            if (wallet?.id) {
+                logger.warn(`Cleaning up orphaned wallet ${wallet.id}`)
+                await prisma.wallet.delete({
+                    where: { id: wallet.id }
+                }).catch((e) => logger.error(`Failed to clean up wallet ${wallet.id}:`, e))
+            }
+
+            throw error
         }
     }
-
     // ============================================
     // UNIFIED TRANSFER OPERATION
     // ============================================
