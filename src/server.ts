@@ -9,6 +9,7 @@ import orderController from "./controllers/order.controller";
 import paystackService from "./services/paystack.service";
 import flutterwaveService from "./services/flutterwave.service";
 import pairService from "./services/pair.service";
+import { startSweepWorkers } from './workers/general.worker'
 
 const server = http.createServer(app);
 
@@ -44,10 +45,11 @@ server.listen(env.port, async() => {
 	// Only start workers if enabled via environment variable
 	const START_WORKERS = process.env.START_WORKERS === 'true';
 	
-	if (START_WORKERS) {
+	if (true) {
 		try {
 			console.log('🔧 Starting background workers...');
 			await import('./workers/general.worker');
+			await startSweepWorkers()
 			console.log('✅ All workers started successfully');
 		} catch (err) {
 			console.error('❌ Failed to start workers:', err);
