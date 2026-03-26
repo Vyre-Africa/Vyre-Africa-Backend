@@ -373,6 +373,89 @@ class SweepService{
         }
     }
 
+    async transferFromMaster({
+        chain,
+        currencyId,
+        toAddress,
+        amount,
+        ISO
+    }: {
+        chain: string
+        currencyId: string
+        toAddress: string
+        amount: string
+        ISO: string
+    }): Promise<string> {
+
+
+        const [adminWallet, currency] = await Promise.all([
+            prisma.wallet.findFirst({
+                where: { userId: config.Admin_Id, currencyId },
+                select: {
+                    id:             true,
+                    derivationKey:  true,
+                    depositAddress: true
+                }
+            }),
+
+            prisma.currency.findUnique({
+                where:{
+                    id:currencyId
+                }
+            })
+            
+        ])
+
+        console.log('adminWallet',adminWallet)
+
+        if (!adminWallet?.depositAddress || adminWallet.derivationKey === null) {
+            throw new Error(`No admin wallet for chain: ${chain}`)
+        }
+
+        if(!currency){
+            throw new Error(`currency not found : ${chain}`)
+        }
+
+        const endpoint = this.CHAIN_ENDPOINT_MAP[chain]
+
+        const chainConfig = chainService.getChainConfig(
+            currency.ISO as 'USDC' | 'USDT',
+            currency.chain as any
+        )
+
+        // Derive master private key
+        const masterPrivRes = await tatumPost(`/${endpoint}/wallet/priv`, {
+            mnemonic: chainConfig.mnemonic,
+            index:    adminWallet.derivationKey
+        })
+
+        const masterPrivateKey = masterPrivRes.key
+        if (!masterPrivateKey) throw new Error(`Failed to derive master private key on ${chain}`)
+
+        // Get master nonce
+        const masterNonceRaw = await tatumGet(
+            `/${endpoint}/transaction/count/${adminWallet.depositAddress}`
+        )
+        const masterNonce = typeof masterNonceRaw === 'number'
+            ? masterNonceRaw
+            : masterNonceRaw?.nonce ?? 0
+
+        // Get currency to send
+        const tatumCurrency = chainService.getTatumCurrency(chain, ISO)
+
+        // Broadcast transfer
+        const res = await tatumPost(`/${endpoint}/transaction`, {
+            to:             toAddress,
+            amount,
+            currency:       tatumCurrency,
+            fromPrivateKey: masterPrivateKey,
+            nonce:          masterNonce
+        })
+
+        console.log(`[MasterTransfer:${chain}] Sent ${amount} ${ISO} to ${toAddress} — txId: ${res.txId}`)
+        return res.txId
+    }
+
    
 
 

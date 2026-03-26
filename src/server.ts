@@ -45,11 +45,11 @@ server.listen(env.port, async() => {
 	// Only start workers if enabled via environment variable
 	const START_WORKERS = process.env.START_WORKERS === 'true';
 	
-	if (true) {
+	if (START_WORKERS) {
 		try {
 			console.log('🔧 Starting background workers...');
 			await import('./workers/general.worker');
-			await startSweepWorkers()
+			startSweepWorkers()
 			console.log('✅ All workers started successfully');
 		} catch (err) {
 			console.error('❌ Failed to start workers:', err);
