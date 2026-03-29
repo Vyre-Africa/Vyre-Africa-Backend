@@ -286,7 +286,6 @@ class eventService {
 
   public async handleTatumEvent(payload: {
     address: string;
-    // senderAddress: string;
     counterAddress: string;
     chain: string;
     type: string;
@@ -300,7 +299,7 @@ class eventService {
     eventType: string;
 
   }) {
-    console.log('-----------handling tatum event current payload------------')
+    console.log('-----------Tatum event received------------')
     console.log(payload)
 
     const {
@@ -318,16 +317,21 @@ class eventService {
       counterAddress
     } = payload;
 
-    // const parseAmount = parseFloat(amount);
-    // console.log('parseAmount', parseAmount)
-
-
     try {
 
-      // This path is for POSITIVE amounts (0 or greater)
-      // Example: "0.001", "50.00", "100"
+      // Gate 1 — only process token transfers
+      if (type !== 'token') {
+        logger.info('Ignored — non-token transfer', { type, txId, chain })
+        return { status: 'ignored', reason: 'native_transfer' }
+      }
 
-      const result = await this.handleCryptoEvent({
+      // Gate 2 — token must have a contract address
+      if (!contractAddress) {
+        logger.warn('Ignored — token missing contractAddress', { txId, chain })
+        return { status: 'ignored', reason: 'missing_contract' }
+      }
+
+      await this.handleCryptoEvent({
         address,
         subscriptionId,
         amount,
@@ -342,8 +346,8 @@ class eventService {
       })
 
     } catch (error) {
-      logger.error(`Error handling webhook for : ${address}:`, error);
-      console.error('Error handling webhook:', error);
+      logger.error(`Error handling tatum event : ${address}:`, error);
+      console.error('Error handling tatum event:', error);
       throw error;
     }
   }
@@ -356,7 +360,7 @@ class eventService {
     address: string;
     subscriptionId: string;
     amount: string;
-    contractAddress?: string;
+    contractAddress: string;
     counterAddress: string;
     txId: string;
 
@@ -398,98 +402,105 @@ class eventService {
           txId
       });
 
+      const chainKey = this.WEBHOOK_CHAIN_MAP[chain]
+
       // 1. Find wallet with relations
-      const wallet = await prisma.wallet.findFirst({
-          where: {
-            // depositAddress: address,
-            subscriptionId
-          },
-          include: {
-            currency: {
-              select: {
-                id: true,
-                ISO: true,
-                name: true,
-                type: true,
-                chain: true
+      
+
+      const [wallet, adminWallet] = await Promise.all([
+         prisma.wallet.findFirst({
+              where: {
+                subscriptionId
+              },
+              include: {
+                currency: {
+                  select: {
+                    id: true,
+                    ISO: true,
+                    name: true,
+                    type: true,
+                    chain: true
+                  }
+                },
+                user: {
+                  select: {
+                    id: true,
+                    email: true,
+                    firstName: true,
+                    lastName: true
+                  }
+                }
               }
-            },
-            user: {
-              select: {
-                id: true,
-                email: true,
-                firstName: true,
-                lastName: true
-              }
-            }
-          }
-      });
+        }),
+
+        prisma.wallet.findFirst({
+          where: { userId: config.Admin_Id },
+          select: { depositAddress: true }
+        })
+
+      ])
 
       console.log('wallet',wallet)
 
       if (!wallet) {
-        logger.warn('No matching wallet found', { subscriptionId, txId })
-        return { status: 'ignored', reason: 'wallet_not_found', message: 'No matching wallet' }
+        logger.warn('Ignored — no matching wallet', { subscriptionId, txId })
+        return { status: 'ignored', reason: 'wallet_not_found' }
       }
 
-      logger.info('Wallet found', {
-          walletId: wallet.id,
-          currency: wallet.currency?.ISO,
-          userId: wallet.userId
-      });
+      if (!adminWallet) {
+        logger.warn('Ignored — admin wallet not found', { txId })
+        return { status: 'ignored', reason: 'admin_wallet_not_found' }
+      }
 
-      const actualSender = wallet.depositAddress === address
-      ? counterAddress
-      : address
+      // ── Step 3: Validate token contract ──────────────────────────────
+      const ignored = this.validateContract(contractAddress, chain, wallet, txId)
+      if (ignored) return ignored
 
-      // 2. Check for duplicate transaction (IDEMPOTENCY)
+      // ── Step 4: Ignore our own sweep transactions ─────────────────────
+      if (this.isSweepFeedback(address, counterAddress, wallet, adminWallet)) {
+        logger.info('Ignored — sweep feedback', { txId, chain })
+        return { status: 'ignored', reason: 'sweep_feedback' }
+      }
+
+      // ── Step 5: Idempotency check ─────────────────────────────────────
       const existingTx = await prisma.transaction.findFirst({
-          where: {
-            reference: txId,
-            walletId: wallet.id
-          }
-      });
+        where: { reference: txId, walletId: wallet.id }
+      })
 
       if (existingTx) {
-        console.log('transaction already processed')
-        logger.info('Duplicate transaction detected', {
-          txId,
-          existingTxId: existingTx.id,
-          walletId: wallet.id
-        });
-        return { 
-          status: 'ignored', 
-          reason: 'duplicate',
-          message: 'Duplicate transaction' 
-        };
+        logger.info('Ignored — duplicate transaction', { txId })
+        return { status: 'ignored', reason: 'duplicate' }
       }
 
-      // 3. Sync current blockchain balance
+
+      // ── Step 6: Sync VA balance from Tatum ───────────────────────────
       logger.info('Syncing wallet balance', { walletId: wallet.id });
-        
       const syncedWallet = await walletService.getAccount(wallet.id);
-        
       if (!syncedWallet) {
         throw new Error(`Failed to sync wallet ${wallet.id}`);
       }
-
       logger.info('Wallet synced', {
         walletId: wallet.id,
         newBalance: syncedWallet.accountBalance?.toString()
       });
 
-      // 4. Find awaiting payment
+
+      // ── Step 7: Detect transfer direction ─────────────────────────────
+      const { transferType, balanceDifference } = this.detectTransferType(
+        wallet.accountBalance,
+        syncedWallet.accountBalance,
+        amountDecimal,
+        txId
+      )
+
+      // ── Step 8: Resolve actual sender ─────────────────────────────────
+      const actualSender = wallet.depositAddress === address ? counterAddress : address
+
+      // ── Step 9: Find pending awaiting order ───────────────────────────
       const awaiting = await prisma.awaiting.findFirst({
-        where: {
-          triggerAddress: wallet.depositAddress,
-          status: 'PENDING'
-        },
-        include: {
-          currency: true,
-          wallet: true,
-          order: true
-        }
-      });
+        where:   { triggerAddress: wallet.depositAddress, status: 'PENDING' },
+        include: { currency: true, wallet: true, order: true }
+      })
 
       logger.info('Awaiting payment check', {
         found: !!awaiting,
@@ -497,93 +508,38 @@ class eventService {
         expectedAmount: awaiting?.amount?.toString()
       });
 
-      // 5. Determine transfer type by comparing balances
-      const previousBalance = new Decimal(wallet.accountBalance);
-      const currentBalance = new Decimal(syncedWallet.accountBalance);
-      const receivedAmount = amountDecimal;
-
-      // ✅ More reliable transfer type detection
-      const balanceDifference = currentBalance.minus(previousBalance);
-      const transferType = balanceDifference.greaterThan(0) ? 'CREDIT' : 'DEBIT';
-
-      logger.info('Transfer analysis', {
-        previousBalance: previousBalance.toString(),
-        currentBalance: currentBalance.toString(),
-        balanceDifference: balanceDifference.toString(),
-        receivedAmount: receivedAmount.toString(),
-        transferType,
-        txId
-      });
-
-      console.log('Transfer analysis', {
-        previousBalance: previousBalance.toString(),
-        currentBalance: currentBalance.toString(),
-        balanceDifference: balanceDifference.toString(),
-        receivedAmount: receivedAmount.toString(),
-        transferType,
-        txId
-      })
-
-      // ✅ Additional validation for CREDIT transactions
-      if (transferType === 'CREDIT') {
-        console.log('In credit transaction')
-        // Verify the received amount makes sense
-        const expectedIncrease = receivedAmount;
-        const actualIncrease = balanceDifference;
-
-        console.log('expectedIncrease',expectedIncrease)
-        console.log('actualIncrease', actualIncrease)
-
-        // Allow small discrepancy (gas fees, rounding)
-        const discrepancy = actualIncrease.minus(expectedIncrease).abs();
-        const maxDiscrepancy = new Decimal('0.00001'); // 0.00001 tolerance
-
-        if (discrepancy.greaterThan(maxDiscrepancy)) {
-          console.log('There is a Balance increase mismatch')
-          logger.warn('Balance increase mismatch', {
-            expected: expectedIncrease.toString(),
-            actual: actualIncrease.toString(),
-            discrepancy: discrepancy.toString(),
-            txId
-          });
-        }
-      }
+      // ── Step 10: Process in DB transaction ────────────────────────────
+      const roundedAmount = DecimalUtil.roundForStorage(
+        amountDecimal,
+        wallet.currency?.ISO as string
+      ).toString()
 
 
-      // 6. Use database transaction for atomicity
       return await prisma.$transaction(async (tx) => {
         if (transferType === 'CREDIT') {
-          console.log('-----------------Handling credit transaction------------')
           return await this.handleCreditTransaction({
-            tx,
-            wallet,
-            syncedWallet,
-            amount: DecimalUtil.roundForStorage(receivedAmount,wallet.currency?.ISO as string).toString(),
+            tx, wallet, syncedWallet,
+            amount: roundedAmount,
             sender: actualSender,
-            awaiting,
-            txId,
-            chain,
-            contractAddress
-          });
-        } else if (transferType === 'DEBIT') {
-          console.log('-----------------Handling debit transaction------------')
-          return await this.handleDebitTransaction({
-            tx,
-            wallet,
-            syncedWallet,
-            amount: DecimalUtil.roundForStorage(receivedAmount,wallet.currency?.ISO as string).toString(),
-            txId
-          });
-        } else {
-          console.log('-----------------Unable to determine transfer------------')
-          throw new Error(`Unable to determine transfer type.`);
+            awaiting, txId, chain, contractAddress
+          })
         }
 
-      },{
-          maxWait: 10000,   // 10 seconds to get connection
-          timeout: 30000,   // 30 seconds for transaction (increased from 5s)
-          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // Less restrictive
-      });
+        if (transferType === 'DEBIT') {
+          return await this.handleDebitTransaction({
+            tx, wallet, syncedWallet,
+            amount: roundedAmount,
+            txId
+          })
+        }
+
+        throw new Error(`Unable to determine transfer type`)
+
+      }, {
+        maxWait:        10000,
+        timeout:        30000,
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted
+      })
 
 
     } catch (error) {
@@ -998,220 +954,47 @@ class eventService {
     txId: string;
 
     chain: string
-    contractAddress?: string
+    contractAddress: string
   }) {
     const { tx, wallet, syncedWallet, sender, awaiting, txId, amount, chain, contractAddress } = params;
 
     console.log('in credit transaction handling')
 
-    // 1. Create transaction record
+    // 1. Record the credit
     const transaction = await tx.transaction.create({
-      data: {
-        userId: wallet.userId,
-        currency: wallet.currency.ISO,
-        amount: DecimalUtil.roundForStorage(amount,wallet.currency?.ISO as string),
-        status: 'SUCCESSFUL',
-        reference: txId,
-        walletId: wallet.id,
-        type: 'CRYPTO_DEPOSIT',
-        description: `Wallet credited with ${amount}`,
-        metadata: { 
-          sender,
-          blockchainBalance: syncedWallet.accountBalance,
-          previousBalance: wallet.accountBalance
+        data: {
+            userId:      wallet.userId,
+            currency:    wallet.currency.ISO,
+            amount:      DecimalUtil.roundForStorage(amount, wallet.currency?.ISO as string),
+            status:      'SUCCESSFUL',
+            reference:   txId,
+            walletId:    wallet.id,
+            type:        'CRYPTO_DEPOSIT',
+            description: `Wallet credited with ${amount}`,
+            metadata: {
+                sender,
+                blockchainBalance: syncedWallet.accountBalance,
+                previousBalance:   wallet.accountBalance
+            }
         }
-      }
-    });
+    })
 
     console.log('created transaction',transaction)
 
+
+    // 2. Queue sweep — deferred until after prisma tx commits
     // ── Queue sweep for ALL credit transactions ───────────────────────────
     // Always sweep to master regardless of awaiting order
     // VA handles accounting, master holds actual tokens
-    // The sweep is queued after the prisma transaction commits via setImmediate
-
-
-    const WEBHOOK_CHAIN_MAP: Record<string, string> = {
-        'ethereum-mainnet': 'ETHEREUM',
-        'base-mainnet':     'BASE',
-        'bsc-mainnet':      'BSC',
-        'polygon-mainnet':  'POLYGON',
-        'arb-one-mainnet':  'ARBITRUM',
-        'optimism-mainnet': 'OPTIMISM',
-        'tron-mainnet':     'TRON'
-    }
-
-    const internalChain = WEBHOOK_CHAIN_MAP[chain]
-
-    if (internalChain) {
-
-      setImmediate(async () => {
-          let sweepLog: any = null  // ← declare outside
-
-          try {
-              if (gaspumpService.isGasPumpChain(internalChain)) {
-                  console.log(`[GasPump] Activating ${wallet.depositAddress} on ${internalChain}`)
-                  await gaspumpService.activateAddress(
-                      wallet.depositAddress,
-                      internalChain,
-                      wallet.currencyId
-                  )
-                  console.log(`[GasPump] Activation complete — proceeding to sweep`)
-              }
-
-              const shouldSweep =
-                  wallet.userId !== config.Admin_Id &&
-                  wallet.derivationKey !== null &&
-                  wallet.derivationKey !== undefined &&
-                  wallet.depositAddress &&
-                  wallet.currencyId
-
-              if (shouldSweep) {
-
-                  // ✅ Use prisma directly, not tx
-                  sweepLog = await prisma.sweepLog.create({
-                      data: {
-                          walletId:    wallet.id,
-                          userId:      wallet.userId,
-                          depositTxId: txId,
-                          amount,
-                          stablecoin:  wallet.currency?.ISO || '',
-                          chain:       internalChain,
-                          status:      'QUEUED'
-                      }
-                  })
-
-                  const queue = sweepService.getSweepQueue(internalChain)
-
-                  await queue.add(
-                      `sweep-${txId}`,
-                      {
-                          currencyId:     wallet.currencyId,
-                          userId:         wallet.userId,
-                          depositAddress: wallet.depositAddress,
-                          derivationKey:  wallet.derivationKey,
-                          amount,
-                          chain:          internalChain,
-                          contractAddress,
-                          depositTxId:    txId,
-                          sweepLogId:     sweepLog.id
-                      },
-                      {
-                          jobId:    txId,
-                          attempts: 3,
-                          backoff:  { type: 'exponential', delay: 5000 }
-                      }
-                  )
-
-                  console.log(`[Sweep] Job queued — chain: ${internalChain}, txId: ${txId}`)
-              }
-
-          } catch (err) {
-              console.error(`[Sweep] Failed for ${txId}:`, err)
-
-              // ✅ Only update if sweepLog was successfully created
-              if (sweepLog?.id) {
-                  await prisma.sweepLog.update({
-                      where: { id: sweepLog.id },
-                      data:  { status: 'FAILED', error: (err as Error).message }
-                  }).catch(console.error)
-              }
-          }
-      })
-
-
-    }
-
-    // 2. Handle awaiting order
+    this.queueSweep({ wallet, txId, amount, chain, contractAddress })
+    
+    // 3. Route — awaiting order or plain deposit
     if (awaiting) {
-      console.log('handling awaiting',awaiting)
-      
-      const expectedAmount = new Decimal(awaiting.amount.toString());
-      const availableBalance = new Decimal(syncedWallet.availableBalance);
-      const received = amount
-      
-      console.log('Amount Verification:', {
-        expected: expectedAmount.toString(),
-        received,
-        walletBalance: syncedWallet.availableBalance.toString(),
-      });
-
-      // Verify available balance on updated wallet balance against awaiting amount
-      if (availableBalance.lessThan(expectedAmount)) {
-        const shortfall = expectedAmount.minus(availableBalance);
-
-        logger.warn('Insufficient payment received - queueing refund', {
-          awaitingId: awaiting.id,
-          availableBalance: availableBalance.toString(),
-          expectedAmount: expectedAmount.toString(),
-          receivedAmount: received.toString(),
-          shortfall: shortfall.toString(),
-          currency: awaiting.currency?.ISO
-        });
-
-        // Queue refund for insufficient payment
-        await this.orderProcessingQueue.add('initiate-refund', {
-          awaitingId: awaiting.id,
-          senderAddress: sender,
-          currencyType: awaiting.currency?.type,
-          receivedAmount: received.toString(),
-          expectedAmount: expectedAmount.toString(),
-          transactionId: transaction.id
-        });
-
-        // Update awaiting status
-        await tx.awaiting.update({
-          where: { id: awaiting.id },
-          data: { 
-            metadata: {
-              receivedAmount: received.toString(),
-              expectedAmount: expectedAmount.toString()
-            }
-          }
-        });
-
-        return { 
-          status: 'queued', 
-          action: 'refund-insufficient-amount',
-          details: {
-            expected: expectedAmount.toString(),
-            received: received.toString()
-          }
-        };
-      }
-
-      // Queue order processing
-      await orderService.process_Order_Queue({
-        awaitingId: awaiting.id,
-        transactionId: transaction.id
-      })
-
-      await prisma.awaiting.update({
-        where: { id: awaiting.id },
-        data: { status: 'CONFIRMED' }
-      });
-
-      await ablyService.awaiting_Order_Update(awaiting.id);
-
-      // Cancel the scheduled expiry
-      await anonService.cancelAwaitingExpiry(awaiting.id);
-
-      return { 
-        status: 'queued', 
-        action: 'order-processing',
-        awaitingId: awaiting.id,
-        transactionId: transaction.id
-      };
-
+      return await this.handleAwaitingOrder({ tx, awaiting, syncedWallet, amount, sender, transaction })
     }
 
-    // 3. No awaiting order - just notify user
-    console.log('finally queuing notification ', {
-      userId: wallet.userId,
-      title: 'Transaction Notification',
-      type: 'GENERAL',
-      content: `<strong>${DecimalUtil.formatWithCurrency(amount,wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
-    })
+    // Plain deposit — notify user
+    console.log('finally queuing notification ')
 
     await notificationService.queue({
       userId: wallet.userId,
@@ -1808,6 +1591,257 @@ class eventService {
       content: notificationContent
     });
   }
+
+  SUPPORTED_CONTRACTS: Record<string, string> = {
+    // USDC
+    'USDC_BASE':      '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    'USDC_ETHEREUM':  '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    'USDC_POLYGON':   '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
+    'USDC_BSC':       '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
+    'USDC_ARBITRUM':  '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
+    'USDC_OPTIMISM':  '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+    // USDT
+    'USDT_ETHEREUM':  '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    'USDT_BASE':      '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2',
+    'USDT_POLYGON':   '0xc2132d05d31c914a87c6611c10748aeb04b58e8f',
+    'USDT_BSC':       '0x55d398326f99059ff775485246999027b3197955',
+    'USDT_ARBITRUM':  '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
+    'USDT_OPTIMISM':  '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58',
+    'USDT_TRON':      'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+}
+
+WEBHOOK_CHAIN_MAP: Record<string, string> = {
+  'ethereum-mainnet': 'ETHEREUM',
+  'base-mainnet':     'BASE',
+  'bsc-mainnet':      'BSC',
+  'polygon-mainnet':  'POLYGON',
+  'arb-one-mainnet':  'ARBITRUM',
+  'optimism-mainnet': 'OPTIMISM',
+  'tron-mainnet':     'TRON'
+}
+
+
+private validateContract(
+    contractAddress: string,
+    chain: string,
+    wallet: any,
+    txId: string
+): { status: string; reason: string; message: string } | null {
+
+    const chainKey        = this.WEBHOOK_CHAIN_MAP[chain]
+    const lookupKey       = `${wallet.currency?.ISO}_${chainKey}`
+    const expectedContract = this.SUPPORTED_CONTRACTS[lookupKey]
+
+    if (!expectedContract) {
+        logger.warn('Ignored — no contract configured', { lookupKey, txId })
+        return { status: 'ignored', reason: 'unsupported_chain_currency', message: `No contract for ${lookupKey}` }
+    }
+
+    if (contractAddress.toLowerCase() !== expectedContract.toLowerCase()) {
+        logger.warn('Ignored — contract mismatch', {
+            received: contractAddress,
+            expected: expectedContract,
+            txId
+        })
+        return { status: 'ignored', reason: 'unsupported_token', message: `Token ${contractAddress} not supported` }
+    }
+
+    return null  // ← validation passed
+}
+
+private isSweepFeedback(
+  address:      string,
+  counterAddress: string,
+  wallet:       any,
+  adminWallet:  any
+): boolean {
+    if (!adminWallet?.depositAddress) return false
+
+    const masterAddress  = adminWallet.depositAddress.toLowerCase()
+    const isInvolved     = counterAddress?.toLowerCase() === masterAddress || address?.toLowerCase() === masterAddress
+    const isNotMaster    = wallet.depositAddress?.toLowerCase() !== masterAddress
+
+    return isInvolved && isNotMaster
+}
+
+private detectTransferType(
+    previousBalance: any,
+    currentBalance:  any,
+    receivedAmount:  Decimal,
+    txId:            string
+): { transferType: 'CREDIT' | 'DEBIT'; balanceDifference: Decimal } {
+
+    const prev             = new Decimal(previousBalance)
+    const curr             = new Decimal(currentBalance)
+    const balanceDifference = curr.minus(prev)
+    const transferType     = balanceDifference.greaterThan(0) ? 'CREDIT' : 'DEBIT'
+
+    logger.info('Transfer analysis', {
+        previousBalance:  prev.toString(),
+        currentBalance:   curr.toString(),
+        balanceDifference: balanceDifference.toString(),
+        receivedAmount:   receivedAmount.toString(),
+        transferType,
+        txId
+    })
+
+    // Warn on discrepancy but don't block
+    if (transferType === 'CREDIT') {
+        const discrepancy   = balanceDifference.minus(receivedAmount).abs()
+        const maxDiscrepancy = new Decimal('0.00001')
+
+        if (discrepancy.greaterThan(maxDiscrepancy)) {
+            logger.warn('Balance increase mismatch', {
+                expected:    receivedAmount.toString(),
+                actual:      balanceDifference.toString(),
+                discrepancy: discrepancy.toString(),
+                txId
+            })
+        }
+    }
+
+    return { transferType, balanceDifference }
+}
+
+// ── Awaiting order handler — extracted from handleCreditTransaction ────────
+private async handleAwaitingOrder(params: {
+    tx:           any
+    awaiting:     any
+    syncedWallet: any
+    amount:       string
+    sender:       string
+    transaction:  any
+}) {
+    const { tx, awaiting, syncedWallet, amount, sender, transaction } = params
+
+    const expectedAmount   = new Decimal(awaiting.amount.toString())
+    const availableBalance = new Decimal(syncedWallet.availableBalance)
+
+    // Insufficient payment — queue refund
+    if (availableBalance.lessThan(expectedAmount)) {
+        const shortfall = expectedAmount.minus(availableBalance)
+
+        logger.warn('Insufficient payment — queuing refund', {
+            awaitingId:       awaiting.id,
+            availableBalance: availableBalance.toString(),
+            expectedAmount:   expectedAmount.toString(),
+            shortfall:        shortfall.toString()
+        })
+
+        await this.orderProcessingQueue.add('initiate-refund', {
+            awaitingId:     awaiting.id,
+            senderAddress:  sender,
+            currencyType:   awaiting.currency?.type,
+            receivedAmount: amount,
+            expectedAmount: expectedAmount.toString(),
+            transactionId:  transaction.id
+        })
+
+        await tx.awaiting.update({
+            where: { id: awaiting.id },
+            data:  { metadata: { receivedAmount: amount, expectedAmount: expectedAmount.toString() } }
+        })
+
+        return {
+            status: 'queued',
+            action: 'refund-insufficient-amount',
+            details: { expected: expectedAmount.toString(), received: amount }
+        }
+    }
+
+    // Sufficient payment — process order
+    await orderService.process_Order_Queue({
+        awaitingId:    awaiting.id,
+        transactionId: transaction.id
+    })
+
+    await prisma.awaiting.update({ where: { id: awaiting.id }, data: { status: 'CONFIRMED' } })
+    await ablyService.awaiting_Order_Update(awaiting.id)
+    await anonService.cancelAwaitingExpiry(awaiting.id)
+
+    return {
+        status:        'queued',
+        action:        'order-processing',
+        awaitingId:    awaiting.id,
+        transactionId: transaction.id
+    }
+}
+
+// ── Sweep queuing — extracted from handleCreditTransaction ────────────────
+private queueSweep(params: {
+    wallet:          any
+    txId:            string
+    amount:          string
+    chain:           string
+    contractAddress: string
+}) {
+    const { wallet, txId, amount, chain, contractAddress } = params
+    const internalChain = this.WEBHOOK_CHAIN_MAP[chain]
+
+    if (!internalChain) return
+
+    setImmediate(async () => {
+        let sweepLog: any = null
+
+        try {
+            // Activate gas pump address first if needed
+            if (gaspumpService.isGasPumpChain(internalChain)) {
+                console.log(`[GasPump] Activating ${wallet.depositAddress} on ${internalChain}`)
+                await gaspumpService.activateAddress(wallet.depositAddress, internalChain, wallet.currencyId)
+                console.log(`[GasPump] Activation complete`)
+            }
+
+            const shouldSweep =
+                wallet.userId      !== config.Admin_Id &&
+                wallet.derivationKey !== null &&
+                wallet.derivationKey !== undefined &&
+                wallet.depositAddress &&
+                wallet.currencyId
+
+            if (!shouldSweep) return
+
+            sweepLog = await prisma.sweepLog.create({
+                data: {
+                    walletId:    wallet.id,
+                    userId:      wallet.userId,
+                    depositTxId: txId,
+                    amount,
+                    stablecoin:  wallet.currency?.ISO || '',
+                    chain:       internalChain,
+                    status:      'QUEUED'
+                }
+            })
+
+            await sweepService.getSweepQueue(internalChain).add(
+                `sweep-${txId}`,
+                {
+                    currencyId:     wallet.currencyId,
+                    userId:         wallet.userId,
+                    depositAddress: wallet.depositAddress,
+                    derivationKey:  wallet.derivationKey,
+                    amount,
+                    chain:          internalChain,
+                    contractAddress,
+                    depositTxId:    txId,
+                    sweepLogId:     sweepLog.id
+                },
+                { jobId: txId, attempts: 3, backoff: { type: 'exponential', delay: 5000 } }
+            )
+
+            console.log(`[Sweep] Queued — chain: ${internalChain}, txId: ${txId}`)
+
+        } catch (err) {
+            console.error(`[Sweep] Failed for ${txId}:`, err)
+            if (sweepLog?.id) {
+                await prisma.sweepLog.update({
+                    where: { id: sweepLog.id },
+                    data:  { status: 'FAILED', error: (err as Error).message }
+                }).catch(console.error)
+            }
+        }
+    })
+}
+
 
 
    
