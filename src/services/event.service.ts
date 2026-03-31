@@ -559,7 +559,7 @@ class eventService {
   }) {
     const {event} = payload;
     const {reference, amount, metadata } = payload.data
-    const {walletId, userId, currency} = metadata
+    const {walletId, userId, currency, BlockId} = metadata
   
     console.log('event', event)
     const processedAmount = (Number(amount)) / 100
@@ -684,6 +684,8 @@ class eventService {
         // ✅ DEBIT wallet (user is withdrawing OUT of Vyre)
         await Promise.all([
           walletService.debit_Wallet(processedAmount, walletId),
+          // 2. Unblock the amount (since it's now successfully debited)
+          BlockId ? walletService.unblock_Amount(BlockId) : Promise.resolve(),
           prisma.transaction.create({
             data:{
               userId,
@@ -698,6 +700,7 @@ class eventService {
                 type: 'Bank-Withdrawal',
                 amount: processedAmount,
                 reference,
+                BlockId,
                 account_number: metadata.account_number,
                 bank_code: metadata.bank_code
               }
@@ -741,6 +744,14 @@ class eventService {
       // DEBIT_FAILED: Withdrawal failed
       // ========================================
       if(event === 'DEBIT_FAILED'){
+        console.log('DEBIT_FAILED - Withdrawal failed, releasing blocked funds');
+
+        // ✅ Unblock the amount (return it to available balance)
+        if(BlockId){
+          await walletService.unblock_Amount(BlockId);
+          logger.info(`Blocked amount released for failed withdrawal: ${BlockId}`);
+        }
+
         await prisma.transaction.create({
           data:{
             userId,
@@ -750,7 +761,13 @@ class eventService {
             status: 'FAILED',
             walletId,
             type: 'FIAT_WITHDRAWAL',
-            description: `${currency} withdrawal failed`
+            description: `${currency} withdrawal failed`,
+            metadata: {
+              type: 'Bank-Withdrawal-Failed',
+              amount: processedAmount,
+              reference,
+              BlockId
+            }
           }
         })
   
@@ -771,6 +788,17 @@ class eventService {
     } catch (error) {
       logger.error(`Error handling webhook for: ${reference}:`, error);
       console.error('Error handling webhook:', error);
+
+      // ✅ Emergency fallback: Unblock amount if webhook processing fails
+      if(event === 'DEBIT_FAILED' && BlockId){
+        try {
+          await walletService.unblock_Amount(BlockId);
+          logger.warn(`Emergency unblock executed for BlockId: ${BlockId}`);
+        } catch (unblockError) {
+          logger.error(`Failed to emergency unblock BlockId: ${BlockId}`, unblockError);
+        }
+      }
+
       throw error;
     }
   }
