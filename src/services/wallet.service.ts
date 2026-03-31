@@ -1343,7 +1343,7 @@ class WalletService
 
             const wallet = await prisma.wallet.findFirst({
                 where:{
-                userId:userId,
+                userId,
                 currencyId
                 },
                 include:{
@@ -1356,27 +1356,31 @@ class WalletService
                 throw new Error('Wallet not found - wallet required');
             }
 
-            const result = await qorepayService.bank_Transfer({...payload, currency: wallet?.currency?.ISO as string})
+            const result = await qorepayService.bank_Transfer({
+                ...payload, 
+                walletId: wallet.id, 
+                currency: wallet?.currency?.ISO as string
+            })
 
             console.log('---------Wallet to bank withdrawal initiated--------')
 
             // deduct amount from wallet
             // // debit user wallet
-            await this.debit_Wallet(amount as any, wallet?.id as string)
+            // await this.debit_Wallet(amount as any, wallet?.id as string)
 
-            // record transaction
-            await prisma.transaction.create({
-                data:{
-                userId,
-                currency: wallet?.currency?.ISO,
-                amount,
-                reference: result.id,
-                status: 'PENDING',
-                walletId: wallet?.id,
-                type:'FIAT_WITHDRAWAL',
-                description:`${currency} bank withdrawal transfer`
-                }
-            })  
+            // // record transaction
+            // await prisma.transaction.create({
+            //     data:{
+            //     userId,
+            //     currency: wallet?.currency?.ISO,
+            //     amount,
+            //     reference: result.id,
+            //     status: 'PENDING',
+            //     walletId: wallet?.id,
+            //     type:'FIAT_WITHDRAWAL',
+            //     description:`${currency} bank withdrawal transfer`
+            //     }
+            // })  
 
             return result
 

@@ -46,26 +46,32 @@ class QorepayService {
           brand_id: config.QOREPAY_BRAND_ID,
           customer_email: email,
           redirect_url: `${config.urls.userDashboard}/successful`,
-          failure_url: `${config.urls.userDashboard}/failed`             
+          failure_url: `${config.urls.userDashboard}/failed`,
+          metadata:{
+            userId,
+            walletId,
+            amount,
+            currency
+          }            
         }
 
         const response = await qorepayAxios.post('/v1/purchases', data);
         console.log(response.data)
         const result = response.data
 
-        // create transaction record
-        const transaction = prisma.transaction.create({
-            data: {
-              userId,
-              currency,
-              amount,
-              reference: result.reference,
-              status: 'PENDING',
-              walletId,
-              type: 'FIAT_DEPOSIT',
-              description: `${currency} deposit`
-            }
-        })
+        // // create transaction record
+        // const transaction = prisma.transaction.create({
+        //     data: {
+        //       userId,
+        //       currency,
+        //       amount,
+        //       reference: result.reference,
+        //       status: 'PENDING',
+        //       walletId,
+        //       type: 'FIAT_DEPOSIT',
+        //       description: `${currency} deposit`
+        //     }
+        // })
 
         const paymentDetails = {
             id: result?.reference,
@@ -88,14 +94,20 @@ class QorepayService {
       const { currency, amount, email, userId, walletId, awaitingId } = payload;
 
       try {
-        // Step 1: Create purchase
+
         const data = {
           amount:amount * 100,
           currency,
           brand_id: config.QOREPAY_BRAND_ID,
           customer_email: email,
           channel:'TRANSFER',
-          metadata:{awaitingId}
+          metadata:{
+            awaitingId,
+            userId,
+            walletId,
+            amount,
+            currency,
+          }
         };
 
         const response = await qorepayAxios.post('/v1/purchases', data);
@@ -103,18 +115,18 @@ class QorepayService {
 
         if (!result) throw new Error('Could not initialize payment');
 
-        const transaction = prisma.transaction.create({
-            data: {
-              userId,
-              currency,
-              amount,
-              reference: result.reference,
-              status: 'PENDING',
-              walletId,
-              type: 'FIAT_DEPOSIT',
-              description: `${currency} deposit`
-            }
-          })
+        // const transaction = prisma.transaction.create({
+        //     data: {
+        //       userId,
+        //       currency,
+        //       amount,
+        //       reference: result.reference,
+        //       status: 'PENDING',
+        //       walletId,
+        //       type: 'FIAT_DEPOSIT',
+        //       description: `${currency} deposit`
+        //     }
+        //   })
 
         // const details = bankAccount.data.data;
 
@@ -139,6 +151,7 @@ class QorepayService {
        amount:string,
        email:string, 
        phone:string,
+       walletId:string,
 
        account_number: string,
        bank_code: string, 
@@ -147,7 +160,7 @@ class QorepayService {
       })
     {
 
-      const {currency,amount,userId, email, phone, account_number, bank_code, recipient_name } = payload
+      const {currency,amount,userId, walletId, email, phone, account_number, bank_code, recipient_name } = payload
 
       try {
         const data = {
@@ -159,6 +172,7 @@ class QorepayService {
           description: `${currency} withdrawal to ${recipient_name} `,
           metadata: {
             userId,
+            walletId,
             amount,
             currency,
             brand_id: config.QOREPAY_BRAND_ID,

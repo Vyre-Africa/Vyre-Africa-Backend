@@ -92,6 +92,7 @@ import gaspumpService from './gaspump.service';
       name: string;
       email: string;
     };
+    metadata: any;
   }
 
   interface QorepayVirtualAccount {
@@ -557,190 +558,218 @@ class eventService {
     event: 'CREDIT'|'DEBIT'|'CREDIT_FAILED'|'DEBIT_FAILED'
   }) {
     const {event} = payload;
-    const {reference} = payload.data
-    
+    const {reference, amount, metadata } = payload.data
+    const {walletId, userId, currency} = metadata
+  
     console.log('event', event)
-
-    // 1. Find and validate transaction
-    const transaction = await prisma.transaction.findUnique({
-        where: { id: reference },
-        include: { 
-          wallet: {
-            include: { currency: true }
-          } 
-        }
-    });
-
-    console.log('transaction',transaction)
-
+    const processedAmount = (Number(amount)) / 100
+  
+    // Find awaiting transfer (used by both CREDIT and DEBIT)
     const awaiting = await prisma.awaiting.findFirst({
-        where: {
-          reference,
-          status: 'PENDING'
-        },
-        include: {
-          currency: true,
-          wallet: true
-        }
+      where: {
+        reference,
+        status: 'PENDING'
+      },
+      include: {
+        currency: true,
+        wallet: true
+      }
     });
-
+  
     console.log('awaiting', awaiting)
-
-    if (!transaction) {
-      logger.warn(`Transaction not found for reference: ${reference}`);
-      return { status: 'rejected', reason: 'transaction_not_found' };
-    }
-
-    if (transaction?.status !== 'PENDING') {
-      return { status: 'Already processed', reason: 'transaction_already_processed' };
-    }
-
-
+  
     try {
-
+  
+      // ========================================
+      // CREDIT: User deposits money INTO Vyre
+      // ========================================
       if(event === 'CREDIT'){
-
-        console.log('CREDIT TRANSACTION')
-
-        // 2. Credit wallet for ALL successful transactions first
-        await walletService.credit_Wallet(
-          Number(transaction.amount),
-          transaction.walletId as string
-        );
-
-        await prisma.transaction.update({
-          where: { id: transaction.id },
-          data: { 
-            status: 'SUCCESSFUL',
-            metadata: {
-              type:'Anon-Order',
-              amount: transaction.amount,
-              reference
+        console.log('CREDIT TRANSACTION - User depositing money')
+  
+        // Credit wallet for successful deposit
+        await Promise.all([
+          walletService.credit_Wallet(processedAmount, walletId),
+          prisma.transaction.create({
+            data:{
+              userId,
+              currency,
+              amount: processedAmount,
+              reference,
+              status: 'SUCCESSFUL',
+              walletId,
+              type: 'FIAT_DEPOSIT', // ✅ Changed from WITHDRAWAL
+              description: `${currency} deposit via bank transfer`,
+              metadata: {
+                type: 'Bank-Deposit',
+                amount: processedAmount,
+                reference
+              }
             }
-          }
-          
-        });
-
+          })
+        ])
+  
         // CHECK FOR AWAITING TRANSFER 
-
         if (awaiting) {
-          // For transactions WITH awaiting transfers:
-          // Queue for order processing (NO notification)
+          // User deposited to complete an order
           await this.orderProcessingQueue.add('process-order', {
             awaitingId: awaiting.id
           });
-
+  
           await prisma.awaiting.update({
-              where: { id: awaiting.id },
-              data: { status: 'CONFIRMED' }
+            where: { id: awaiting.id },
+            data: { status: 'CONFIRMED' }
           });
-
+  
           await ablyService.awaiting_Order_Update(awaiting.id);
-
-          logger.info(`Fiat payment processed and queued for order processing, reference: ${reference}`);
-
-          // Cancel the scheduled expiry
           await anonService.cancelAwaitingExpiry(awaiting.id);
-
+  
+          logger.info(`Deposit processed and queued for order, reference: ${reference}`);
           return { status: 'queued', action: 'order-processing' };
-
+  
         } else {
-          // For transactions WITHOUT awaiting transfers:
-          // Send notification only
+          // Regular deposit (no order)
           await notificationService.queue({
-            userId: transaction.userId as string,
-            title: 'Deposit Successful',
+            userId,
+            title: '💰 Deposit Successful',
             type: 'GENERAL',
-            content: `Your deposit of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> has been processed successfully. The funds are now available in your wallet.`
+            content: `Your deposit of <strong>${processedAmount} ${currency}</strong> has been processed successfully. The funds are now available in your wallet.`
           });
-
-          console.log('notification hit the queue here')
-
+  
           logger.info(`Direct deposit processed and notification sent, reference: ${reference}`);
           return { status: 'processed', action: 'wallet-credit-and-notify' };
         }
-
       }
-
+  
+      // ========================================
+      // CREDIT_FAILED: Deposit failed
+      // ========================================
       if(event === 'CREDIT_FAILED'){
-
-        if(transaction){
-          await prisma.transaction.update({
-            where:{id:transaction?.id!},
-            data:{status:'FAILED'}
-          })
-        }
-
+        await prisma.transaction.create({
+          data:{
+            userId,
+            currency,
+            amount: processedAmount,
+            reference,
+            status: 'FAILED',
+            walletId,
+            type: 'FIAT_DEPOSIT', // ✅ Changed from WITHDRAWAL
+            description: `${currency} deposit failed`
+          }
+        })
+  
+        // Notify user of failed deposit
+        await notificationService.queue({
+          userId,
+          title: '❌ Deposit Failed',
+          type: 'GENERAL',
+          content: `Your deposit of <strong>${processedAmount} ${currency}</strong> could not be processed. Please contact support if funds were debited from your account.`
+        });
+  
         logger.info(`Failed deposit processed, reference: ${reference}`);
-        return { status: 'processed', action: 'wallet-credit-failed' };
-        
+        return { status: 'processed', action: 'deposit-failed' };
       }
-
-
+  
+      // ========================================
+      // DEBIT: User withdraws money FROM Vyre wallet
+      // Withdrawal was successful - DEBIT their Vyre wallet
+      // ========================================
       if(event === 'DEBIT'){
-
-        if(transaction){
-          await prisma.transaction.update({
-            where:{id:transaction?.id},
+        console.log('DEBIT TRANSACTION - User withdrawing to bank (successful)')
+  
+        if(!walletId || !userId || !currency){
+          logger.warn(`WalletId or userId not provided for withdrawal: ${reference}`);
+          return { status: 'failed', action: 'WalletId-or-userId-not-found' };
+        }
+  
+        // ✅ DEBIT wallet (user is withdrawing OUT of Vyre)
+        await Promise.all([
+          walletService.debit_Wallet(processedAmount, walletId),
+          prisma.transaction.create({
             data:{
+              userId,
+              currency,
+              amount: processedAmount,
+              reference,
               status: 'SUCCESSFUL',
+              walletId,
+              type: 'FIAT_WITHDRAWAL',
+              description: `${currency} withdrawal to bank account`,
               metadata: {
-              type:'Anon-Order',
-              amount: transaction.amount,
-              reference
-            }
+                type: 'Bank-Withdrawal',
+                amount: processedAmount,
+                reference,
+                account_number: metadata.account_number,
+                bank_code: metadata.bank_code
+              }
             }
           })
-        }
-
-        if(!awaiting){
-          await notificationService.queue({
-            userId: transaction.userId as string,
-            title: 'Withdrawal Successful',
-            type: 'GENERAL',
-            content: `Your withdrawal of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> has been processed successfully. Thanks for choosing Vyre.`
+        ])
+  
+        // CHECK FOR AWAITING TRANSFER (order completion)
+        if (awaiting) {
+          // User withdrew to complete an order
+          await this.orderProcessingQueue.add('process-order', {
+            awaitingId: awaiting.id
           });
+  
+          await prisma.awaiting.update({
+            where: { id: awaiting.id },
+            data: { status: 'CONFIRMED' }
+          });
+  
+          await ablyService.awaiting_Order_Update(awaiting.id);
+          await anonService.cancelAwaitingExpiry(awaiting.id);
+  
+          logger.info(`Withdrawal processed and queued for order, reference: ${reference}`);
+          return { status: 'queued', action: 'order-processing' };
+  
+        } else {
+          // Regular withdrawal (no order)
+          await notificationService.queue({
+            userId,
+            title: '✅ Withdrawal Successful',
+            type: 'GENERAL',
+            content: `Your withdrawal of <strong>${processedAmount} ${currency}</strong> has been sent to your bank account. It should arrive within 24 hours.`
+          });
+  
+          logger.info(`Withdrawal processed and notification sent, reference: ${reference}`);
+          return { status: 'processed', action: 'withdrawal-success-and-notify' };
         }
-
-        logger.info(`Successful payout processed, reference: ${reference}`);
-        return { status: 'processed', action: 'wallet-payout-and-notify' };
-        
       }
-
-
+  
+      // ========================================
+      // DEBIT_FAILED: Withdrawal failed
+      // ========================================
       if(event === 'DEBIT_FAILED'){
-
-        // // refund the user wallet 
-        await walletService.credit_Wallet(
-          Number(transaction.amount),
-          transaction.walletId as string
-        );
-
-        if(transaction){
-          await prisma.transaction.update({
-            where:{id:transaction?.id},
-            data:{status: 'FAILED',}
-          })
-        }
-
+        await prisma.transaction.create({
+          data:{
+            userId,
+            currency,
+            amount: processedAmount,
+            reference,
+            status: 'FAILED',
+            walletId,
+            type: 'FIAT_WITHDRAWAL',
+            description: `${currency} withdrawal failed`
+          }
+        })
+  
+        // Notify user of failed withdrawal
         if(!awaiting){
           await notificationService.queue({
-            userId: transaction.userId as string,
-            title: 'Withdrawal Failed',
+            userId,
+            title: '❌ Withdrawal Failed',
             type: 'GENERAL',
-            content: `Your withdrawal of <strong>${transaction.amount} ${transaction?.wallet?.currency?.ISO}</strong> could not be processed at this time. Please try again later.`
+            content: `Your withdrawal of <strong>${processedAmount} ${currency}</strong> could not be processed. Your funds remain in your wallet. Please try again or contact support.`
           });
         }
-        
-        logger.info(`Failed payout processed, reference: ${reference}`);
-        return { status: 'processed', action: 'wallet-payout-failed' };
-        
+  
+        logger.info(`Failed withdrawal processed, reference: ${reference}`);
+        return { status: 'processed', action: 'withdrawal-failed' };
       }
-
-      
-
+  
     } catch (error) {
-      logger.error(`Error handling webhook for : ${reference}:`, error);
+      logger.error(`Error handling webhook for: ${reference}:`, error);
       console.error('Error handling webhook:', error);
       throw error;
     }
