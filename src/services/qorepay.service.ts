@@ -7,6 +7,7 @@ import axios from "axios";
 import { UserBank } from "@prisma/client";
 import { generateRefCode } from "../utils";
 import logger from "../config/logger";
+import walletService from "./wallet.service";
 const Flutterwave = require('flutterwave-node-v3');
 
 const qorepayAxios = axios.create({
@@ -162,7 +163,14 @@ class QorepayService {
 
       const {currency,amount,userId, walletId, email, phone, account_number, bank_code, recipient_name } = payload
 
+      let BlockId: string = '';
+
       try {
+
+        // block amount in wallet before transfer
+        BlockId = await walletService.block_Amount(amount as any, walletId)
+
+
         const data = {
           amount: (Number(amount)) * 100,
           currency,
@@ -172,6 +180,7 @@ class QorepayService {
           description: `${currency} withdrawal to ${recipient_name} `,
           metadata: {
             userId,
+            BlockId,
             walletId,
             amount,
             currency,
@@ -187,6 +196,21 @@ class QorepayService {
         return {success:true, ...result}
 
       } catch (error:any) {
+
+        logger.error('Bank transfer initialization failed:', error);
+ 
+        // ========================================
+        // ROLLBACK: UNBLOCK AMOUNT IF TRANSFER FAILS
+        // ========================================
+        if (BlockId) {
+          try {
+            await walletService.unblock_Amount(BlockId);
+            logger.info(`Amount unblocked after failed transfer: ${BlockId}`);
+          } catch (unblockError) {
+            logger.error(`Failed to unblock amount: ${BlockId}`, unblockError);            
+          }
+        }
+
         logger.error('Bank transfer initialization failed:', error);
         throw error;
       }
