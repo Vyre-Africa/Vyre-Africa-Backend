@@ -181,9 +181,9 @@ class walletValidator {
                 .withMessage('Account name must be a string')
                 .trim()
                 .isLength({ min: 2, max: 100 })
-                .withMessage('Account name must be between 2 and 100 characters')
-                .matches(/^[a-zA-Z\s\-'.]+$/)
-                .withMessage('Account name can only contain letters, spaces, hyphens, apostrophes, and periods'),
+                .withMessage('Account name must be between 2 and 100 characters'),
+                // .matches(/^[a-zA-Z\s\-'.]+$/)
+                // .withMessage('Account name can only contain letters, spaces, hyphens, apostrophes, and periods'),
 
             // ✅ Bank Name
             body('bank_name')
