@@ -1351,6 +1351,7 @@ class eventService {
       // ✅ Convert wallet balance to Decimal
       const availableBalance = new Decimal(wallet.availableBalance);
       const accountBalance = new Decimal(wallet.accountBalance);
+      const transferAmount = new Decimal(postDetails.amount);
 
       // ✅ Validate balance is greater than 0
       if (availableBalance.lessThanOrEqualTo(0)) {
@@ -1363,6 +1364,7 @@ class eventService {
         orderType: awaiting.order?.type,
         availableBalance: availableBalance.toString(),
         accountBalance: accountBalance.toString(),
+        transferAmount,
         currency: wallet.currency?.ISO as string,
         walletId: wallet.id
       });
@@ -1378,7 +1380,7 @@ class eventService {
         }
 
         logger.info(`Initiating bank transfer for awaiting ${awaitingId}`, {
-          amount: availableBalance.toString(),
+          amount: transferAmount,
           currency: wallet.currency?.ISO,
           recipient: postDetails.recipient_Name,
           accountNumber: postDetails.accountNumber,
@@ -1388,7 +1390,7 @@ class eventService {
         transferResult = await walletService.direct_bank_Transfer({
           userId: awaiting.userId as string,
           currencyId: wallet.currencyId as string,
-          amount: availableBalance.toString(), // ✅ Pass as string
+          amount: transferAmount.toString(), // ✅ Pass as string
           email: user.email as string,
           phone: user.phoneNumber as string,
           account_number: postDetails.accountNumber as string,
@@ -1417,7 +1419,7 @@ class eventService {
         transferResult = await walletService.blockchain_Transfer({
           userId: wallet.userId as string,
           currencyId: wallet.currencyId as string,
-          amount: availableBalance.toString(), // ✅ Pass as string
+          amount: transferAmount.toString(), // ✅ Pass as string
           address: postDetails.address as string,
         });
 
@@ -1432,7 +1434,7 @@ class eventService {
 
       logger.info(`Transfer successful for awaiting ${awaitingId}`, {
         currency: wallet.currency?.ISO,
-        amount: availableBalance.toString(),
+        amount: transferAmount.toString(),
         transferId: transferResult.id,
         orderType: awaiting.order?.type
       });
@@ -1449,7 +1451,7 @@ class eventService {
                 transferCompleted: true,
                 transferId: transferResult?.id || null,
                 transferReference: transferResult?.reference || null,
-                transferAmount: availableBalance.toString(),
+                transferAmount: transferAmount.toString(),
                 completedAt: new Date().toISOString(),
                 orderType: awaiting.order?.type
               }
@@ -1524,7 +1526,7 @@ class eventService {
       return {
         status: 'success',
         awaitingId,
-        transferAmount: availableBalance.toString(),
+        transferAmount: transferAmount.toString(),
         currency: wallet.currency?.ISO,
         orderType: awaiting.order?.type
       };
@@ -1906,4 +1908,116 @@ private queueSweep(params: {
 
 export default new eventService()
 
+
+// data: { error: 'Invalid or revoked API key' },
+// status: 401
+
+
+
+// Message received: 
+// Object
+// amount
+// : 
+// "10"
+// bank
+// : 
+// null
+// bank_Account_Name
+// : 
+// null
+// bank_Account_Number
+// : 
+// null
+// bank_Name
+// : 
+// null
+// bank_expires_At
+// : 
+// null
+// createdAt
+// : 
+// "2026-04-01T08:24:57.261Z"
+// crypto
+// : 
+// {chain: 'BASE', amount: 10, address: '0xb0a7a90ec013d3897a8a861bb499fad985936e81', currency: 'USDC'}
+// currencyId
+// : 
+// "4e44778a-c7eb-4b6b-97c2-740d40313823"
+// duration
+// : 
+// "2026-04-01T08:54:57.606Z"
+// id
+// : 
+// "cmnfs5til0005144cmxmt8hrt"
+// log
+// : 
+// baseAmount
+// : 
+// 10
+// baseCurrency
+// : 
+// "USDC"
+// createdAt
+// : 
+// "2026-04-01T08:27:00.858Z"
+// id
+// : 
+// "cmnfs8gvu0009tb9mzefrt8dc"
+// metadata
+// : 
+// null
+// orderId
+// : 
+// "ORD-01KKVPAWT65E2JGV57BZAMMWAR"
+// orderType
+// : 
+// "BUY"
+// quoteAmount
+// : 
+// 5000
+// quoteCurrency
+// : 
+// "NGN"
+// rate
+// : 
+// 500
+// userId
+// : 
+// "user_38OI3Y47pS0u4gKiRoee5GySGiV"
+// [[Prototype]]
+// : 
+// Object
+// metadata
+// : 
+// null
+// method
+// : 
+// "CRYPTO"
+// orderId
+// : 
+// "ORD-01KKVPAWT65E2JGV57BZAMMWAR"
+// orderType
+// : 
+// "BUY"
+// paymentDetails
+// : 
+// null
+// reference
+// : 
+// null
+// status
+// : 
+// "SUCCESS"
+// triggerAddress
+// : 
+// "0xb0a7a90ec013d3897a8a861bb499fad985936e81"
+// userId
+// : 
+// "user_38OI3Y47pS0u4gKiRoee5GySGiV"
+// walletId
+// : 
+// "699d1ef88d2714a585eca8bf"
+// [[Prototype]]
+// : 
+// Object
 
