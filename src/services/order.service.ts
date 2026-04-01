@@ -980,7 +980,7 @@ class OrderService {
         message: error.message || 'Failed to process instant order'
       };
     }
-  }
+    }
 
     async create_Order_Queue(payload: any) {
       return await this.generalQueue.add('create-order', payload);
