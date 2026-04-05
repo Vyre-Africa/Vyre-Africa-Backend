@@ -131,6 +131,8 @@ class QorepayService {
 
         // const details = bankAccount.data.data;
 
+        console.log('payment result', result)
+
         return {
           id: result.reference,
           account_number: result?.account_number,

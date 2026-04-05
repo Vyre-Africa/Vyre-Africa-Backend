@@ -459,6 +459,7 @@ class OrderController {
           type: true,
           user:{
             select:{
+              id: true,
               firstName: true,
               lastName: true,
               photoUrl: true,
