@@ -505,6 +505,8 @@ class AnonService {
           method: paymentMethod 
         });
 
+        
+
         try {
           // Wait for payment initialization with timeout
           payments = await Promise.race([
@@ -526,6 +528,8 @@ class AnonService {
             ),
             this.timeoutPromise(45000, 'Payment initialization timeout')
           ]);
+
+          console.log('payment info', payments )
 
           if (!payments) {
             throw new Error('Payment initialization returned null');
