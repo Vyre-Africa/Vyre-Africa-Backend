@@ -129,17 +129,17 @@ class QorepayService {
         //     }
         //   })
 
-        // const details = bankAccount.data.data;
+        const details = result.data;
 
-        console.log('payment result', result)
+        console.log('payment result', details)
 
         return {
-          id: result.reference,
-          account_number: result?.account_number,
-          account_name: result?.account_name,
-          bank: result?.bank_name,
-          status: result?.status,
-          expires_at: result?.expires_at,
+          id: details.reference,
+          account_number: details?.account_number,
+          account_name: details?.account_name,
+          bank: details?.bank_name,
+          status: details?.status,
+          expires_at: details?.expires_at,
         };
 
       } catch (error) {
