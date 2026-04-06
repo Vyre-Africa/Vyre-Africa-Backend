@@ -22,6 +22,7 @@ interface ReservationResult {
   requestedAmount: string;
   orderAmount?: string;
   amountProcessed?: string;
+  TotalAmountReserved?: string;
   amountReserved?: string;
   reason?: string;
 }
@@ -228,8 +229,9 @@ class OrderSlotService {
         requestedAmount: requestedDecimal.toString(),
         orderAmount: updatedOrder!.amount.toString(),
         amountProcessed: updatedOrder!.amountProcessed.toString(),
-        amountReserved: updatedOrder!.amountReserved.toString()
-      };
+        TotalAmountReserved: updatedOrder!.amountReserved.toString(),
+        amountReserved: amountToReserve.toString()
+      }
 
     } catch (error: any) {
       logger.error('Atomic slot reservation failed', {
