@@ -595,8 +595,8 @@ class OrderService {
             quoteAmount: order.type === 'BUY' 
               ? amountToProcess.toNumber() 
               : amount,
-            baseCurrency: order.type === 'BUY' ? pair?.baseCurrency?.ISO as string : pair?.quoteCurrency?.ISO as string,
-            quoteCurrency: order.type === 'BUY' ? pair?.quoteCurrency?.ISO as string : pair?.baseCurrency?.ISO as string,
+            baseCurrency: pair?.baseCurrency?.ISO as string,
+            quoteCurrency: pair?.quoteCurrency?.ISO as string,
             rate: order.price, // Prisma accepts Decimal
             orderType: order.type
           }
