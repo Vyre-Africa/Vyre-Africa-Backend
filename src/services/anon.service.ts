@@ -638,7 +638,7 @@ class AnonService {
                   walletId: order.type === 'BUY' ? quoteWallet.id : baseWallet.id,
                   userId: user.id,
                   orderId,
-                  amount,
+                  amount: reservation.amountReserved as string,
                   currencyId,
                   // ✅ Safe handling for optional bank data
                   bankCode: bank?.bank_code || null,
