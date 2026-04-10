@@ -186,7 +186,7 @@ class OrderService {
         userId,
         title: 'Order is Live!',
         type: 'GENERAL',
-        content: `Your <strong>${orderType}</strong> order for <strong>${DecimalUtil.formatWithCurrency(amountDecimal,pair.baseCurrency?.ISO as string)}</strong> is now active.`
+        content: `Your <strong>${orderType}</strong> order with <strong>${DecimalUtil.formatWithCurrency(amountDecimal, orderType === 'SELL'? pair.baseCurrency?.ISO as string : pair.quoteCurrency?.ISO as string)}</strong> is now active.`
       });
 
       logger.info('Order created successfully', {
@@ -265,7 +265,7 @@ class OrderService {
           userId: order.userId,
           title: 'Order Cancelled',
           type: 'GENERAL',
-          content: `Your <strong>${order.type}</strong> order for <strong>${DecimalUtil.formatWithCurrency(order.amount,currencyISO as string)}</strong> has been cancelled. Funds are now available.`
+          content: `Your <strong>${order.type}</strong> order with <strong>${DecimalUtil.formatWithCurrency(order.amount,currencyISO as string)}</strong> has been cancelled. Funds are now available.`
         });
 
         return canceledOrder;
