@@ -16,43 +16,43 @@ class TransferfeeService {
    // Network-specific base fees in USD
   private networkBaseFees: Record<Network, NetworkConfig> = {
     'ETHEREUM': { 
-      base: 0.5, 
+      base: 0.1, 
       max: 15,
       minWithdrawal: 2,
       description: "High gas network"
     },
     'POLYGON': { 
-      base: 0.5, 
+      base: 0.1, 
       max: 1,
       minWithdrawal: 2,
       description: "Low cost network"
     },
     'ARBITRUM': { 
-      base: 0.5, 
+      base: 0.1, 
       max: 3,
       minWithdrawal: 2,
       description: "Optimistic rollup"
     },
     'OPTIMISM': { 
-      base: 0.5, 
+      base: 0.1, 
       max: 3,
       minWithdrawal: 2,
       description: "Optimistic rollup"
     },
     'BASE': { 
-      base: 0.5, 
+      base: 0.1, 
       max: 2,
       minWithdrawal: 2,
       description: "Coinbase L2"
     },
     'BSC': { 
-      base: 0.5, 
+      base: 0.1, 
       max: 1.5,
       minWithdrawal: 2,
       description: "Binance chain"
     },
     'TRON': { 
-      base: 0.5, 
+      base: 0.1, 
       max: 2,
       minWithdrawal: 2,
       description: "Energy-based fees"
