@@ -26,7 +26,7 @@ class AccountService {
           // Return true if a crypto account was deleted
           return deletedCryptoAccount.count > 0
         } catch (error) {
-          console.error('Error deleting account:', error)
+          // console.error('Error deleting account:', error)
           return false
         }
     }

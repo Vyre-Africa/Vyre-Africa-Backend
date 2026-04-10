@@ -25,6 +25,7 @@ const adminRouter = Router();
 //     userValidator.login(),
 //     middleware.handleValidationError,
 //     adminUserController.loginUser,
+
 // );
 
 adminRouter.post(
