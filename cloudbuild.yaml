@@ -1,0 +1,30 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    env:
+      - 'DOCKER_API_VERSION=1.41'
+    args:
+      - build
+      - '-t'
+      - 'europe-west1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-africa-backend-dev:$COMMIT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    env:
+      - 'DOCKER_API_VERSION=1.41'
+    args:
+      - push
+      - 'europe-west1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-africa-backend-dev:$COMMIT_SHA'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - vyre-africa-backend-dev
+      - '--image=europe-west1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-africa-backend-dev:$COMMIT_SHA'
+      - '--region=europe-west1'
+      - '--platform=managed'
+      - '--quiet'
+
+images:
+  - 'europe-west1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-africa-backend-dev:$COMMIT_SHA'
