@@ -28,3 +28,6 @@ steps:
 
 images:
   - 'europe-west1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-africa-backend-dev:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
