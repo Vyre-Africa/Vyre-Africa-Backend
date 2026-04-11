@@ -84,8 +84,8 @@ const config = {
         secretKey: process.env.PAYSTACK_SECRET || ''
     },
     flutterwave: {
-        FLW_PUBLIC_KEY: process.env.FLW_PUBLIC_KEY || '',
-        FLW_SECRET_KEY: process.env.FLW_SECRET_KEY || ''
+        FLW_PUBLIC_KEY: process.env.FLW_PUBLIC_KEY,
+        FLW_SECRET_KEY: process.env.FLW_SECRET_KEY
     },
     Admin_Id: process.env.Admin_Id || '',
     defaultCurrency: process.env.DEFAULT_CURRENCY || 'NGN',

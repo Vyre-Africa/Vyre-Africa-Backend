@@ -12,11 +12,22 @@ const Flutterwave = require('flutterwave-node-v3');
 class FlutterwaveService {
     flw: any;
 
+    // constructor() {
+    //   this.flw = new Flutterwave(
+    //     config.flutterwave.FLW_PUBLIC_KEY,
+    //     config.flutterwave.FLW_SECRET_KEY
+    //   );
+    // }
     constructor() {
-      this.flw = new Flutterwave(
-        config.flutterwave.FLW_PUBLIC_KEY,
-        config.flutterwave.FLW_SECRET_KEY
-      );
+      const publicKey = config.flutterwave.FLW_PUBLIC_KEY;
+      const secretKey = config.flutterwave.FLW_SECRET_KEY;
+        
+      if (!publicKey || !secretKey) {
+        console.warn('⚠️ Flutterwave keys not configured, skipping initialization');
+        return;
+      }
+        
+      this.flw = new Flutterwave(publicKey, secretKey);
     }
 
     async getBanks(){
