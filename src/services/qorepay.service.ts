@@ -165,12 +165,12 @@ class QorepayService {
 
       const {currency,amount,userId, walletId, email, phone, account_number, bank_code, recipient_name } = payload
 
-      let BlockId: string = '';
+      // let BlockId: string = '';
 
       try {
 
         // block amount in wallet before transfer
-        BlockId = await walletService.block_Amount(amount as any, walletId)
+        // BlockId = await walletService.block_Amount(amount as any, walletId)
 
 
         const data = {
@@ -182,7 +182,6 @@ class QorepayService {
           description: `${currency} withdrawal to ${recipient_name} `,
           metadata: {
             userId,
-            BlockId,
             walletId,
             amount,
             currency,
@@ -195,6 +194,9 @@ class QorepayService {
         console.log('first response',response.data)
         const result = response.data
 
+        await walletService.debit_Wallet(Number(amount), walletId)
+        console.log('wallet debited')
+
         return {success:true, ...result}
 
       } catch (error:any) {
@@ -204,14 +206,14 @@ class QorepayService {
         // ========================================
         // ROLLBACK: UNBLOCK AMOUNT IF TRANSFER FAILS
         // ========================================
-        if (BlockId) {
-          try {
-            await walletService.unblock_Amount(BlockId);
-            logger.info(`Amount unblocked after failed transfer: ${BlockId}`);
-          } catch (unblockError) {
-            logger.error(`Failed to unblock amount: ${BlockId}`, unblockError);            
-          }
-        }
+        // if (BlockId) {
+        //   try {
+        //     await walletService.unblock_Amount(BlockId);
+        //     logger.info(`Amount unblocked after failed transfer: ${BlockId}`);
+        //   } catch (unblockError) {
+        //     logger.error(`Failed to unblock amount: ${BlockId}`, unblockError);            
+        //   }
+        // }
 
         logger.error('Bank transfer initialization failed:', error);
         throw error;
