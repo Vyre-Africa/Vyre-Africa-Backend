@@ -559,7 +559,7 @@ class eventService {
   }) {
     const {event} = payload;
     const {reference, amount, metadata } = payload.data
-    const {walletId, userId, currency, BlockId} = metadata
+    const {walletId, userId, currency} = metadata
   
     console.log('event', event)
     const processedAmount = (Number(amount)) / 100
@@ -681,12 +681,34 @@ class eventService {
           return { status: 'failed', action: 'WalletId-or-userId-not-found' };
         }
   
-        // ✅ DEBIT wallet (user is withdrawing OUT of Vyre)
-        await Promise.all([
-          walletService.debit_Wallet(processedAmount, walletId),
-          // 2. Unblock the amount (since it's now successfully debited)
-          BlockId ? walletService.unblock_Amount(BlockId) : Promise.resolve(),
-          prisma.transaction.create({
+        // // ✅ DEBIT wallet (user is withdrawing OUT of Vyre)
+        // await Promise.all([
+        //   walletService.debit_Wallet(processedAmount, walletId),
+        //   // 2. Unblock the amount (since it's now successfully debited)
+        //   BlockId ? walletService.unblock_Amount(BlockId) : Promise.resolve(),
+        //   prisma.transaction.create({
+        //     data:{
+        //       userId,
+        //       currency,
+        //       amount: processedAmount,
+        //       reference,
+        //       status: 'SUCCESSFUL',
+        //       walletId,
+        //       type: 'FIAT_WITHDRAWAL',
+        //       description: `${currency} withdrawal to bank account`,
+        //       metadata: {
+        //         type: 'Bank-Withdrawal',
+        //         amount: processedAmount,
+        //         reference,
+        //         BlockId,
+        //         account_number: metadata.account_number,
+        //         bank_code: metadata.bank_code
+        //       }
+        //     }
+        //   })
+        // ])
+
+        await prisma.transaction.create({
             data:{
               userId,
               currency,
@@ -700,13 +722,11 @@ class eventService {
                 type: 'Bank-Withdrawal',
                 amount: processedAmount,
                 reference,
-                BlockId,
                 account_number: metadata.account_number,
                 bank_code: metadata.bank_code
               }
             }
-          })
-        ])
+        })
   
         // CHECK FOR AWAITING TRANSFER (order completion)
         if (awaiting) {
@@ -746,30 +766,27 @@ class eventService {
       if(event === 'DEBIT_FAILED'){
         console.log('DEBIT_FAILED - Withdrawal failed, releasing blocked funds');
 
-        // ✅ Unblock the amount (return it to available balance)
-        if(BlockId){
-          await walletService.unblock_Amount(BlockId);
-          logger.info(`Blocked amount released for failed withdrawal: ${BlockId}`);
-        }
 
-        await prisma.transaction.create({
-          data:{
-            userId,
-            currency,
-            amount: processedAmount,
-            reference,
-            status: 'FAILED',
-            walletId,
-            type: 'FIAT_WITHDRAWAL',
-            description: `${currency} withdrawal failed`,
-            metadata: {
-              type: 'Bank-Withdrawal-Failed',
-              amount: processedAmount,
-              reference,
-              BlockId
+        await Promise.all([
+          walletService.credit_Wallet(processedAmount, walletId),
+          prisma.transaction.create({
+            data:{
+                userId,
+                currency,
+                amount: processedAmount,
+                reference,
+                status: 'FAILED',
+                walletId,
+                type: 'FIAT_WITHDRAWAL',
+                description: `${currency} withdrawal failed`,
+                metadata: {
+                  type: 'Bank-Withdrawal-Failed',
+                  amount: processedAmount,
+                  reference
+                }
             }
-          }
-        })
+          })
+        ])
   
         // Notify user of failed withdrawal
         if(!awaiting){
@@ -788,16 +805,6 @@ class eventService {
     } catch (error) {
       logger.error(`Error handling webhook for: ${reference}:`, error);
       console.error('Error handling webhook:', error);
-
-      // ✅ Emergency fallback: Unblock amount if webhook processing fails
-      if(event === 'DEBIT_FAILED' && BlockId){
-        try {
-          await walletService.unblock_Amount(BlockId);
-          logger.warn(`Emergency unblock executed for BlockId: ${BlockId}`);
-        } catch (unblockError) {
-          logger.error(`Failed to emergency unblock BlockId: ${BlockId}`, unblockError);
-        }
-      }
 
       throw error;
     }
