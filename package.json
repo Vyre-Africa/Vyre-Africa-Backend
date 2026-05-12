@@ -25,7 +25,8 @@
         "@casl/ability": "^6.7.1",
         "@casl/prisma": "^1.4.1",
         "@clerk/express": "^1.7.60",
-        "@prisma/client": "^5.22.0",
+        "@prisma/adapter-pg": "^7.8.0",
+        "@prisma/client": "^7.8.0",
         "@supabase/supabase-js": "^2.43.4",
         "@types/winston": "^2.4.4",
         "@upstash/redis": "^1.35.7",
@@ -60,7 +61,7 @@
         "nodemon": "^3.0.1",
         "otplib": "^12.0.1",
         "paystack-sdk": "^2.5.13",
-        "prisma": "^5.22.0",
+        "pg": "^8.20.0",
         "qrcode": "^1.5.4",
         "rate-limit-redis": "^4.3.1",
         "slugify": "^1.6.6",
@@ -68,6 +69,7 @@
         "swagger-autogen": "^2.23.7",
         "swagger-ui-express": "^5.0.1",
         "ts-node": "^10.9.2",
+        "typescript": "^6.0.3",
         "ulid": "^3.0.2",
         "uuid": "^11.1.0",
         "winston": "^3.17.0",
@@ -86,9 +88,11 @@
         "@types/node": "^24.1.0",
         "@types/node-cron": "^3.0.11",
         "@types/otplib": "^10.0.0",
+        "@types/pg": "^8.20.0",
         "@types/qrcode": "^1.5.6",
         "@types/speakeasy": "^2.0.10",
         "@types/swagger-ui-express": "^4.1.8",
+        "prisma": "^7.8.0",
         "tsx": "^4.21.0"
     }
 }

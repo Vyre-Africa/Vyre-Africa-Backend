@@ -1,6 +1,6 @@
 // import { OrderStatus, PrismaClient, StoreStatus, TransactionStatus, UserType } from '@prisma/client';
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import mailService from '../services/mail.service';
 import { generateRefCode, OTP_CODE_EXP, hashData } from '../utils';

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import axios from "axios";
 import stablecoinService from './stablecoin.service';
@@ -19,6 +19,7 @@ import logger from '../config/logger';
 import { DecimalUtil } from './decimal.util';
 import { Wallet } from '@prisma/client';
 import { createBeneficiary } from './beneficiary.service';
+import virtualAccountService from './virtualAccount.service';
 
 // import connection from '../config/redis.config';
 
@@ -761,7 +762,7 @@ class WalletService
                 case 'USDT':
 
                     result = await stablecoinService.Transfer_Tether({
-                        chain: currency?.chain as string, 
+                        chain: currency?.chain as string,
                         userId, 
                         walletId: wallet.id,
                         amount,
@@ -901,35 +902,33 @@ class WalletService
             }
 
             // ============================================
-            // STEP 4: EXECUTE TATUM TRANSFER
+            // STEP 4: EXECUTE TRANSFER
             // ============================================
 
-            // Prepare transfer data
-            const data = {
-                senderAccountId: user_Wallet.id,
-                recipientAccountId: receipient_Wallet.id,
-                amount: DecimalUtil.roundForDisplay(amountDecimal,currency.ISO), // ✅ String for API
-                anonymous: false,
-                compliant: false
-            };
 
-            logger.info('📡 Executing Tatum API call', {
+            logger.info('📡 Executing Offchain Transfer', {
                 from: user_Wallet.id,
                 to: receipient_Wallet.id,
                 amount: amountDecimal.toString(),
                 currency: currency.ISO
             });
-            const apiStartTime = Date.now();
+            const transferStartTime = Date.now();
 
             // Execute transfer
-            const response = await tatumAxios.post('/ledger/transaction', data);
-            const paymentData = response.data;
-            const apiDuration = Date.now() - apiStartTime;
+            const response = await virtualAccountService.p2pTransfer({
+                fromUserId: userId,
+                toUserId: receipientId,
+                amount,
+                currency: currency?.ISO!,
+                description: `Offchain transfer of ${currency?.ISO!}`,
+            }) 
 
-            logger.info('🟢 Tatum API complete', {
-                reference: paymentData.reference,
-                status: paymentData.status,
-                duration: `${apiDuration}ms`
+            // const paymentData = response.data;
+            const transferDuration = Date.now() - transferStartTime;
+
+            logger.info('🟢 Offchain transfer complete', {
+                reference: response.reference,
+                duration: `${transferDuration}ms`
             });
 
             // ============================================
@@ -953,7 +952,7 @@ class WalletService
                             userId: userId,
                             currency: currency.ISO,
                             amount: amountDecimal.negated(),
-                            reference: paymentData.reference,
+                            reference: response.reference,
                             status: 'SUCCESSFUL',
                             walletId: user_Wallet.id,
                             type: 'DEBIT_PAYMENT',
@@ -969,7 +968,7 @@ class WalletService
                             userId: receipientId,
                             currency: currency.ISO,
                             amount: amountDecimal,
-                            reference: paymentData.reference,
+                            reference: response.reference,
                             status: 'SUCCESSFUL',
                             walletId: receipient_Wallet.id,
                             type: 'CREDIT_PAYMENT',
@@ -1024,20 +1023,20 @@ class WalletService
                     } catch (beneficiaryError: any) {
                         // ✅ Don't fail the transfer if beneficiary creation fails
                         logger.warn('Failed to create beneficiary', {
-                            reference: paymentData.reference,
+                            reference: response.reference,
                             error: beneficiaryError.message
                         });
                     }
 
                     const postProcessDuration = Date.now() - postProcessStart;
                     logger.info('🔄 Background post-processing complete', {
-                    reference: paymentData.reference,
+                    reference: response.reference,
                     duration: `${postProcessDuration}ms`
                     });
 
                 } catch (postError: any) {
                     logger.error('⚠️ Background post-processing failed (non-critical)', {
-                    reference: paymentData.reference,
+                    reference: response.reference,
                     error: postError.message
                     });
                     // Don't throw - transfer already succeeded
@@ -1046,14 +1045,14 @@ class WalletService
         
             const totalDuration = Date.now() - startTime;
                 logger.info('✅ Offchain transfer COMPLETE', {
-                reference: paymentData.reference,
+                reference: response.reference,
                 totalDuration: `${totalDuration}ms`
             });
 
             // ✅ Return immediately after Tatum API succeeds
             return {
                 success: true,
-                reference: paymentData.reference,
+                reference: response.reference,
                 amount: amountDecimal.toString(),
                 currency: currency.ISO,
                 senderWallet: user_Wallet.id,
@@ -1166,17 +1165,17 @@ class WalletService
             }
 
             // ============================================
-            // STEP 3: EXECUTE TATUM TRANSFER
+            // STEP 3: EXECUTE OFFCHAIN TRANSFER
             // ============================================
-            const transferData = {
-                senderAccountId: user_Wallet.id,
-                recipientAccountId: receipient_Wallet.id, // ✅ Removed optional chaining
-                amount: DecimalUtil.roundForDisplay(amountDecimal, currency.ISO),
-                anonymous: false,
-                compliant: false
-            };
+            // const transferData = {
+            //     senderAccountId: user_Wallet.id,
+            //     recipientAccountId: receipient_Wallet.id, // ✅ Removed optional chaining
+            //     amount: DecimalUtil.roundForDisplay(amountDecimal, currency.ISO),
+            //     anonymous: false,
+            //     compliant: false
+            // };
 
-            logger.info('📡 Executing Tatum API call', {
+            logger.info('📡 Executing offchain transfer', {
                 from: user_Wallet.id,
                 to: receipient_Wallet.id, // ✅ Removed optional chaining
                 amount: amountDecimal.toString(),
@@ -1186,14 +1185,20 @@ class WalletService
             const apiStartTime = Date.now();
 
             // ✅ Add timeout to prevent hanging
-            const response = await tatumAxios.post('/ledger/transaction',transferData);
+            const response = await virtualAccountService.p2pTransfer({
+                fromUserId: userId,
+                toUserId: receipientId,
+                amount,
+                currency: currency?.ISO!,
+                description: `Offchain transfer of ${currency?.ISO!}`,
+            })
 
-            const paymentData = response.data;
+            // const paymentData = response.data;
             const apiDuration = Date.now() - apiStartTime;
 
             logger.info('🟢 Tatum API complete', {
-                reference: paymentData.reference,
-                status: paymentData.status,
+                reference: response.reference,
+                // status: response.status,
                 duration: `${apiDuration}ms`
             });
 
@@ -1217,7 +1222,7 @@ class WalletService
                         userId: userId,
                         currency: currency.ISO,
                         amount: amountDecimal.negated(),
-                        reference: paymentData.reference,
+                        reference: response.reference,
                         status: 'SUCCESSFUL',
                         walletId: user_Wallet.id,
                         type: 'DEBIT_PAYMENT',
@@ -1233,7 +1238,7 @@ class WalletService
                         userId: receipientId,
                         currency: currency.ISO,
                         amount: amountDecimal,
-                        reference: paymentData.reference,
+                        reference: response.reference,
                         status: 'SUCCESSFUL',
                         walletId: receipient_Wallet.id, // ✅ Removed optional chaining
                         type: 'CREDIT_PAYMENT',
@@ -1250,13 +1255,13 @@ class WalletService
 
                 const postProcessDuration = Date.now() - postProcessStart;
                     logger.info('🔄 Background post-processing complete', {
-                    reference: paymentData.reference,
+                    reference: response.reference,
                     duration: `${postProcessDuration}ms`
                 });
 
             } catch (postError: any) {
                     logger.error('⚠️ Background post-processing failed (non-critical)', {
-                    reference: paymentData.reference,
+                    reference: response.reference,
                     error: postError.message
                 });
             }
@@ -1264,13 +1269,13 @@ class WalletService
 
             const totalDuration = Date.now() - startTime;
                 logger.info('✅ Direct offchain transfer COMPLETE', {
-                reference: paymentData.reference,
+                reference: response.reference,
                 totalDuration: `${totalDuration}ms`
             });
 
             return {
                 success: true,
-                reference: paymentData.reference,
+                reference: response.reference,
                 amount: amountDecimal.toString(),
                 currency: currency.ISO,
                 senderWallet: user_Wallet.id,
@@ -1494,8 +1499,8 @@ class WalletService
     async getAccount(id: string) {
         try {
             // ✅ Single query - fetch Tatum data with wallet info in one transaction
-            const [tatumResponse, wallet] = await Promise.all([
-                tatumAxios.get(`/ledger/account/${id}`),
+            const [account, wallet] = await Promise.all([
+                virtualAccountService.getAccountById(id), // ✅ Use service method to get account details
                 prisma.wallet.findUnique({
                     where: { id },
                     select: {
@@ -1512,17 +1517,17 @@ class WalletService
 
             if (!wallet) throw new Error(`Wallet ${id} not found`);
 
-            const result = tatumResponse.data;
-            const currencyISO = wallet.currency?.ISO || 'BTC';
+            // const result = tatumResponse.data;
+            const currencyISO = wallet.currency?.ISO || 'USDC';
 
             // ✅ Round balances (in-memory, fast)
             const accountBalance = DecimalUtil.roundForDisplay(
-                result.balance?.accountBalance || 0,
+                account.balance || 0,
                 currencyISO
             );
 
             const availableBalance = DecimalUtil.roundForDisplay(
-                result.balance?.availableBalance || 0,
+                account.available || 0,
                 currencyISO
             );
 
@@ -1530,7 +1535,7 @@ class WalletService
             return await prisma.wallet.update({
                 where: { id },
                 data: {
-                    frozen: result.frozen,
+                    frozen: account.status !== 'ACTIVE' ? true : false,
                     accountBalance,
                     availableBalance,
                     updatedAt: new Date()
@@ -1599,31 +1604,25 @@ class WalletService
 
     async debit_Wallet(amount: number, accountId: string){
 
-        const data = {
+        const response = await virtualAccountService.debitAccount({
             accountId,
-            amount:String(amount)
-        };
+            amount: String(amount)
+        })
 
-        const response = await tatumAxios.put('/ledger/virtualCurrency/revoke', data)
-        const responseData = response.data
-        console.log(responseData.reference)
+        const wallet = await this.getAccount(accountId)
 
-        return responseData.reference
+        return wallet
         
     }
 
     async credit_Wallet(amount: number, accountId: string){
 
-        const data = {
-            accountId,
-            amount:String(amount)
-        };
-
         console.log('crediting wallet', accountId)
 
-        const response = await tatumAxios.put('/ledger/virtualCurrency/mint', data)
-        const responseData = response.data
-        console.log(responseData.reference)
+        const response = await virtualAccountService.creditAccount({
+            accountId,
+            amount: String(amount)
+        })
         // sync wallet
         const wallet = await this.getAccount(accountId)
 
@@ -1640,29 +1639,17 @@ class WalletService
 
     async block_Amount(amount: number, accountId: string){
 
-        const data = {
+        const blockResponse = await virtualAccountService.createBlock( {
+            accountId,
             amount: String(amount),
-            type:'ORDER_BLOCK',
-            description:'order amount blocked',
-            ensureSufficientBalance: true
-        };
-
-        const response = await tatumAxios.post(`https://api.tatum.io/v3/ledger/account/block/${accountId}`, data)
-        const responseData = response.data
-        console.log(responseData.id)
-
-        const record = await prisma.block.create({
-            data:{
-                id: responseData.id,
-                walletId: accountId,
-                amount,
-                description:'order amount blocked'
-            }
+            description: 'order amount blocked'
         })
+
+        console.log(blockResponse.id)
 
         console.log('amount blocked')
 
-        return responseData.id
+        return blockResponse.id
         
     }
 
@@ -1672,28 +1659,23 @@ class WalletService
 
         try {
 
-            const data = {
-                recipientAccountId,
-                amount: String(amount),
-                anonymous: true,
-                compliant: false
-            };
-
             logger.info('🔵 Unblock transfer START', { 
                 blockId, 
                 recipientAccountId,
                 amount: String(amount)
             });
 
-            const response = await tatumAxios.put(`https://api.tatum.io/v3/ledger/account/block/${blockId}`, data)
-            const responseData = response.data
+            const blockResponse = await virtualAccountService.transferFromBlock({
+                blockId,
+                toAccountId: recipientAccountId,
+                amount: String(amount),
+                description: `Unblock transfer of ${amount} to account ${recipientAccountId}`
+            });
 
-            console.log(responseData.reference)
             const duration = Date.now() - startTime;
 
             logger.info('🟢 Unblock transfer API complete', {
                 blockId,
-                reference: responseData.reference,
                 duration: `${duration}ms`
             });
 
@@ -1717,7 +1699,6 @@ class WalletService
 
             return {
                 success: true,
-                reference: responseData.reference,
                 blockId,
                 recipientAccountId
             }; 
@@ -1741,18 +1722,10 @@ class WalletService
 
     async unblock_Amount(blockId:string){
 
-        const response = await tatumAxios.delete(`https://api.tatum.io/v3/ledger/account/block/${blockId}`)
-        const responseData = response.data
-        console.log(responseData)
+        const blockResponse = await virtualAccountService.unblock(blockId)
+        console.log(blockResponse)
 
-        await prisma.block.update({
-            where:{id: blockId},
-            data:{
-              active: false
-            }
-        })
-
-        return responseData.reference
+        return blockResponse
         
     }
 

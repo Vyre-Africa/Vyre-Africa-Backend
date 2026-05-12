@@ -10,8 +10,6 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 enum OtcUserType {
@@ -136,6 +134,12 @@ enum TransactionStatus {
   SUCCESSFUL
   PENDING
   FAILED
+
+  PROCESSING
+  COMPLETED
+  REVERSED
+  CANCELLED
+  EXPIRED
 }
 
 enum TransactionPaymentMethod {
@@ -158,12 +162,21 @@ enum TransactionType {
   TRANSFER
   CREDIT_PAYMENT
   DEBIT_PAYMENT
-  CRYPTO_DEPOSIT
-  CRYPTO_WITHDRAWAL
   FIAT_DEPOSIT
   FIAT_WITHDRAWAL
   EXCHANGE_BUY
   EXCHANGE_SELL
+
+  P2P_TRANSFER // user to user
+  BANK_DEPOSIT // bank to wallet
+  BANK_WITHDRAWAL // wallet to bank
+  CRYPTO_DEPOSIT // blockchain to wallet
+  CRYPTO_WITHDRAWAL // wallet to blockchain
+  CURRENCY_EXCHANGE // NGN to USDT etc.
+  FEE_CHARGE
+  REFUND
+  REVERSAL
+  ADJUSTMENT
 }
 
 enum AwaitingStatus {
@@ -364,11 +377,12 @@ model User {
   Swap            Swap[]
   userKyc         UserKyc[]         @relation("UserKycToUser")
 
-  Awaiting      Awaiting[]
-  postDetails   postDetails[]
-  beneficiaries beneficiary[]
-  transfers     TransferRequest[]
-  PinAttempt    PinAttempt[]
+  Awaiting       Awaiting[]
+  postDetails    postDetails[]
+  beneficiaries  beneficiary[]
+  transfers      TransferRequest[]
+  PinAttempt     PinAttempt[]
+  VirtualAccount VirtualAccount[]
 
   // 🚀 PERFORMANCE INDEXES - ADD THESE
   @@index([userStatus]) // Fast status lookups
@@ -663,13 +677,13 @@ model Wallet {
   currencyId String?
   currency   Currency? @relation(fields: [currencyId], references: [id])
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @default(now())
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @default(now())
   Tatum_customerId   String
   accountingCurrency String
   depositAddress     String?
   subscriptionId     String?
-  gasPumpAddress    GasPumpAddress?
+  gasPumpAddress     GasPumpAddress?
 
   destinationTag String?
   derivationKey  Int?
@@ -686,7 +700,7 @@ model Wallet {
   quotePairs  Pair[]        @relation("QuoteWallet")
   Awaiting    Awaiting[]
   postDetails postDetails[]
-  
+
   bankDetails bankDetails[]
   SweepLogs   SweepLog[]
 
@@ -711,19 +725,19 @@ model bankDetails {
 }
 
 model SweepLog {
-  id             String   @id @default(cuid())
-  walletId       String
-  userId         String
-  depositTxId    String   @unique  // prevents double processing
-  sweepTxId      String?
-  amount         String
-  stablecoin     String
-  chain          String
-  status         String   // QUEUED | PROCESSING | SUCCESS | FAILED
-  error          String?
-  createdAt      DateTime @default(now())
+  id          String   @id @default(cuid())
+  walletId    String
+  userId      String
+  depositTxId String   @unique // prevents double processing
+  sweepTxId   String?
+  amount      String
+  stablecoin  String
+  chain       String
+  status      String // QUEUED | PROCESSING | SUCCESS | FAILED
+  error       String?
+  createdAt   DateTime @default(now())
 
-  wallet         Wallet   @relation(fields: [walletId], references: [id])
+  wallet Wallet @relation(fields: [walletId], references: [id])
 
   @@index([walletId])
   @@index([status])
@@ -732,13 +746,13 @@ model SweepLog {
 
 model GasPumpLog {
   id           String   @id @default(cuid())
-  chain        String   
-  ownerAddress String   
+  chain        String
+  ownerAddress String
   nextIndex    Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  addresses    GasPumpAddress[]
+  addresses GasPumpAddress[]
 
   @@unique([chain, ownerAddress])
   @@index([chain])
@@ -749,17 +763,17 @@ model GasPumpAddress {
   chain          String
   ownerAddress   String
   depositAddress String   @unique
-  index          Int      
+  index          Int
   walletId       String?  @unique
   activated      Boolean  @default(false)
   activatedTxId  String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  gasPumpLog     GasPumpLog @relation(fields: [chain, ownerAddress], references: [chain, ownerAddress])
-  wallet         Wallet?    @relation(fields: [walletId], references: [id])
+  gasPumpLog GasPumpLog @relation(fields: [chain, ownerAddress], references: [chain, ownerAddress])
+  wallet     Wallet?    @relation(fields: [walletId], references: [id])
 
-  @@unique([chain, index])           // same chain can't reuse an index
+  @@unique([chain, index]) // same chain can't reuse an index
   @@index([chain])
   @@index([walletId])
   @@index([depositAddress])
@@ -845,17 +859,6 @@ model Pair {
   @@index([baseWalletId])
   @@index([quoteWalletId])
   @@index([createdAt])
-}
-
-model Block {
-  id          String   @id @default(cuid())
-  active      Boolean  @default(true)
-  walletId    String?
-  wallet      Wallet?  @relation(fields: [walletId], references: [id])
-  amount      Decimal  @db.Decimal(20, 8)
-  description String
-  createdAt   DateTime @default(now())
-  Order       Order[]
 }
 
 model PendingActivity {
@@ -1006,4 +1009,322 @@ model AdminRevenue {
   currency       String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @default(now())
+}
+
+// // VirtualAccount Service // //
+
+// ==================== ENUMS ====================
+
+enum Virtual_Account_Type {
+  STANDARD
+  SAVINGS
+  ESCROW
+  FEE_COLLECTION // internal fee account
+  FLOAT // company float account
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  SUSPENDED
+  CLOSED
+}
+
+enum WalletType {
+  HD
+  KEYPAIR
+}
+
+enum LedgerEntryType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  FEE
+  REFUND
+  REVERSAL
+  EXCHANGE
+  ADJUSTMENT
+}
+
+enum LedgerEntryStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum HoldStatus {
+  ACTIVE
+  RELEASED
+  EXPIRED
+  USED
+}
+
+enum FeeType {
+  PERCENTAGE
+  FLAT
+  HYBRID // percentage + flat
+}
+
+enum ReconciliationStatus {
+  PENDING
+  MATCHED
+  DISCREPANCY
+  RESOLVED
+}
+
+// Virtual Account System
+// Double-entry bookkeeping ledger
+
+model VirtualAccount {
+  id         String               @id @default(cuid())
+  userId     String
+  currency   String // NGN, USD, USDT, BTC, ETH etc.
+  type       Virtual_Account_Type @default(STANDARD)
+  status     AccountStatus        @default(ACTIVE)
+  walletType WalletType           @default(HD)
+
+  // Balances
+  balance   Decimal @default(0) @db.Decimal(20, 8)
+  frozen    Decimal @default(0) @db.Decimal(20, 8) // locked/pending funds
+  available Decimal @default(0) @db.Decimal(20, 8) // balance - frozen
+
+  // Blockchain config  
+  xpub       String?
+  blockchain String?
+
+  // Metadata
+  label    String? // e.g "Main Wallet", "Savings"
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user                  User                    @relation(fields: [userId], references: [id])
+  debitEntries          LedgerEntry[]           @relation("DebitAccount")
+  creditEntries         LedgerEntry[]           @relation("CreditAccount")
+  transactions          VirtualTransaction[]
+  blocks                Block[]
+  VirtualAccountAddress VirtualAccountAddress[]
+
+  @@unique([userId, currency, type])
+  @@index([userId])
+  @@index([currency])
+  @@index([status])
+}
+
+model VirtualAccountAddress {
+  id               String   @id @default(cuid())
+  virtualAccountId String
+  blockchain       String
+  address          String
+  isActive         Boolean  @default(true)
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  // HD wallet fields
+  xpub  String?
+  index Int?
+
+  // Keypair wallet fields
+  encryptedPrivateKey String?
+  encryptedMnemonic   String?
+
+  // Token fields
+  isToken       Boolean @default(false)
+  tokenMint     String?
+  tokenSymbol   String?
+  tokenStandard String? // SPL, ERC20, TRC20, BEP20
+
+  // Relations
+  virtualAccount VirtualAccount @relation(fields: [virtualAccountId], references: [id])
+
+  @@unique([address, blockchain, tokenMint])
+  @@unique([xpub, index, blockchain])
+  @@index([virtualAccountId])
+  @@index([blockchain])
+  @@index([address])
+}
+
+model XpubIndex {
+  id         String   @id @default(cuid())
+  xpub       String
+  blockchain String
+  lastIndex  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([xpub, blockchain])
+}
+
+model LedgerEntry {
+  id String @id @default(cuid())
+
+  // Double entry - every transaction has a debit and credit
+  debitAccountId  String
+  creditAccountId String
+
+  amount   Decimal @db.Decimal(20, 8)
+  currency String
+
+  type   LedgerEntryType
+  status LedgerEntryStatus @default(COMPLETED)
+
+  reference   String  @unique
+  description String?
+  metadata    Json?
+
+  // Link to parent transaction
+  transactionId String?
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  debitAccount  VirtualAccount      @relation("DebitAccount", fields: [debitAccountId], references: [id])
+  creditAccount VirtualAccount      @relation("CreditAccount", fields: [creditAccountId], references: [id])
+  transaction   VirtualTransaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([debitAccountId])
+  @@index([creditAccountId])
+  @@index([reference])
+  @@index([transactionId])
+  @@index([createdAt])
+}
+
+model VirtualTransaction {
+  id String @id @default(cuid())
+
+  // Parties
+  fromAccountId String?
+  toAccountId   String?
+
+  // Amount details
+  amount    Decimal @db.Decimal(20, 8)
+  fee       Decimal @default(0) @db.Decimal(20, 8)
+  netAmount Decimal @db.Decimal(20, 8) // amount - fee
+  currency  String
+
+  // Exchange rate (for cross-currency transfers)
+  fromCurrency    String?
+  toCurrency      String?
+  exchangeRate    Decimal? @db.Decimal(20, 8)
+  convertedAmount Decimal? @db.Decimal(20, 8)
+
+  type   TransactionType
+  status TransactionStatus @default(PENDING)
+
+  reference   String  @unique
+  externalRef String? // reference from external provider
+  description String?
+
+  // For bank withdrawals
+  bankDetails Json?
+  blockId     String?
+
+  // For crypto
+  txHash        String?
+  blockchain    String?
+  walletAddress String?
+
+  metadata      Json?
+  failureReason String?
+
+  // Retry logic
+  retryCount  Int       @default(0)
+  lastRetryAt DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  // Relations
+  fromAccount   VirtualAccount? @relation(fields: [fromAccountId], references: [id])
+  ledgerEntries LedgerEntry[]
+  blocks        Block[]
+
+  @@index([fromAccountId])
+  @@index([toAccountId])
+  @@index([reference])
+  @@index([externalRef])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([txHash])
+}
+
+model Block {
+  id                   String              @id @default(cuid())
+  active               Boolean             @default(true)
+  walletId             String?
+  wallet               Wallet?             @relation(fields: [walletId], references: [id])
+  amount               Decimal             @db.Decimal(20, 8)
+  description          String
+  createdAt            DateTime            @default(now())
+  Order                Order[]
+  VirtualAccount       VirtualAccount?     @relation(fields: [virtualAccountId], references: [id])
+  virtualAccountId     String?
+  VirtualTransaction   VirtualTransaction? @relation(fields: [virtualTransactionId], references: [id])
+  virtualTransactionId String?
+}
+
+model FeeConfig {
+  id String @id @default(cuid())
+
+  type     TransactionType
+  currency String? // null means applies to all currencies
+
+  // Fee structure
+  feeType  FeeType  @default(PERCENTAGE)
+  feeValue Decimal  @db.Decimal(10, 4) // percentage or flat amount
+  minFee   Decimal? @db.Decimal(20, 8)
+  maxFee   Decimal? @db.Decimal(20, 8)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([type, currency])
+  @@index([type])
+  @@index([isActive])
+}
+
+model ExchangeRate {
+  id String @id @default(cuid())
+
+  fromCurrency String
+  toCurrency   String
+  rate         Decimal @db.Decimal(20, 8)
+
+  provider String? // where the rate came from
+
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  @@index([fromCurrency, toCurrency])
+  @@index([createdAt])
+  @@index([expiresAt])
+}
+
+model LedgerReconciliation {
+  id String @id @default(cuid())
+
+  accountId String
+  currency  String
+
+  // Expected vs actual
+  expectedBalance Decimal @db.Decimal(20, 8)
+  actualBalance   Decimal @db.Decimal(20, 8)
+  difference      Decimal @db.Decimal(20, 8)
+
+  status ReconciliationStatus @default(PENDING)
+  notes  String?
+
+  reconciledAt DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([accountId])
+  @@index([status])
+  @@index([createdAt])
 }

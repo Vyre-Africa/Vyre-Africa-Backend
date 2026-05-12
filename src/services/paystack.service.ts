@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { Paystack } from "paystack-sdk";
 import config from "../config/env.config";
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import axios from "axios";
 import { UserBank } from "@prisma/client";
 import { generateRefCode } from "../utils";

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../../config/prisma.config';
+import prisma from '../../config/prisma.client';
 import { endOfDay, startOfDay } from 'date-fns';
 // import { OrderStatus } from '@prisma/client';
 

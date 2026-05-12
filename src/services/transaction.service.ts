@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import { generateRefCode } from '../utils'
 import { TransactionStatus, TransactionType } from '@prisma/client';
 import { endOfDay, startOfDay } from 'date-fns';

@@ -3,7 +3,7 @@ import { AccountType } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import slugify from 'slugify';
 import config from '../config/env.config';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import mailService from '../services/mail.service';
 import paystackService from '../services/paystack.service';
 import flutterwaveService from '../services/flutterwave.service';

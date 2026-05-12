@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import logger from '../config/logger';
 
 class PinService {

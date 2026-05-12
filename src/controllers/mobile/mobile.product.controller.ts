@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../../config/prisma.config';
+import prisma from '../../config/prisma.client';
 import { endOfDay, startOfDay, subHours } from 'date-fns';
 // import productService from '../../services/product.service';
 import { create } from 'qrcode';

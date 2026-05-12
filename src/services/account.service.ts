@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 
 class AccountService {
     async deleteAccountById(accountId: string): Promise<boolean> {

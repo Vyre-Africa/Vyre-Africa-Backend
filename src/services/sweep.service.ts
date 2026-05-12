@@ -1,11 +1,12 @@
 import axios from "axios";
 import config from "../config/env.config";
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import logger from "../config/logger";
 import { Queue } from 'bullmq'
 import connection from '../config/redis.config';
 import { tatumGet, tatumPost } from "../utils";
 import chainService from "./chain.service";
+import { CHAIN_CONFIG, getChainConfigByCurrency, getChainKey} from '../config/blockchain.config';
 
 
 export interface SweepJobData {
@@ -21,7 +22,7 @@ export interface SweepJobData {
 }
 
 const SWEEP_CHAINS = [
-  'ETHEREUM', 'POLYGON', 'BSC', 'TRON',   // gas pump
+  'ETH', 'POLYGON', 'BSC', 'TRON',   // gas pump
   'BASE', 'ARBITRUM', 'OPTIMISM'  // nonce chain
 ]
 
@@ -53,7 +54,7 @@ class SweepService{
 
     // Maps your internal chain key → Tatum's transfer endpoint prefix
     public CHAIN_ENDPOINT_MAP: Record<string, string> = {
-        ETHEREUM: 'ethereum',
+        ETH: 'ethereum',
         BASE:     'base',
         BSC:      'bsc',
         POLYGON:  'polygon',
@@ -84,10 +85,7 @@ class SweepService{
 
 
         // Get chain config — this gives us mnemonic, endpoint, masterAddress etc
-        const chainConfig = chainService.getChainConfig(
-            currency.ISO as 'USDC' | 'USDT',
-            currency.chain as any
-        )
+        const chainConfig = getChainConfigByCurrency(currency.chain as any, currency.ISO);
 
         // Update log to PROCESSING
         await prisma.sweepLog.update({

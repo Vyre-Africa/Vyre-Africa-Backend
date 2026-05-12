@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import { Wallet } from '@prisma/client';
 import axios, { AxiosInstance } from "axios";
@@ -16,6 +16,9 @@ import logger from '../config/logger';
 import chainService from './chain.service';
 import { DecimalUtil } from './decimal.util';
 import gaspumpService from './gaspump.service';
+import virtualAccountService from './virtualAccount.service';
+import { CHAIN_CONFIG, getChainConfigByCurrency, getChainKey} from '../config/blockchain.config';
+
 
 
     interface ChainConfig {
@@ -42,7 +45,7 @@ import gaspumpService from './gaspump.service';
         derivationKey: number;
     }
 
-    type AllSupportedChains = 'ETHEREUM' | 'TRON' | 'BASE' | 'BSC' | 'ARBITRUM' | 'OPTIMISM' | 'POLYGON';
+    type AllSupportedChains = 'ETH' | 'TRON' | 'BASE' | 'BSC' | 'ARBITRUM' | 'OPTIMISM' | 'POLYGON';
     type StablecoinType = 'USDC' | 'USDT';
     const BLOCKCHAIN_DECIMALS = 8;
 
@@ -90,9 +93,9 @@ class stableCoinService
     // ============================================
 
     private roundForBlockchain(amount: Decimal | string | number): string {
-        const amountDecimal = new Decimal(amount);
-        return amountDecimal.toDecimalPlaces(BLOCKCHAIN_DECIMALS, Decimal.ROUND_DOWN).toString();
-    }
+            const amountDecimal = new Decimal(amount);
+            return amountDecimal.toDecimalPlaces(BLOCKCHAIN_DECIMALS, Decimal.ROUND_DOWN).toString();
+        }
 
     private async generateAddress(accountId: string) {
         try {
@@ -137,102 +140,106 @@ class stableCoinService
         currencyId: string
     ): Promise<Wallet> {
 
-        // Declare wallet outside try so catch block can access it for cleanup
-        let wallet: any = null
+        let wallet: any = null;
 
         try {
-            // 1. Validate chain support
-            if (!chainService.isChainSupported(stablecoin, chain)) {
-                throw new Error(`Chain ${chain} not supported for ${stablecoin}`)
-            }
+            // ── 1. Validate chain support ────────────────────────────
+            const chainConfig = getChainConfigByCurrency(chain, stablecoin);
+            if (!chainConfig) throw new Error(`Unsupported chain: ${chain} for ${stablecoin}`);
 
-            const chainConfig = chainService.getChainConfig(stablecoin, chain)
+            const chainKey = getChainKey(chainConfig.blockchain, chainConfig.currency);
+            if (!chainKey) throw new Error(`No chain key found for ${chainConfig.blockchain}/${chainConfig.currency}`);
 
-            logger.info(`Creating ${stablecoin} wallet on ${chain}`, { userId, currencyId })
+            logger.info(`Creating ${stablecoin} wallet on ${chain}`, { userId, currencyId });
 
-            // 2. Create Tatum ledger account
-            const accountResponse = await this.tatumAxios.post('/ledger/account', {
-                currency: chainConfig.tatumCurrency,
-                xpub:     chainConfig.xpub,
-                customer: {
-                    accountingCurrency: 'USD',
-                    externalId:         userId
-                }
-            })
-            const account = accountResponse.data
+            // ── 2. Create virtual account (ledger) ───────────────────
+            const account = await virtualAccountService.createAccount({
+                userId,
+                currency: chainConfig.currency,
+                type: 'STANDARD',
+                label: chainConfig.tokenSymbol,
+                blockchain: chainConfig.blockchain
+            });
 
-            // 3. Create wallet in DB first — no address yet
+            // ── 3. Create wallet record in DB ────────────────────────
             wallet = await prisma.wallet.create({
                 data: {
                     id:                 account.id,
+                    Tatum_customerId:   userId,
                     currencyId,
                     userId,
-                    // depositAddress:     null,
-                    // subscriptionId:     null,
-                    // derivationKey:      null,
-                    Tatum_customerId:   account.customerId,
-                    accountingCurrency: account.accountingCurrency,
-                    frozen:             account.frozen
+                    accountingCurrency: 'USD',
+                    frozen: false
                 }
-            })
+            });
 
-            // 4. Generate deposit address
-            let depositAddress: string
-            let derivationKey: number | null = null
+            // ── 4. Generate deposit address ──────────────────────────
+            let gasPumpAddress: string | undefined;
 
+            // Gas pump chains get their address from Tatum gas pump
             if (gaspumpService.isGasPumpChain(chain)) {
                 const result = await gaspumpService.generateAddress(
                     wallet.id,
                     chain,
                     currencyId
-                )
-                depositAddress = result?.address
-                derivationKey  = null  // gas pump index lives in GasPumpAddress, not wallet
-
-            } else {
-                const result = await this.generateAddress(account.id)
-                depositAddress = result.address
-                derivationKey  = result.derivationKey
+                );
+                gasPumpAddress = result?.address;
             }
 
-            // 5. Subscribe to address events
+            // Connect address to virtual account
+            // If gas pump address exists pass it directly, otherwise generate from Tatum
+            const { address: depositAddress } = await virtualAccountService.generateAndConnectAddress(
+                account.id,
+                chainKey,
+                gasPumpAddress  // undefined for non-gas-pump chains — generates from Tatum
+            );
+
+            // ── 5. Subscribe to deposit events ───────────────────────
             const subscription = await this.subscribeAddress({
                 address: depositAddress,
-                chain:   chainConfig.webhookChain
-            })
+                chain:   chainConfig.webhookChain!
+            });
 
-            // 6. Update wallet with address + subscription + derivationKey
+            // ── 6. Update wallet with address + subscription ─────────
             const updatedWallet = await prisma.wallet.update({
                 where: { id: wallet.id },
                 data: {
                     depositAddress,
                     subscriptionId: subscription.id,
-                    derivationKey
+                    derivationKey:  null  // index tracked in VirtualAccountAddress / GasPumpAddress
                 }
-            })
+            });
 
             logger.info(`Wallet created successfully`, {
                 walletId: updatedWallet.id,
-                address:  updatedWallet.depositAddress
-            })
+                address:  updatedWallet.depositAddress,
+                chain,
+                stablecoin
+            });
 
-            return updatedWallet
+            return updatedWallet;
 
         } catch (error) {
 
-            logger.error(`Failed to create ${stablecoin} wallet on ${chain}:`, error)
+            logger.error(`Failed to create ${stablecoin} wallet on ${chain}`, {
+                userId,
+                currencyId,
+                error
+            });
 
-            // Only clean up if wallet was created before the error
+            // Clean up orphaned wallet if it was created before the error
             if (wallet?.id) {
-                logger.warn(`Cleaning up orphaned wallet ${wallet.id}`)
+                logger.warn(`Cleaning up orphaned wallet ${wallet.id}`);
                 await prisma.wallet.delete({
                     where: { id: wallet.id }
-                }).catch((e) => logger.error(`Failed to clean up wallet ${wallet.id}:`, e))
+                }).catch((e) => logger.error(`Failed to clean up wallet ${wallet.id}`, e));
             }
 
-            throw error
+            throw error;
         }
     }
+
+
     // ============================================
     // UNIFIED TRANSFER OPERATION
     // ============================================
@@ -253,7 +260,7 @@ class stableCoinService
                 throw new Error('Transfer amount must be greater than 0');
             }
 
-            const chainConfig = chainService.getChainConfig(stablecoin, chain);
+            const chainConfig = CHAIN_CONFIG[chain];
             const withdrawalFeeDecimal = new Decimal(transferfeeService.calculateFee(chain));
             const netAmountDecimal = amountDecimal.minus(withdrawalFeeDecimal);
 
@@ -325,36 +332,49 @@ class stableCoinService
                     amount:  amountDecimal.toString() // Convert for service
                 });
 
-                transferData = {
-                    senderAccountId: adminWallet.id,
-                    mnemonic: chainConfig.mnemonic,
-                    index: adminWallet.derivationKey || 1,
-                    address,
-                    amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin) // rounded amount in string
-                };
+                transferData = await virtualAccountService.transferCryptoToExternal({
+                    virtualAccountId: adminWallet.id,
+                    toAddress: address,
+                    amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin),
+                    chainKey: chain,
+                    metadata: {
+                        availableBalance: availableBalance.toString(),
+                        accountBalance: accountBalance.toString(),
+                        requestedAmount: amountDecimal.toString(),
+                        hasSufficient: availableBalance.greaterThanOrEqualTo(amountDecimal)
+                    }
+                
+                })
+
             } else {
-                transferData = {
-                    senderAccountId: walletId,
-                    mnemonic: chainConfig.mnemonic,
-                    index,
-                    address,
-                    amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin) // rounded amount in string
-                };
+
+                transferData = await virtualAccountService.transferCryptoToExternal({
+                    virtualAccountId: walletId,
+                    toAddress: address,
+                    amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin),
+                    chainKey: chain,
+                    metadata: {
+                        availableBalance: availableBalance.toString(),
+                        accountBalance: accountBalance.toString(),
+                        requestedAmount: amountDecimal.toString(),
+                        hasSufficient: availableBalance.greaterThanOrEqualTo(amountDecimal)
+                    }
+                
+                })
+
             }
 
-            // Execute blockchain transfer
-            const response = await this.tatumAxios.post(chainConfig.tatumEndpoint, transferData);
-            const result = response.data;
+            const result = transferData;
 
             // Create transaction record
             let transaction = await prisma.transaction.create({
                 data: {
-                    id: result.id,
+                    id: result.reference,
                     userId,
                     currency: `${stablecoin} ${chain}`,
                     amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin), // Prisma accepts Decimal
-                    status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                    reference: result.txId,
+                    status: 'SUCCESSFUL',
+                    reference: result.txHash,
                     walletId,
                     type: 'DEBIT_PAYMENT',
                     description: `${stablecoin} ${chain} transfer`,
@@ -363,31 +383,26 @@ class stableCoinService
                         fee: withdrawalFeeDecimal.toString(),
                         netAmount: netAmountDecimal.toString(),
                         recipientAddress: address,
-                        chain: chainConfig.displayName
+                        chain: chainConfig.blockchain
                     }
                 }
             });
-
-            // Complete withdrawal if pending
-            if (!result.completed) {
-                transaction = await this.completeWithdrawal(result.id, result.txId);
-            }
 
             // Send notification
             await this.sendTransferNotification({
                 userId,
                 stablecoin,
-                chain: chainConfig.displayName,
+                chain: chainConfig.blockchain,
                 grossAmount: DecimalUtil.roundForDisplay(amountDecimal,stablecoin),
                 fee: DecimalUtil.roundForDisplay(withdrawalFeeDecimal,stablecoin),
                 netAmount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin),
                 address,
-                status: result.completed ? 'Completed' : 'Processing'
+                status:'Completed'
             });
 
             logger.info(`Transfer completed successfully`, { 
                 transactionId: transaction.id,
-                txId: result.txId,
+                txId: result.txHash,
                 grossAmount: amountDecimal.toString(),
                 netAmount: netAmountDecimal.toString()
             });
@@ -572,7 +587,7 @@ class stableCoinService
                 throw new Error('Transfer amount must be greater than 0');
             }
 
-            const [recipientWallet, userWallet] = await Promise.all([
+            const [recipientWallet, userWallet, currency] = await Promise.all([
                 prisma.wallet.findFirst({
                     where: { userId: receipientId, currencyId },
                     select: {
@@ -588,6 +603,9 @@ class stableCoinService
                         availableBalance: true,
                         accountBalance: true
                     }
+                }),
+                prisma.currency.findUnique({
+                    where:{id: currencyId}
                 })
             ]);
 
@@ -611,28 +629,27 @@ class stableCoinService
                 );
             }
 
-            const data = {
-                senderAccountId: userWallet.id,
-                recipientAccountId: recipientWallet.id,
-                amount: amount, // ✅ Keep as string for API - Tatum accepts strings
-                anonymous: false,
-                compliant: false
-            };
-
             logger.info('Executing offchain transfer', {
-                from: userWallet.id,
-                to: recipientWallet.id,
+                fromUserId: userId,
+                toUserId: receipientId,
                 amount: amountDecimal.toString()
             });
 
-            const response = await this.tatumAxios.post('/ledger/transaction', data);
+            const response =  await virtualAccountService.p2pTransfer({
+                fromUserId: userId,
+                toUserId: receipientId,
+                amount,
+                currency: currency?.ISO!,
+                description: `Offchain transfer of ${currency?.ISO!}`,
+            })
             
             logger.info('Offchain transfer successful', {
-                transactionId: response.data.id,
-                reference: response.data.reference
+                fromUserId: userId,
+                toUserId: receipientId,
+                amount: amountDecimal.toString()
             });
 
-            return response.data;
+            return response;
 
         } catch (error: any) {
             logger.error('Offchain transfer failed:', {

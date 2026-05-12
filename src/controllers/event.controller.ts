@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { Paystack } from 'paystack-sdk';
 import { Request, Response } from 'express';
 import { KJUR } from 'jsrsasign';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import walletService from '../services/wallet.service';
 import * as crypto from 'crypto';

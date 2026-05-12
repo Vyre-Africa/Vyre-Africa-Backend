@@ -1,7 +1,7 @@
 import * as bcrypt from 'bcryptjs';
 import jwt, { Secret } from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
-import prisma from './config/prisma.config';
+import prisma from './config/prisma.client';
 import moment from 'moment';
 import config from './config/env.config';
 import { User } from './globals';

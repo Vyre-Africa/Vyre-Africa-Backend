@@ -1,6 +1,6 @@
 import sweepService from '../services/sweep.service'
 import chainService from '../services/chain.service'
-import prisma from '../config/prisma.config'
+import prisma from '../config/prisma.client'
 
 async function testMasterTransfer() {
 

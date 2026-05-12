@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import axios, { AxiosInstance } from "axios";
 // import {Currency,walletType} from '@prisma/client';
@@ -9,11 +9,14 @@ import Decimal from 'decimal.js';
 import logger from '../config/logger';
 import { currency } from '../globals';
 import qorepayService from './qorepay.service';
-import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
+import virtualAccountService from './virtualAccount.service';
+import { CHAIN_CONFIG, getChainConfigByCurrency, getChainKey} from '../config/blockchain.config';
+import gaspumpService from './gaspump.service';
 
   type SupportedCoin = 'BTC' | 'ETH' | 'LTC' | 'TRON' | 'BNB' | 'XRP' | 'NGN' | 'USD';
 
   interface CoinConfig {
+    chainKey?: string;
     tatumCurrency: string;
     transferEndpoint: string;
     webhookChain?: string; // Optional for fiat
@@ -49,6 +52,7 @@ import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
 
         private static CONFIGS: Record<SupportedCoin, CoinConfig> = {
             BTC: {
+                chainKey: 'BTC',
                 tatumCurrency: 'BTC',
                 transferEndpoint: '/offchain/bitcoin/transfer',
                 webhookChain: 'bitcoin-mainnet',
@@ -57,6 +61,7 @@ import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
                 authType: 'mnemonic'
             },
             ETH: {
+                chainKey: 'ETH',
                 tatumCurrency: 'ETH',
                 transferEndpoint: '/offchain/ethereum/transfer',
                 webhookChain: 'ethereum-mainnet',
@@ -66,6 +71,7 @@ import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
                 authType: 'mnemonic'
             },
             LTC: {
+                chainKey: 'LTC',
                 tatumCurrency: 'LTC',
                 transferEndpoint: '/offchain/litecoin/transfer',
                 webhookChain: 'litecoin-mainnet',
@@ -74,6 +80,7 @@ import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
                 authType: 'mnemonic'
             },
             TRON: {
+                chainKey: 'TRON',
                 tatumCurrency: 'TRON',
                 transferEndpoint: '/offchain/tron/transfer',
                 webhookChain: 'tron-mainnet',
@@ -83,6 +90,7 @@ import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
                 authType: 'mnemonic'
             },
             BNB: {
+                chainKey: 'BNB',
                 tatumCurrency: 'BNB',
                 transferEndpoint: '/offchain/bnb/transfer',
                 webhookChain: 'bsc-mainnet',
@@ -91,6 +99,7 @@ import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
                 authType: 'privateKey'
             },
             XRP: {
+                chainKey: 'XRP',
                 tatumCurrency: 'XRP',
                 transferEndpoint: '/offchain/xrp/transfer',
                 webhookChain: 'ripple-mainnet',
@@ -131,7 +140,7 @@ import { ba } from '@upstash/redis/zmscore-DhpQcqpW';
         }
 
         static isCrypto(coin: SupportedCoin): boolean {
-            return !!this.CONFIGS[coin]?.webhookChain;
+            return !!this.CONFIGS[coin]?.chainKey;
         }
 
     }
@@ -315,8 +324,11 @@ class nativeCoinService
         userId: string,
         currencyId: string
     ): Promise<WalletCreationResult> {
-        try {
 
+        let wallet: any = null;
+
+        try {
+            // ── 1. Validate coin support ─────────────────────────────
             if (!CoinConfigurations.isSupported(coin)) {
                 throw new Error(`Coin ${coin} not supported`);
             }
@@ -324,96 +336,144 @@ class nativeCoinService
             const coinConfig = CoinConfigurations.getConfig(coin);
             const isCrypto = CoinConfigurations.isCrypto(coin);
 
+            const currency = await prisma.currency.findUnique({
+                where: { id: currencyId }
+            });
+
+            if (!currency) throw new Error(`Currency not found: ${currencyId}`);
+
+            // ── 2. Get chain config for crypto coins ─────────────────
+            let chainConfig;
+            let chainKey: string | undefined;
+
+            if (isCrypto) {
+                chainKey = coinConfig.chainKey!.toUpperCase();
+                chainConfig = CHAIN_CONFIG[chainKey];
+                if (!chainConfig) throw new Error(`No chain config found for ${chainKey}`);
+            }
+
             logger.info(`Creating ${coin} wallet`, { userId, currencyId });
 
-            // Create Tatum ledger account
-            const accountData: any = {
-                currency: coinConfig.tatumCurrency,
-                customer: {
+            // ── 3. Create virtual account (ledger) ───────────────────
+            const account = await virtualAccountService.createAccount({
+                userId,
+                currency: currency.ISO,
+                type: 'STANDARD',
+                label: isCrypto ? chainConfig!.tokenSymbol : coinConfig.displayName,
+                xpub: isCrypto ? chainConfig!.xpub : undefined,
+                blockchain: isCrypto ? chainConfig!.blockchain : undefined
+            });
+
+            // ── 4. Create wallet record in DB ────────────────────────
+            wallet = await prisma.wallet.create({
+                data: {
+                    id:                 account.id,
+                    Tatum_customerId:   userId,
+                    currencyId,
+                    userId,
                     accountingCurrency: coinConfig.accountingCurrency,
-                    externalId: userId
+                    frozen:             false
                 }
-            };
+            });
 
-            // Add xpub for coins that need it
-            if (coin === 'BTC') accountData.xpub = config.BTC_XPUB;
-            if (coin === 'ETH') accountData.xpub = config.ETH_XPUB;
-            if (coin === 'LTC') accountData.xpub = config.LTC_XPUB;
-            if (coin === 'TRON') accountData.xpub = config.TRON_XPUB;
-            if (coin === 'BNB') accountData.xpub = config.BNB_ADDRESS;
-            if (coin === 'XRP') accountData.xpub = config.XRP_ADDRESS;
-
-            const accountResponse = await this.tatumAxios.post('/ledger/account', accountData);
-            const account = accountResponse.data;
-
-            // For crypto wallets, generate deposit address and subscribe
-            let depositAddress, subscription, derivationKey, destinationTag;
-
+            // ── 5. Generate deposit address for crypto wallets ───────
             if (isCrypto) {
-                depositAddress = await this.generateAddress(account.id);
-                
-                subscription = await this.subscribeAddress({
-                    address: depositAddress.address,
-                    chain: coinConfig.webhookChain!
+
+                // Gas pump chains get address from Tatum gas pump
+                let gasPumpAddress: string | undefined;
+
+                if (gaspumpService.isGasPumpChain(coin)) {
+                    const result = await gaspumpService.generateAddress(
+                        wallet.id,
+                        coin,
+                        currencyId
+                    );
+
+                    gasPumpAddress = result?.address;
+                }
+
+                // Connect address to virtual account
+                // Gas pump address passed directly, otherwise generated from Tatum
+                const { address: depositAddress, index } = await virtualAccountService.generateAndConnectAddress(
+                    account.id,
+                    chainKey!,
+                    gasPumpAddress  // undefined for non-gas-pump chains
+                );
+
+                // ── 6. Subscribe to deposit events ───────────────────
+                const subscription = await this.subscribeAddress({
+                    address: depositAddress,
+                    chain:   coinConfig.webhookChain!
                 });
 
-                derivationKey = depositAddress.derivationKey;
-                destinationTag = depositAddress.destinationTag; // For XRP
+                // ── 7. Update wallet with address + subscription ──────
+                const updatedWallet = await prisma.wallet.update({
+                    where: { id: wallet.id },
+                    data: {
+                        depositAddress,
+                        subscriptionId: subscription.id,
+                        derivationKey:  index ?? null
+                    }
+                });
+
+                logger.info(`${coin} wallet created successfully`, {
+                    walletId: updatedWallet.id,
+                    address:  updatedWallet.depositAddress,
+                    chain:    chainKey
+                });
+
+                return {
+                    id:             updatedWallet.id,
+                    depositAddress: updatedWallet.depositAddress ?? undefined,
+                    subscriptionId: updatedWallet.subscriptionId ?? undefined,
+                    derivationKey:  updatedWallet.derivationKey  ?? undefined,
+                    destinationTag: Number(updatedWallet.destinationTag) || undefined
+                };
             }
 
-            // Create wallet in database
-            const walletData: any = {
-                id: account.id,
-                currencyId,
-                userId,
-                Tatum_customerId: account.customerId,
-                accountingCurrency: account.accountingCurrency,
-                frozen: account.frozen
-            };
-
-            if (isCrypto) {
-                walletData.depositAddress = depositAddress.address;
-                walletData.subscriptionId = subscription.id;
-                walletData.derivationKey = derivationKey;
-                if (destinationTag) walletData.destinationTag = destinationTag;
-            }
-
-            const wallet = await prisma.wallet.create({ data: walletData });
-
-            if (!isCrypto && coin === 'NGN') {
-                const bankResult = await qorepayService.create_virtual_Account({ userId })
+            // ── 8. Fiat wallet (NGN, USD) ────────────────────────────
+            if (coin === 'NGN') {
+                const bankResult = await qorepayService.create_virtual_Account({ userId });
                 if (bankResult) {
                     await prisma.bankDetails.create({
                         data: {
-                            id: bankResult?.id,
-                            customer_id: bankResult?.customer_id,
-                            walletId: wallet?.id,
-                            account_number: bankResult?.account_number,
-                            account_name: bankResult?.account_name,
-                            bank_name: bankResult?.bank_name,
-                            status: bankResult?.status
+                            id:             bankResult.id,
+                            customer_id:    bankResult.customer_id,
+                            walletId:       wallet.id,
+                            account_number: bankResult.account_number,
+                            account_name:   bankResult.account_name,
+                            bank_name:      bankResult.bank_name,
+                            status:         bankResult.status
                         }
-                    })
+                    });
                 }
             }
 
-            logger.info(`${coin} wallet created successfully`, { 
-                walletId: wallet.id,
-                address: wallet.depositAddress
-            });
+            logger.info(`${coin} wallet created successfully`, { walletId: wallet.id });
 
             return {
-                id: wallet.id,
-                depositAddress: wallet.depositAddress || undefined,
-                subscriptionId: wallet.subscriptionId || undefined,
-                derivationKey: wallet.derivationKey || undefined,
-                destinationTag: Number(wallet?.destinationTag) || undefined
+                id:             wallet.id,
+                depositAddress: wallet.depositAddress ?? undefined,
+                subscriptionId: wallet.subscriptionId ?? undefined,
+                derivationKey:  wallet.derivationKey  ?? undefined,
+                destinationTag: Number(wallet.destinationTag) || undefined
             };
 
         } catch (error) {
-            logger.error(`Failed to create ${coin} wallet:`, error);
+
+            logger.error(`Failed to create ${coin} wallet`, { userId, currencyId, error });
+
+            // Clean up orphaned wallet if created before error
+            if (wallet?.id) {
+                logger.warn(`Cleaning up orphaned wallet ${wallet.id}`);
+                await prisma.wallet.delete({
+                    where: { id: wallet.id }
+                }).catch((e) => logger.error(`Failed to clean up wallet ${wallet.id}`, e));
+            }
+
             throw error;
-        }
+        
+        }    
     }
 
     // ============================================
@@ -483,18 +543,10 @@ class nativeCoinService
                 );
             }
 
-            // Build transfer data
-            const transferData: any = {
-                senderAccountId: walletId,
-                address,
-                amount: this.roundForBlockchain(amountDecimal),
-                ...AuthenticationHelper.getAuthConfig(coin, index)
-            };
+            const chainKey = coinConfig.chainKey!.toUpperCase();
+            const chainConfig = CHAIN_CONFIG[chainKey];
+            if (!chainConfig) throw new Error(`No chain config found for ${chainKey}`);
 
-            // Add destination tag for XRP
-            if (coin === 'XRP' && destinationTag) {
-                transferData.attr = destinationTag;
-            }
 
             logger.info('Executing blockchain transfer', {
                 coin,
@@ -504,43 +556,40 @@ class nativeCoinService
             });
 
             // Execute transfer
-            const response = await this.tatumAxios.post(coinConfig.transferEndpoint, transferData);
-            const result = response.data;
+            const response = await virtualAccountService.transferCryptoToExternal({
+                virtualAccountId: walletId,
+                toAddress: address,
+                amount: this.roundForBlockchain(amountDecimal),
+                chainKey,
+                metadata:{}
+            })
 
             // Create transaction record
             let transaction = await prisma.transaction.create({
                 data: {
-                    id: result.id,
                     userId,
                     currency: coin,
                     amount: amountDecimal, // ✅ Prisma accepts Decimal
-                    status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-                    reference: result.txId,
+                    status: 'SUCCESSFUL',
+                    reference: response.txHash,
                     walletId,
                     type: 'DEBIT_PAYMENT',
                     description: `${coinConfig.displayName} transfer`,
                     metadata: {
                         recipientAddress: address,
-                        destinationTag: destinationTag || null,
-                        txId: result.txId,
-                        amount: amountDecimal.toString(), // ✅ Store string in metadata for precision
-                        coin: coinConfig.displayName
+                        destinationTag:   destinationTag || null,
+                        txId:             response.txHash,
+                        amount:           amountDecimal.toString(),
+                        fee:              response.fee.toString(), // ← add fee
+                        netAmount:        response.amount.toString(), // ← add net
+                        coin:             coinConfig.displayName
                     }
                 }
             });
 
-            // Complete withdrawal if pending
-            if (!result.completed) {
-                logger.info('Completing pending withdrawal', {
-                    withdrawalId: result.id,
-                    txId: result.txId
-                });
-                transaction = await this.completeWithdrawal(result.id, result.txId);
-            }
-
             logger.info(`${coin} transfer completed successfully`, {
                 transactionId: transaction.id,
-                txId: result.txId,
+                txId: response.txHash,
                 amount: amountDecimal.toString(),
                 status: transaction.status
             });
