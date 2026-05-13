@@ -3,7 +3,7 @@ import { Request, Response } from 'express';
 import moment from 'moment';
 import slugify from 'slugify';
 import config from '../config/env.config';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import { OTP_CODE_EXP, generateRefCode, hashData } from '../utils';
 import mailService from '../services/mail.service';
 import dashboardService from '../services/dashboard.service';

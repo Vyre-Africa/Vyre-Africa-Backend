@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { Prisma, Wallet } from '@prisma/client';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import { OrderType } from '@prisma/client';
 import walletService from './wallet.service';
 import moment from 'moment';

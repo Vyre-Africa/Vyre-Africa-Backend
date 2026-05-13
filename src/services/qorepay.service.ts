@@ -2,12 +2,13 @@ import { Request, Response } from "express";
 import { Paystack } from "paystack-sdk";
 // import Flutterwave from "flutterwave-node-v3";
 import config from "../config/env.config";
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import axios from "axios";
 import { UserBank } from "@prisma/client";
 import { generateRefCode } from "../utils";
 import logger from "../config/logger";
 import walletService from "./wallet.service";
+import virtualAccountService from "./virtualAccount.service";
 const Flutterwave = require('flutterwave-node-v3');
 
 const qorepayAxios = axios.create({
@@ -165,12 +166,7 @@ class QorepayService {
 
       const {currency,amount,userId, walletId, email, phone, account_number, bank_code, recipient_name } = payload
 
-      // let BlockId: string = '';
-
       try {
-
-        // block amount in wallet before transfer
-        // BlockId = await walletService.block_Amount(amount as any, walletId)
 
 
         const data = {
@@ -194,26 +190,33 @@ class QorepayService {
         console.log('first response',response.data)
         const result = response.data
 
-        await walletService.debit_Wallet(Number(amount), walletId)
-        console.log('wallet debited')
+        await virtualAccountService.initiateBankWithdrawal({
+          userId,
+          currency,
+          amount,
+          bankDetails: {
+              accountNumber: account_number,
+              bankCode: bank_code,
+              accountName: recipient_name
+          },
+          reference: result.data.reference,
+          metadata: {
+            qorepayPayoutId: result.data.id,
+            brand_id: config.QOREPAY_BRAND_ID,
+            bank_code,
+            account_number
+          }
+        })
+
+        // await walletService.debit_Wallet(Number(amount), walletId)
+        // console.log('wallet debited')
 
         return {success:true, ...result}
 
       } catch (error:any) {
 
         logger.error('Bank transfer initialization failed:', error);
- 
-        // ========================================
-        // ROLLBACK: UNBLOCK AMOUNT IF TRANSFER FAILS
-        // ========================================
-        // if (BlockId) {
-        //   try {
-        //     await walletService.unblock_Amount(BlockId);
-        //     logger.info(`Amount unblocked after failed transfer: ${BlockId}`);
-        //   } catch (unblockError) {
-        //     logger.error(`Failed to unblock amount: ${BlockId}`, unblockError);            
-        //   }
-        // }
+
 
         logger.error('Bank transfer initialization failed:', error);
         throw error;

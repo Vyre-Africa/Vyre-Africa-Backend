@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import { UserInfoClient } from 'auth0';
 import { NextFunction, Request, Response } from 'express';
 import { verifyAccessToken } from '../utils';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 dotenv.config();
 
 const userInfoClient = new UserInfoClient({

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import {adminBase} from '../config/firebaseConfig'
 import {messaging} from 'firebase-admin'
 import mailService from './mail.service';

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import axios from "axios";
 // import {Currency,walletType} from '@prisma/client';

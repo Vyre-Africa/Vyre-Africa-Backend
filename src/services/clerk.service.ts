@@ -1,6 +1,6 @@
 import axios from "axios";
 import config from "../config/env.config";
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import logger from "../config/logger";
 import { createClerkClient } from '@clerk/backend'
 

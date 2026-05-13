@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import prisma from "../config/prisma.config";
+import prisma from "../config/prisma.client";
 import { startOfYear, endOfYear, subDays, subMonths, startOfMonth, startOfDay, endOfDay, endOfMonth, subYears, startOfToday } from 'date-fns';
 
 class DashboardService {

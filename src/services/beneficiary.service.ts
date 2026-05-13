@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import { beneficiaryType } from '@prisma/client';
 
 // Types

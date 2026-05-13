@@ -9,7 +9,7 @@ import eventService from '../services/event.service';
 import orderService from '../services/order.service';
 import connection from '../config/redis.config';
 import anonService from '../services/anon.service';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import sweepService from '../services/sweep.service';
 
 // const SWEEP_CHAINS = ['ETH', 'MATIC', 'BSC', 'BASE', 'ARB', 'OPTIMISM', 'TRON']

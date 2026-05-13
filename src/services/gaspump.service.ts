@@ -1,6 +1,6 @@
 import axios from "axios";
 import config from "../config/env.config";
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import logger from "../config/logger";
 import { Queue } from 'bullmq'
 import connection from '../config/redis.config';
@@ -9,11 +9,11 @@ import chainService from "./chain.service";
 
 
 // Chains that use gas pump
-const GAS_PUMP_CHAINS = ['ETHEREUM', 'POLYGON', 'BSC', 'TRON']
+const GAS_PUMP_CHAINS = ['ETH', 'POLYGON', 'BSC', 'TRON']
 
 // Maps internal chain → Tatum chain param for gas pump API calls
 const CHAIN_PARAM_MAP: Record<string, string> = {
-  ETHEREUM: 'ETH',    // Tatum expects 'ETH' in the API body
+  ETH: 'ETH',    // Tatum expects 'ETH' in the API body
   POLYGON:  'MATIC',  // Tatum expects 'MATIC'
   BSC:      'BSC',
   TRON:     'TRON'
@@ -41,13 +41,13 @@ class GasPumpService{
     }> {
         // Get admin wallet for this chain to use as owner address
         const adminWallet = await prisma.wallet.findFirst({
-        where: {
-            userId:     config.Admin_Id,
-            currencyId
-        },
-        select: {
-            depositAddress: true
-        }
+            where: {
+                userId:     config.Admin_Id,
+                currencyId
+            },
+            select: {
+                depositAddress: true
+            }
         })
 
         if (!adminWallet?.depositAddress) {
@@ -58,18 +58,18 @@ class GasPumpService{
 
         // Upsert — create if not exists, return if exists
         const log = await prisma.gasPumpLog.upsert({
-        where: {
-            chain_ownerAddress: {
-            chain,
-            ownerAddress
-            }
-        },
-        create: {
-            chain,
-            ownerAddress,
-            nextIndex: 0
-        },
-        update: {}  // don't update anything if it exists
+            where: {
+                chain_ownerAddress: {
+                chain,
+                ownerAddress
+                }
+            },
+            create: {
+                chain,
+                ownerAddress,
+                nextIndex: 0
+            },
+            update: {}  // don't update anything if it exists
         })
 
         console.log(`[GasPump] Log for ${chain} — ownerAddress: ${ownerAddress}, nextIndex: ${log.nextIndex}`)
@@ -224,7 +224,7 @@ class GasPumpService{
 
 
     }
-
+  
     // ─────────────────────────────────────────────────────────────────────────
     // activateAddress
     // Activates a gas pump address so it can send funds

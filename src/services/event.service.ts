@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import { OrderType, AwaitingStatus, Awaiting, Wallet, Currency } from '@prisma/client';
 import walletService from './wallet.service';
 import orderService from './order.service';
@@ -17,6 +17,7 @@ import { DecimalUtil } from './decimal.util';
 import orderslotService from './orderslot.service';
 import sweepService from './sweep.service';
 import gaspumpService from './gaspump.service';
+import virtualAccountService from './virtualAccount.service';
 
 
   // {
@@ -403,13 +404,12 @@ class eventService {
           txId
       });
 
-      const chainKey = this.WEBHOOK_CHAIN_MAP[chain]
 
       // 1. Find wallet with relations
       
 
       const [wallet, adminWallet] = await Promise.all([
-         prisma.wallet.findFirst({
+        prisma.wallet.findFirst({
               where: {
                 subscriptionId
               },
@@ -519,8 +519,7 @@ class eventService {
       return await prisma.$transaction(async (tx) => {
         if (transferType === 'CREDIT') {
           return await this.handleCreditTransaction({
-            tx, wallet, syncedWallet,
-            amount: roundedAmount,
+            tx, wallet, amount: roundedAmount,
             sender: actualSender,
             awaiting, txId, chain, contractAddress
           })
@@ -680,35 +679,26 @@ class eventService {
           logger.warn(`WalletId or userId not provided for withdrawal: ${reference}`);
           return { status: 'failed', action: 'WalletId-or-userId-not-found' };
         }
-  
-        // // ✅ DEBIT wallet (user is withdrawing OUT of Vyre)
-        // await Promise.all([
-        //   walletService.debit_Wallet(processedAmount, walletId),
-        //   // 2. Unblock the amount (since it's now successfully debited)
-        //   BlockId ? walletService.unblock_Amount(BlockId) : Promise.resolve(),
-        //   prisma.transaction.create({
-        //     data:{
-        //       userId,
-        //       currency,
-        //       amount: processedAmount,
-        //       reference,
-        //       status: 'SUCCESSFUL',
-        //       walletId,
-        //       type: 'FIAT_WITHDRAWAL',
-        //       description: `${currency} withdrawal to bank account`,
-        //       metadata: {
-        //         type: 'Bank-Withdrawal',
-        //         amount: processedAmount,
-        //         reference,
-        //         BlockId,
-        //         account_number: metadata.account_number,
-        //         bank_code: metadata.bank_code
-        //       }
-        //     }
-        //   })
-        // ])
 
-        await prisma.transaction.create({
+        const virtualTransaction = await prisma.virtualTransaction.findUnique({
+          where: { reference }
+        })
+
+        if(!virtualTransaction){
+          logger.warn(`Virtual account transaction not found for reference: ${reference}`);
+          return { status: 'failed', action: 'virtual-transaction-not-found' };
+        }
+  
+        // ✅ DEBIT wallet (user is withdrawing OUT of Vyre)
+        await Promise.all([
+
+          virtualAccountService.completeBankWithdrawal({
+            transactionId: virtualTransaction.id,
+            blockId: virtualTransaction.blockId as string,
+            externalRef: reference
+          }),
+        
+          prisma.transaction.create({
             data:{
               userId,
               currency,
@@ -726,7 +716,28 @@ class eventService {
                 bank_code: metadata.bank_code
               }
             }
-        })
+          })
+        ])
+
+        // await prisma.transaction.create({
+        //     data:{
+        //       userId,
+        //       currency,
+        //       amount: processedAmount,
+        //       reference,
+        //       status: 'SUCCESSFUL',
+        //       walletId,
+        //       type: 'FIAT_WITHDRAWAL',
+        //       description: `${currency} withdrawal to bank account`,
+        //       metadata: {
+        //         type: 'Bank-Withdrawal',
+        //         amount: processedAmount,
+        //         reference,
+        //         account_number: metadata.account_number,
+        //         bank_code: metadata.bank_code
+        //       }
+        //     }
+        // })
   
         // CHECK FOR AWAITING TRANSFER (order completion)
         if (awaiting) {
@@ -766,9 +777,21 @@ class eventService {
       if(event === 'DEBIT_FAILED'){
         console.log('DEBIT_FAILED - Withdrawal failed, releasing blocked funds');
 
+        const virtualTransaction = await prisma.virtualTransaction.findUnique({
+          where: { reference }
+        })
+
+        if(!virtualTransaction){
+          logger.warn(`Virtual account transaction not found for reference: ${reference}`);
+          return { status: 'failed', action: 'virtual-transaction-not-found' };
+        }
 
         await Promise.all([
-          walletService.credit_Wallet(processedAmount, walletId),
+          virtualAccountService.failBankWithdrawal({
+            transactionId: virtualTransaction.id,
+            blockId: virtualTransaction.blockId as string,
+            reason: 'Withdrawal failed from bank - marked as failed in Vyre'
+          }),
           prisma.transaction.create({
             data:{
                 userId,
@@ -1011,7 +1034,7 @@ class eventService {
   private async handleCreditTransaction(params: {
     tx: any;
     wallet: any;
-    syncedWallet: any;
+    // syncedWallet: any;
     amount: string;
     sender: string;
     awaiting: any;
@@ -1020,9 +1043,34 @@ class eventService {
     chain: string
     contractAddress: string
   }) {
-    const { tx, wallet, syncedWallet, sender, awaiting, txId, amount, chain, contractAddress } = params;
+    const { tx, wallet, sender, awaiting, txId, amount, chain, contractAddress } = params;
+
+    logger.info('Processing credit transaction', { walletId: wallet.id, amount, txId });
 
     console.log('in credit transaction handling')
+
+    await virtualAccountService.cryptoDeposit({
+        userId: wallet.userId,
+        currency: wallet.currency.ISO,        // currency e.g 'USDT', 'USDC'
+        amount,
+        txHash: txId,                       // txHash — used for idempotency
+        blockchain: chain,                      // blockchain e.g 'ETHEREUM', 'TRON'
+        walletAddress: wallet.depositAddress,      // the wallet address that received the deposit
+        metadata:{
+          sender,                 // who sent the funds
+          contractAddress,        // token contract if applicable
+          subscriptionId: wallet.subscriptionId
+        }
+    });
+
+    logger.info('Virtual account credited', { walletId: wallet.id, amount, txId });
+
+    const syncedWallet = await walletService.getAccount(wallet.id);
+
+    if (!syncedWallet) {
+      throw new Error(`Failed to sync wallet ${wallet.id}`);
+    }
+
 
     // 1. Record the credit
     const transaction = await tx.transaction.create({
@@ -1674,239 +1722,239 @@ class eventService {
     'USDT_ARBITRUM':  '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
     'USDT_OPTIMISM':  '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58',
     'USDT_TRON':      'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
-}
+  }
 
-WEBHOOK_CHAIN_MAP: Record<string, string> = {
-  'ethereum-mainnet': 'ETHEREUM',
-  'base-mainnet':     'BASE',
-  'bsc-mainnet':      'BSC',
-  'polygon-mainnet':  'POLYGON',
-  'arb-one-mainnet':  'ARBITRUM',
-  'optimism-mainnet': 'OPTIMISM',
-  'tron-mainnet':     'TRON'
-}
+  WEBHOOK_CHAIN_MAP: Record<string, string> = {
+    'ethereum-mainnet': 'ETHEREUM',
+    'base-mainnet':     'BASE',
+    'bsc-mainnet':      'BSC',
+    'polygon-mainnet':  'POLYGON',
+    'arb-one-mainnet':  'ARBITRUM',
+    'optimism-mainnet': 'OPTIMISM',
+    'tron-mainnet':     'TRON'
+  }
 
 
-private validateContract(
-    contractAddress: string,
-    chain: string,
-    wallet: any,
-    txId: string
-): { status: string; reason: string; message: string } | null {
+  private validateContract(
+      contractAddress: string,
+      chain: string,
+      wallet: any,
+      txId: string
+  ): { status: string; reason: string; message: string } | null {
 
-    const chainKey        = this.WEBHOOK_CHAIN_MAP[chain]
-    const lookupKey       = `${wallet.currency?.ISO}_${chainKey}`
-    const expectedContract = this.SUPPORTED_CONTRACTS[lookupKey]
+      const chainKey        = this.WEBHOOK_CHAIN_MAP[chain]
+      const lookupKey       = `${wallet.currency?.ISO}_${chainKey}`
+      const expectedContract = this.SUPPORTED_CONTRACTS[lookupKey]
 
-    if (!expectedContract) {
-        logger.warn('Ignored — no contract configured', { lookupKey, txId })
-        return { status: 'ignored', reason: 'unsupported_chain_currency', message: `No contract for ${lookupKey}` }
-    }
+      if (!expectedContract) {
+          logger.warn('Ignored — no contract configured', { lookupKey, txId })
+          return { status: 'ignored', reason: 'unsupported_chain_currency', message: `No contract for ${lookupKey}` }
+      }
 
-    if (contractAddress.toLowerCase() !== expectedContract.toLowerCase()) {
-        logger.warn('Ignored — contract mismatch', {
-            received: contractAddress,
-            expected: expectedContract,
-            txId
-        })
-        return { status: 'ignored', reason: 'unsupported_token', message: `Token ${contractAddress} not supported` }
-    }
+      if (contractAddress.toLowerCase() !== expectedContract.toLowerCase()) {
+          logger.warn('Ignored — contract mismatch', {
+              received: contractAddress,
+              expected: expectedContract,
+              txId
+          })
+          return { status: 'ignored', reason: 'unsupported_token', message: `Token ${contractAddress} not supported` }
+      }
 
-    return null  // ← validation passed
-}
+      return null  // ← validation passed
+  }
 
-private isSweepFeedback(
-  address:      string,
-  counterAddress: string,
-  wallet:       any,
-  adminWallet:  any
-): boolean {
-    if (!adminWallet?.depositAddress) return false
+  private isSweepFeedback(
+    address:      string,
+    counterAddress: string,
+    wallet:       any,
+    adminWallet:  any
+  ): boolean {
+      if (!adminWallet?.depositAddress) return false
 
-    const masterAddress  = adminWallet.depositAddress.toLowerCase()
-    const isInvolved     = counterAddress?.toLowerCase() === masterAddress || address?.toLowerCase() === masterAddress
-    const isNotMaster    = wallet.depositAddress?.toLowerCase() !== masterAddress
+      const masterAddress  = adminWallet.depositAddress.toLowerCase()
+      const isInvolved     = counterAddress?.toLowerCase() === masterAddress || address?.toLowerCase() === masterAddress
+      const isNotMaster    = wallet.depositAddress?.toLowerCase() !== masterAddress
 
-    return isInvolved && isNotMaster
-}
+      return isInvolved && isNotMaster
+  }
 
-private detectTransferType(
-    previousBalance: any,
-    currentBalance:  any,
-    receivedAmount:  Decimal,
-    txId:            string
-): { transferType: 'CREDIT' | 'DEBIT'; balanceDifference: Decimal } {
+  private detectTransferType(
+      previousBalance: any,
+      currentBalance:  any,
+      receivedAmount:  Decimal,
+      txId:            string
+  ): { transferType: 'CREDIT' | 'DEBIT'; balanceDifference: Decimal } {
 
-    const prev             = new Decimal(previousBalance)
-    const curr             = new Decimal(currentBalance)
-    const balanceDifference = curr.minus(prev)
-    const transferType     = balanceDifference.greaterThan(0) ? 'CREDIT' : 'DEBIT'
+      const prev             = new Decimal(previousBalance)
+      const curr             = new Decimal(currentBalance)
+      const balanceDifference = curr.minus(prev)
+      const transferType     = balanceDifference.greaterThan(0) ? 'CREDIT' : 'DEBIT'
 
-    logger.info('Transfer analysis', {
-        previousBalance:  prev.toString(),
-        currentBalance:   curr.toString(),
-        balanceDifference: balanceDifference.toString(),
-        receivedAmount:   receivedAmount.toString(),
-        transferType,
-        txId
-    })
+      logger.info('Transfer analysis', {
+          previousBalance:  prev.toString(),
+          currentBalance:   curr.toString(),
+          balanceDifference: balanceDifference.toString(),
+          receivedAmount:   receivedAmount.toString(),
+          transferType,
+          txId
+      })
 
-    // Warn on discrepancy but don't block
-    if (transferType === 'CREDIT') {
-        const discrepancy   = balanceDifference.minus(receivedAmount).abs()
-        const maxDiscrepancy = new Decimal('0.00001')
+      // Warn on discrepancy but don't block
+      if (transferType === 'CREDIT') {
+          const discrepancy   = balanceDifference.minus(receivedAmount).abs()
+          const maxDiscrepancy = new Decimal('0.00001')
 
-        if (discrepancy.greaterThan(maxDiscrepancy)) {
-            logger.warn('Balance increase mismatch', {
-                expected:    receivedAmount.toString(),
-                actual:      balanceDifference.toString(),
-                discrepancy: discrepancy.toString(),
-                txId
-            })
-        }
-    }
+          if (discrepancy.greaterThan(maxDiscrepancy)) {
+              logger.warn('Balance increase mismatch', {
+                  expected:    receivedAmount.toString(),
+                  actual:      balanceDifference.toString(),
+                  discrepancy: discrepancy.toString(),
+                  txId
+              })
+          }
+      }
 
-    return { transferType, balanceDifference }
-}
+      return { transferType, balanceDifference }
+  }
 
-// ── Awaiting order handler — extracted from handleCreditTransaction ────────
-private async handleAwaitingOrder(params: {
-    tx:           any
-    awaiting:     any
-    syncedWallet: any
-    amount:       string
-    sender:       string
-    transaction:  any
-}) {
-    const { tx, awaiting, syncedWallet, amount, sender, transaction } = params
+  // ── Awaiting order handler — extracted from handleCreditTransaction ────────
+  private async handleAwaitingOrder(params: {
+      tx:           any
+      awaiting:     any
+      syncedWallet: any
+      amount:       string
+      sender:       string
+      transaction:  any
+  }) {
+      const { tx, awaiting, syncedWallet, amount, sender, transaction } = params
 
-    const expectedAmount   = new Decimal(awaiting.amount.toString())
-    const availableBalance = new Decimal(syncedWallet.availableBalance)
+      const expectedAmount   = new Decimal(awaiting.amount.toString())
+      const availableBalance = new Decimal(syncedWallet.availableBalance)
 
-    // Insufficient payment — queue refund
-    if (availableBalance.lessThan(expectedAmount)) {
-        const shortfall = expectedAmount.minus(availableBalance)
+      // Insufficient payment — queue refund
+      if (availableBalance.lessThan(expectedAmount)) {
+          const shortfall = expectedAmount.minus(availableBalance)
 
-        logger.warn('Insufficient payment — queuing refund', {
-            awaitingId:       awaiting.id,
-            availableBalance: availableBalance.toString(),
-            expectedAmount:   expectedAmount.toString(),
-            shortfall:        shortfall.toString()
-        })
+          logger.warn('Insufficient payment — queuing refund', {
+              awaitingId:       awaiting.id,
+              availableBalance: availableBalance.toString(),
+              expectedAmount:   expectedAmount.toString(),
+              shortfall:        shortfall.toString()
+          })
 
-        await this.orderProcessingQueue.add('initiate-refund', {
-            awaitingId:     awaiting.id,
-            senderAddress:  sender,
-            currencyType:   awaiting.currency?.type,
-            receivedAmount: amount,
-            expectedAmount: expectedAmount.toString(),
-            transactionId:  transaction.id
-        })
+          await this.orderProcessingQueue.add('initiate-refund', {
+              awaitingId:     awaiting.id,
+              senderAddress:  sender,
+              currencyType:   awaiting.currency?.type,
+              receivedAmount: amount,
+              expectedAmount: expectedAmount.toString(),
+              transactionId:  transaction.id
+          })
 
-        await tx.awaiting.update({
-            where: { id: awaiting.id },
-            data:  { metadata: { receivedAmount: amount, expectedAmount: expectedAmount.toString() } }
-        })
+          await tx.awaiting.update({
+              where: { id: awaiting.id },
+              data:  { metadata: { receivedAmount: amount, expectedAmount: expectedAmount.toString() } }
+          })
 
-        return {
-            status: 'queued',
-            action: 'refund-insufficient-amount',
-            details: { expected: expectedAmount.toString(), received: amount }
-        }
-    }
+          return {
+              status: 'queued',
+              action: 'refund-insufficient-amount',
+              details: { expected: expectedAmount.toString(), received: amount }
+          }
+      }
 
-    // Sufficient payment — process order
-    await orderService.process_Order_Queue({
-        awaitingId:    awaiting.id,
-        transactionId: transaction.id
-    })
+      // Sufficient payment — process order
+      await orderService.process_Order_Queue({
+          awaitingId:    awaiting.id,
+          transactionId: transaction.id
+      })
 
-    await prisma.awaiting.update({ where: { id: awaiting.id }, data: { status: 'CONFIRMED' } })
-    await ablyService.awaiting_Order_Update(awaiting.id)
-    await anonService.cancelAwaitingExpiry(awaiting.id)
+      await prisma.awaiting.update({ where: { id: awaiting.id }, data: { status: 'CONFIRMED' } })
+      await ablyService.awaiting_Order_Update(awaiting.id)
+      await anonService.cancelAwaitingExpiry(awaiting.id)
 
-    return {
-        status:        'queued',
-        action:        'order-processing',
-        awaitingId:    awaiting.id,
-        transactionId: transaction.id
-    }
-}
+      return {
+          status:        'queued',
+          action:        'order-processing',
+          awaitingId:    awaiting.id,
+          transactionId: transaction.id
+      }
+  }
 
-// ── Sweep queuing — extracted from handleCreditTransaction ────────────────
-private queueSweep(params: {
-    wallet:          any
-    txId:            string
-    amount:          string
-    chain:           string
-    contractAddress: string
-}) {
-    const { wallet, txId, amount, chain, contractAddress } = params
-    const internalChain = this.WEBHOOK_CHAIN_MAP[chain]
+  // ── Sweep queuing — extracted from handleCreditTransaction ────────────────
+  private queueSweep(params: {
+      wallet:          any
+      txId:            string
+      amount:          string
+      chain:           string
+      contractAddress: string
+  }) {
+      const { wallet, txId, amount, chain, contractAddress } = params
+      const internalChain = this.WEBHOOK_CHAIN_MAP[chain]
 
-    if (!internalChain) return
+      if (!internalChain) return
 
-    setImmediate(async () => {
-        let sweepLog: any = null
+      setImmediate(async () => {
+          let sweepLog: any = null
 
-        try {
-            // Activate gas pump address first if needed
-            if (gaspumpService.isGasPumpChain(internalChain)) {
-                console.log(`[GasPump] Activating ${wallet.depositAddress} on ${internalChain}`)
-                await gaspumpService.activateAddress(wallet.depositAddress, internalChain, wallet.currencyId)
-                console.log(`[GasPump] Activation complete`)
-            }
+          try {
+              // Activate gas pump address first if needed
+              if (gaspumpService.isGasPumpChain(internalChain)) {
+                  console.log(`[GasPump] Activating ${wallet.depositAddress} on ${internalChain}`)
+                  await gaspumpService.activateAddress(wallet.depositAddress, internalChain, wallet.currencyId)
+                  console.log(`[GasPump] Activation complete`)
+              }
 
-            const shouldSweep =
-                wallet.userId      !== config.Admin_Id &&
-                wallet.derivationKey !== null &&
-                wallet.derivationKey !== undefined &&
-                wallet.depositAddress &&
-                wallet.currencyId
+              const shouldSweep =
+                  wallet.userId      !== config.Admin_Id &&
+                  wallet.derivationKey !== null &&
+                  wallet.derivationKey !== undefined &&
+                  wallet.depositAddress &&
+                  wallet.currencyId
 
-            if (!shouldSweep) return
+              if (!shouldSweep) return
 
-            sweepLog = await prisma.sweepLog.create({
-                data: {
-                    walletId:    wallet.id,
-                    userId:      wallet.userId,
-                    depositTxId: txId,
-                    amount,
-                    stablecoin:  wallet.currency?.ISO || '',
-                    chain:       internalChain,
-                    status:      'QUEUED'
-                }
-            })
+              sweepLog = await prisma.sweepLog.create({
+                  data: {
+                      walletId:    wallet.id,
+                      userId:      wallet.userId,
+                      depositTxId: txId,
+                      amount,
+                      stablecoin:  wallet.currency?.ISO || '',
+                      chain:       internalChain,
+                      status:      'QUEUED'
+                  }
+              })
 
-            await sweepService.getSweepQueue(internalChain).add(
-                `sweep-${txId}`,
-                {
-                    currencyId:     wallet.currencyId,
-                    userId:         wallet.userId,
-                    depositAddress: wallet.depositAddress,
-                    derivationKey:  wallet.derivationKey,
-                    amount,
-                    chain:          internalChain,
-                    contractAddress,
-                    depositTxId:    txId,
-                    sweepLogId:     sweepLog.id
-                },
-                { jobId: txId, attempts: 3, backoff: { type: 'exponential', delay: 5000 } }
-            )
+              await sweepService.getSweepQueue(internalChain).add(
+                  `sweep-${txId}`,
+                  {
+                      currencyId:     wallet.currencyId,
+                      userId:         wallet.userId,
+                      depositAddress: wallet.depositAddress,
+                      derivationKey:  wallet.derivationKey,
+                      amount,
+                      chain:          internalChain,
+                      contractAddress,
+                      depositTxId:    txId,
+                      sweepLogId:     sweepLog.id
+                  },
+                  { jobId: txId, attempts: 3, backoff: { type: 'exponential', delay: 5000 } }
+              )
 
-            console.log(`[Sweep] Queued — chain: ${internalChain}, txId: ${txId}`)
+              console.log(`[Sweep] Queued — chain: ${internalChain}, txId: ${txId}`)
 
-        } catch (err) {
-            console.error(`[Sweep] Failed for ${txId}:`, err)
-            if (sweepLog?.id) {
-                await prisma.sweepLog.update({
-                    where: { id: sweepLog.id },
-                    data:  { status: 'FAILED', error: (err as Error).message }
-                }).catch(console.error)
-            }
-        }
-    })
-}
+          } catch (err) {
+              console.error(`[Sweep] Failed for ${txId}:`, err)
+              if (sweepLog?.id) {
+                  await prisma.sweepLog.update({
+                      where: { id: sweepLog.id },
+                      data:  { status: 'FAILED', error: (err as Error).message }
+                  }).catch(console.error)
+              }
+          }
+      })
+  }
 
 
 

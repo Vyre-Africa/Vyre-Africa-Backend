@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { Paystack } from 'paystack-sdk';
 import { Request, Response } from 'express';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import orderService from '../services/order.service';
 import walletService from '../services/wallet.service';
 import paystackService from '../services/paystack.service';

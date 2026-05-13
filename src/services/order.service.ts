@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
-import prisma from '../config/prisma.config';
+import prisma from '../config/prisma.client';
 import walletService from '../services/wallet.service';
 import config from '../config/env.config';
 import Decimal from 'decimal.js';
