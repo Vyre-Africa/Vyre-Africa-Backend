@@ -1295,6 +1295,7 @@ class VirtualAccountService {
         if (!account) throw new Error('Virtual account not found');
 
         const config = CHAIN_CONFIG[chainKey.toUpperCase()];
+        console.log('chainconfig',config)
         if (!config) throw new Error(`Unsupported chain: ${chainKey}`);
 
         const { blockchain, walletType } = config;
@@ -1302,8 +1303,7 @@ class VirtualAccountService {
         // ── HD wallet ────────────────────────────────────────────
         if (walletType === 'HD') {
 
-            const accountXpub = xpub ?? account.xpub ??
-                (config.xpubEnvKey ? process.env[config.xpubEnvKey] : undefined);
+            const accountXpub = config.xpub ?? xpub ?? account.xpub ?? undefined
 
             if (!accountXpub) throw new Error(`xpub is required for ${blockchain}`);
 
