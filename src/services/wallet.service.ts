@@ -920,6 +920,7 @@ class WalletService
                 toUserId: receipientId,
                 amount,
                 currency: currency?.ISO!,
+                blockchain: currency?.chain ?? undefined,
                 description: `Offchain transfer of ${currency?.ISO!}`,
             }) 
 
@@ -1190,6 +1191,7 @@ class WalletService
                 toUserId: receipientId,
                 amount,
                 currency: currency?.ISO!,
+                blockchain: currency?.chain ?? undefined,
                 description: `Offchain transfer of ${currency?.ISO!}`,
             })
 

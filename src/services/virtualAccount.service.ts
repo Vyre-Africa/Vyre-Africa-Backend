@@ -133,8 +133,8 @@ class VirtualAccountService {
         });
     }
 
-    async getBalance(userId: string, currency: string) {
-        const account = await this.getAccount(userId, currency);
+    async getBalance(userId: string, currency: string,  blockchain?: string) {
+        const account = await this.getAccount(userId, currency, 'STANDARD', blockchain);
         return {
             balance: account.balance,
             frozen: account.frozen,
@@ -150,18 +150,21 @@ class VirtualAccountService {
         toUserId: string,
         amount: string,
         currency: string,
+        blockchain?: string,
         description?: string,
         metadata?: any
     }) {
 
-        const {fromUserId, toUserId, amount, currency, description, metadata} = payload
+        const {fromUserId, toUserId, amount, currency, blockchain ,description, metadata} = payload
         const decimalAmount = toDecimal(amount);
 
         if (decimalAmount.lte(0)) throw new Error('Amount must be greater than 0');
         if (fromUserId === toUserId) throw new Error('Cannot transfer to yourself');
 
-        const fromAccount = await this.getAccount(fromUserId, currency);
-        const toAccount = await this.getAccount(toUserId, currency);
+        // const fromAccount = await this.getAccount(fromUserId, currency);
+        // const toAccount = await this.getAccount(toUserId, currency);
+        const fromAccount = await this.getAccount(fromUserId, currency, 'STANDARD', blockchain);
+        const toAccount = await this.getAccount(toUserId, currency, 'STANDARD', blockchain);
         const fee = await this.calculateFee('P2P_TRANSFER', decimalAmount, currency);
         const netAmount = decimalAmount.minus(fee);
         const reference = generateRef('P2P');
@@ -484,7 +487,7 @@ class VirtualAccountService {
         const { userId, currency, amount, txHash, blockchain, walletAddress, metadata } = payload;
 
         const decimalAmount = toDecimal(amount);
-        const account = await this.getAccount(userId, currency);
+        const account = await this.getAccount(userId, currency, 'STANDARD', blockchain);
         const reference = generateRef('DEP');
 
         return await prisma.$transaction(async (tx) => {

@@ -640,6 +640,7 @@ class stableCoinService
                 toUserId: receipientId,
                 amount,
                 currency: currency?.ISO!,
+                blockchain: currency?.chain ?? undefined,
                 description: `Offchain transfer of ${currency?.ISO!}`,
             })
             

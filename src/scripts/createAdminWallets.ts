@@ -58,14 +58,25 @@ async function generateDirectAddress(
     const config = CHAIN_CONFIG[blockchain.toUpperCase()];
     if (!config?.tatumEndpoint) throw new Error(`No endpoint for ${blockchain}`);
 
-    const response = await axios.get(
-        `${config.tatumEndpoint}/${xpub}/${index}`,
-        { headers: { 'x-api-key': process.env.TATUM_LIVE_KEY! } }
-    );
+    try {
+        const response = await axios.get(
+            `${config.tatumEndpoint}/${xpub}/${index}`,
+            { headers: { 'x-api-key': process.env.TATUM_LIVE_KEY! } }
+        );
 
-    const address = response.data?.address;
-    if (!address) throw new Error(`Failed to generate address for ${blockchain}`);
-    return address;
+        const address = response.data?.address;
+        if (!address) throw new Error(`Failed to generate address for ${blockchain}`);
+        return address;
+
+    } catch (error: any) {
+        // Log full Tatum error response
+        console.error(`Tatum error for ${blockchain}:`, {
+            status: error.response?.status,
+            data:   error.response?.data,
+            url:    `${config.tatumEndpoint}/${xpub}/${index}`
+        });
+        throw error;
+    }
 }
 
 // ── Generate keypair wallet (SOL, XRP) ───────────────────────
