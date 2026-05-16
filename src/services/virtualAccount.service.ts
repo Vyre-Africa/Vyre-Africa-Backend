@@ -102,18 +102,19 @@ class VirtualAccountService {
 
     // ── Get Account ──────────────────────────────────────────────
 
-    async getAccount(userId: string, currency: string, type = 'STANDARD') {
+    async getAccount(userId: string, currency: string, type = 'STANDARD', blockchain?: string) {
         const account = await prisma.virtualAccount.findUnique({
             where: {
-                userId_currency_type: {
+                userId_currency_type_blockchain: {
                     userId,
                     currency,
-                    type: type as any
+                    type: type as any,
+                    blockchain: blockchain ?? ''
                 }
             }
         });
 
-        if (!account) throw new Error(`Account not found for ${currency}`);
+        if (!account) throw new Error(`Account not found for ${currency}${blockchain ? ` on ${blockchain}` : ''}`);
         return account;
     }
 
