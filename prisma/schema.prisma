@@ -1108,7 +1108,7 @@ model VirtualAccount {
   blocks                Block[]
   VirtualAccountAddress VirtualAccountAddress[]
 
-  @@unique([userId, currency, type])
+  @@unique([userId, currency, type, blockchain])
   @@index([userId])
   @@index([currency])
   @@index([status])

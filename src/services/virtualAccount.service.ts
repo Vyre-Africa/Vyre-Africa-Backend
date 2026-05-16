@@ -47,10 +47,11 @@ class VirtualAccountService {
 
         const existing = await prisma.virtualAccount.findUnique({
             where: {
-                userId_currency_type: {
+                userId_currency_type_blockchain: {
                     userId,
                     currency,
-                    type: type as any
+                    type: type as any,
+                    blockchain: blockchain ?? ''
                 }
             }
         });

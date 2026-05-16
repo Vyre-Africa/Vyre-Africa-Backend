@@ -17,7 +17,9 @@
         "postinstall": "NODE_ENV=production tsc",
         "prisma:generate": "npx prisma generate",
         "prisma:push": "npx prisma db push",
-        "prisma:seed": "ts-node prisma/seed.ts"
+        "prisma:seed": "ts-node prisma/seed.ts",
+        "create-admin-wallets": "ts-node -r dotenv/config src/scripts/createAdminWallets.ts"
+
     },
     "author": "harvey ana",
     "license": "ISC",
