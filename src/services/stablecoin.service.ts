@@ -177,14 +177,14 @@ class stableCoinService
             let gasPumpAddress: string | undefined;
 
             // Gas pump chains get their address from Tatum gas pump
-            if (gaspumpService.isGasPumpChain(chain)) {
-                const result = await gaspumpService.generateAddress(
-                    wallet.id,
-                    chain,
-                    currencyId
-                );
-                gasPumpAddress = result?.address;
-            }
+            // if (gaspumpService.isGasPumpChain(chain)) {
+            //     const result = await gaspumpService.generateAddress(
+            //         wallet.id,
+            //         chain,
+            //         currencyId
+            //     );
+            //     gasPumpAddress = result?.address;
+            // }
 
             // Connect address to virtual account
             // If gas pump address exists pass it directly, otherwise generate from Tatum
