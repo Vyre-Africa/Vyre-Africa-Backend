@@ -9,11 +9,11 @@ import chainService from "./chain.service";
 
 
 // Chains that use gas pump
-const GAS_PUMP_CHAINS = ['ETH', 'POLYGON', 'BSC', 'TRON']
+const GAS_PUMP_CHAINS = ['ETHEREUM', 'POLYGON', 'BSC', 'TRON']
 
 // Maps internal chain → Tatum chain param for gas pump API calls
 const CHAIN_PARAM_MAP: Record<string, string> = {
-  ETH: 'ETH',    // Tatum expects 'ETH' in the API body
+  ETHEREUM: 'ETH',    // Tatum expects 'ETH' in the API body
   POLYGON:  'MATIC',  // Tatum expects 'MATIC'
   BSC:      'BSC',
   TRON:     'TRON'
@@ -21,7 +21,7 @@ const CHAIN_PARAM_MAP: Record<string, string> = {
 
 // Maps internal chain → webhook chain format → used to find admin wallet
 const CHAIN_TO_WEBHOOK: Record<string, string> = {
-  ETH:   'ethereum-mainnet',
+  ETHEREUM:   'ethereum-mainnet',
   MATIC: 'polygon-mainnet',
   BSC:   'bsc-mainnet',
   TRON:  'tron-mainnet'
