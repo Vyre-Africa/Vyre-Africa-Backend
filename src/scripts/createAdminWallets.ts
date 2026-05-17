@@ -10,7 +10,9 @@ dotenv.config();
 
 // ── Admin user IDs ───────────────────────────────────────────
 const ADMIN_USER_IDS = [
-    process.env.Admin_Id!,
+    "user_38OI3Y47pS0u4gKiRoee5GySGiV",
+    // process.env.Admin_Id!,
+    
     // add more admin IDs here if needed
 ];
 
@@ -24,7 +26,7 @@ const ADMIN_WALLET_CONFIGS = [
     // { currency: 'USD',  blockchain: null,       chainKey: null },
 
     // Native crypto
-    // { currency: 'ETH',  blockchain: 'ETH',      chainKey: 'ETH' },
+    // { currency: 'ETH',  blockchain: 'ETHEREUM', chainKey: 'ETH' },
     // { currency: 'BTC',  blockchain: 'BTC',      chainKey: 'BTC' },
     // { currency: 'TRX',  blockchain: 'TRON',     chainKey: 'TRON' },
     // { currency: 'LTC',  blockchain: 'LTC',      chainKey: 'LTC' },
@@ -33,17 +35,17 @@ const ADMIN_WALLET_CONFIGS = [
 
     // Stablecoins
     // { currency: 'USDT', blockchain: 'TRON',     chainKey: 'USDT_TRON' },
-    // { currency: 'USDT', blockchain: 'ETH',      chainKey: 'USDT_ETH' },
+    // { currency: 'USDT', blockchain: 'ETHEREUM', chainKey: 'USDT_ETH' },
     // { currency: 'USDT', blockchain: 'BSC',      chainKey: 'USDT_BSC' },
     // { currency: 'USDT', blockchain: 'BASE',     chainKey: 'USDT_BASE' },
     // { currency: 'USDT', blockchain: 'ARBITRUM', chainKey: 'USDT_ARB' },
     // { currency: 'USDT', blockchain: 'OPTIMISM', chainKey: 'USDT_OP' },
-    // { currency: 'USDC', blockchain: 'ETH',      chainKey: 'USDC_ETH' },
+    { currency: 'USDC', blockchain: 'ETHEREUM',    chainKey: 'USDC_ETH' },
     // { currency: 'USDC', blockchain: 'BSC',      chainKey: 'USDC_BSC' },
     // { currency: 'USDC', blockchain: 'BASE',     chainKey: 'USDC_BASE' },
     // { currency: 'USDC', blockchain: 'ARBITRUM', chainKey: 'USDC_ARB' },
     // { currency: 'USDC', blockchain: 'OPTIMISM', chainKey: 'USDC_OP' },
-    { currency: 'USDC', blockchain: 'POLYGON',  chainKey: 'USDC_MATIC' },
+    // { currency: 'USDC', blockchain: 'POLYGON',  chainKey: 'USDC_MATIC' },
     // { currency: 'USDT', blockchain: 'POLYGON',  chainKey: 'USDT_MATIC' },
     // { currency: 'USDC', blockchain: 'SOL',      chainKey: 'USDC_SOL' },
     // { currency: 'USDT', blockchain: 'SOL',      chainKey: 'USDT_SOL' },

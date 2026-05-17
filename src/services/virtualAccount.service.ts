@@ -77,7 +77,7 @@ class VirtualAccountService {
         const accounts = [
             { currency: 'NGN',  blockchain: null,       xpub: null },
             { currency: 'USD',  blockchain: null,       xpub: null },
-            { currency: 'ETH',  blockchain: 'ETH',      xpub: process.env.ETH_XPUB },
+            { currency: 'ETH',  blockchain: 'ETHEREUM',      xpub: process.env.ETH_XPUB },
             { currency: 'BTC',  blockchain: 'BTC',      xpub: process.env.BTC_XPUB },
             { currency: 'USDT', blockchain: 'TRON',     xpub: process.env.TRON_XPUB },
             { currency: 'USDC', blockchain: 'ETH',      xpub: process.env.ETH_XPUB },
@@ -1751,7 +1751,7 @@ class VirtualAccountService {
 
         // ── Native ETH / MATIC / BNB (EVM chains) ───────────────────
         else if (
-            ['ETH', 'POLYGON', 'BSC', 'BASE', 'ARBITRUM', 'OPTIMISM'].includes(config.blockchain)
+            ['ETHEREUM', 'POLYGON', 'BSC', 'BASE', 'ARBITRUM', 'OPTIMISM'].includes(config.blockchain)
             && !config.isToken
         ) {
             payload = {
@@ -1875,7 +1875,7 @@ class VirtualAccountService {
               break;
 
           // ── EVM Chains (ETH, POLYGON, BSC, BASE, ARBITRUM, OPTIMISM)
-          case 'ETH':
+          case 'ETHEREUM':
           case 'POLYGON':
           case 'BSC':
           case 'BASE':
@@ -2004,7 +2004,7 @@ class VirtualAccountService {
               };
               break;
 
-          // ── ERC20 (ETH, POLYGON, BASE, ARBITRUM, OPTIMISM tokens)
+          // ── ERC20 (ETHEREUM, POLYGON, BASE, ARBITRUM, OPTIMISM tokens)
           case 'ERC20':
               payload = {
                   to: toAddress,
@@ -2063,7 +2063,7 @@ class VirtualAccountService {
 
       // Tatum endpoint per chain
       const endpoints: Record<string, string> = {
-          ETH:      'ethereum',
+          ETHEREUM: 'ethereum',
           BTC:      'bitcoin',
           TRON:     'tron',
           LTC:      'litecoin',

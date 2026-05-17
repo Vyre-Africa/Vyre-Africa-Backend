@@ -22,7 +22,7 @@ export interface SweepJobData {
 }
 
 const SWEEP_CHAINS = [
-  'ETH', 'POLYGON', 'BSC', 'TRON',   // gas pump
+  'ETHEREUM', 'POLYGON', 'BSC', 'TRON',   // gas pump
   'BASE', 'ARBITRUM', 'OPTIMISM'  // nonce chain
 ]
 
@@ -54,7 +54,7 @@ class SweepService{
 
     // Maps your internal chain key → Tatum's transfer endpoint prefix
     public CHAIN_ENDPOINT_MAP: Record<string, string> = {
-        ETH: 'ethereum',
+        ETHEREUM: 'ethereum',
         BASE:     'base',
         BSC:      'bsc',
         POLYGON:  'polygon',

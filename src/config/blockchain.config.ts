@@ -24,7 +24,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     // ── Native HD Chains ─────────────────────────────────────────
 
     ETH: {
-        blockchain: 'ETH',
+        blockchain: 'ETHEREUM',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/ethereum/address',
         tatumTransferEndpoint: 'https://api.tatum.io/v3/ethereum/transaction',
@@ -161,7 +161,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     // ── ERC20 Tokens (ETH chain) ─────────────────────────────────
 
     USDT_ETH: {
-        blockchain: 'ETH',
+        blockchain: 'ETHEREUM',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/ethereum/address',
         tatumTransferEndpoint: 'https://api.tatum.io/v3/ethereum/transaction',
@@ -178,7 +178,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     USDC_ETH: {
-        blockchain: 'ETH',
+        blockchain: 'ETHEREUM',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/ethereum/address',
         tatumTransferEndpoint: 'https://api.tatum.io/v3/ethereum/transaction',

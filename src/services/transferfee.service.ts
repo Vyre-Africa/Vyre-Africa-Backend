@@ -1,6 +1,6 @@
 
 
-type Network = 'ETH' | 'POLYGON' | 'ARBITRUM' | 'OPTIMISM' | 'BASE' | 'BSC' | 'TRON';
+type Network = 'ETHEREUM' | 'POLYGON' | 'ARBITRUM' | 'OPTIMISM' | 'BASE' | 'BSC' | 'TRON';
 
 interface NetworkConfig {
   base: number;
@@ -15,7 +15,7 @@ class TransferfeeService {
 
    // Network-specific base fees in USD
   private networkBaseFees: Record<Network, NetworkConfig> = {
-    'ETH': { 
+    'ETHEREUM': { 
       base: 0.1, 
       max: 15,
       minWithdrawal: 2,
