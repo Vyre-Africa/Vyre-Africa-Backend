@@ -1219,13 +1219,13 @@ class VirtualAccountService {
         if (existing) throw new Error('Address already connected');
 
         // Only check index uniqueness if index is provided
-        if (index !== null && index !== undefined) {
-            const indexUsed = await prisma.virtualAccountAddress.findUnique({
-                where: { xpub_index_blockchain: { xpub, index, blockchain } }
-            });
-            if (indexUsed) throw new Error(`Index ${index} already used for this xpub on ${blockchain}`);
+        // if (index !== null && index !== undefined) {
+        //     const indexUsed = await prisma.virtualAccountAddress.findUnique({
+        //         where: { xpub_index_blockchain: { xpub, index, blockchain } }
+        //     });
+        //     if (indexUsed) throw new Error(`Index ${index} already used for this xpub on ${blockchain}`);
 
-        }
+        // }
     
 
         return await prisma.virtualAccountAddress.create({
