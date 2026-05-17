@@ -45,7 +45,7 @@ import { CHAIN_CONFIG, getChainConfigByCurrency, getChainKey} from '../config/bl
         derivationKey: number;
     }
 
-    type AllSupportedChains = 'ETHEREUM' | 'TRON' | 'BASE' | 'BSC' | 'ARBITRUM' | 'OPTIMISM' | 'POLYGON';
+    type AllSupportedChains = 'ETHEREUM' | 'TRON' | 'BASE' | 'BSC' | 'ARBITRUM' | 'OPTIMISM' | 'POLYGON' | 'SOLANA';
     type StablecoinType = 'USDC' | 'USDT';
     const BLOCKCHAIN_DECIMALS = 8;
 
