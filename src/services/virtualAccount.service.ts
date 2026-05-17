@@ -1203,7 +1203,7 @@ class VirtualAccountService {
         blockchain: string,
         address: string,
         xpub: string,
-        index: number,
+        index: number | null,
         chainConfig?: ChainConfig,
         metadata?: any
     ) {
@@ -1218,10 +1218,15 @@ class VirtualAccountService {
         });
         if (existing) throw new Error('Address already connected');
 
-        const indexUsed = await prisma.virtualAccountAddress.findUnique({
-            where: { xpub_index_blockchain: { xpub, index, blockchain } }
-        });
-        if (indexUsed) throw new Error(`Index ${index} already used for this xpub on ${blockchain}`);
+        // Only check index uniqueness if index is provided
+        if (index !== null && index !== undefined) {
+            const indexUsed = await prisma.virtualAccountAddress.findUnique({
+                where: { xpub_index_blockchain: { xpub, index, blockchain } }
+            });
+            if (indexUsed) throw new Error(`Index ${index} already used for this xpub on ${blockchain}`);
+
+        }
+    
 
         return await prisma.virtualAccountAddress.create({
             data: {
@@ -1229,7 +1234,7 @@ class VirtualAccountService {
                 blockchain,
                 address,
                 xpub,
-                index,
+                index: index ?? null,  // ← store null if no index
                 isActive: true,
                 isToken: chainConfig?.isToken ?? false,
                 tokenMint: chainConfig?.tokenMint,
@@ -1339,7 +1344,7 @@ class VirtualAccountService {
                     blockchain,
                     address,
                     accountXpub,
-                    undefined as any, // index managed by gas pump service
+                    null, // index managed by gas pump service
                     config
                 );
 
