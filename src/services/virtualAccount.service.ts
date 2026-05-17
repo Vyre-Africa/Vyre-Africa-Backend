@@ -47,10 +47,11 @@ class VirtualAccountService {
 
         const existing = await prisma.virtualAccount.findUnique({
             where: {
-                userId_currency_type: {
+                userId_currency_type_blockchain: {
                     userId,
                     currency,
-                    type: type as any
+                    type: type as any,
+                    blockchain: blockchain ?? ''
                 }
             }
         });
@@ -101,18 +102,19 @@ class VirtualAccountService {
 
     // ── Get Account ──────────────────────────────────────────────
 
-    async getAccount(userId: string, currency: string, type = 'STANDARD') {
+    async getAccount(userId: string, currency: string, type = 'STANDARD', blockchain?: string) {
         const account = await prisma.virtualAccount.findUnique({
             where: {
-                userId_currency_type: {
+                userId_currency_type_blockchain: {
                     userId,
                     currency,
-                    type: type as any
+                    type: type as any,
+                    blockchain: blockchain ?? ''
                 }
             }
         });
 
-        if (!account) throw new Error(`Account not found for ${currency}`);
+        if (!account) throw new Error(`Account not found for ${currency}${blockchain ? ` on ${blockchain}` : ''}`);
         return account;
     }
 
@@ -131,8 +133,8 @@ class VirtualAccountService {
         });
     }
 
-    async getBalance(userId: string, currency: string) {
-        const account = await this.getAccount(userId, currency);
+    async getBalance(userId: string, currency: string,  blockchain?: string) {
+        const account = await this.getAccount(userId, currency, 'STANDARD', blockchain);
         return {
             balance: account.balance,
             frozen: account.frozen,
@@ -148,18 +150,21 @@ class VirtualAccountService {
         toUserId: string,
         amount: string,
         currency: string,
+        blockchain?: string,
         description?: string,
         metadata?: any
     }) {
 
-        const {fromUserId, toUserId, amount, currency, description, metadata} = payload
+        const {fromUserId, toUserId, amount, currency, blockchain ,description, metadata} = payload
         const decimalAmount = toDecimal(amount);
 
         if (decimalAmount.lte(0)) throw new Error('Amount must be greater than 0');
         if (fromUserId === toUserId) throw new Error('Cannot transfer to yourself');
 
-        const fromAccount = await this.getAccount(fromUserId, currency);
-        const toAccount = await this.getAccount(toUserId, currency);
+        // const fromAccount = await this.getAccount(fromUserId, currency);
+        // const toAccount = await this.getAccount(toUserId, currency);
+        const fromAccount = await this.getAccount(fromUserId, currency, 'STANDARD', blockchain);
+        const toAccount = await this.getAccount(toUserId, currency, 'STANDARD', blockchain);
         const fee = await this.calculateFee('P2P_TRANSFER', decimalAmount, currency);
         const netAmount = decimalAmount.minus(fee);
         const reference = generateRef('P2P');
@@ -482,7 +487,7 @@ class VirtualAccountService {
         const { userId, currency, amount, txHash, blockchain, walletAddress, metadata } = payload;
 
         const decimalAmount = toDecimal(amount);
-        const account = await this.getAccount(userId, currency);
+        const account = await this.getAccount(userId, currency, 'STANDARD', blockchain);
         const reference = generateRef('DEP');
 
         return await prisma.$transaction(async (tx) => {
@@ -1198,7 +1203,7 @@ class VirtualAccountService {
         blockchain: string,
         address: string,
         xpub: string,
-        index: number,
+        index: number | null,
         chainConfig?: ChainConfig,
         metadata?: any
     ) {
@@ -1213,10 +1218,15 @@ class VirtualAccountService {
         });
         if (existing) throw new Error('Address already connected');
 
-        const indexUsed = await prisma.virtualAccountAddress.findUnique({
-            where: { xpub_index_blockchain: { xpub, index, blockchain } }
-        });
-        if (indexUsed) throw new Error(`Index ${index} already used for this xpub on ${blockchain}`);
+        // Only check index uniqueness if index is provided
+        // if (index !== null && index !== undefined) {
+        //     const indexUsed = await prisma.virtualAccountAddress.findUnique({
+        //         where: { xpub_index_blockchain: { xpub, index, blockchain } }
+        //     });
+        //     if (indexUsed) throw new Error(`Index ${index} already used for this xpub on ${blockchain}`);
+
+        // }
+    
 
         return await prisma.virtualAccountAddress.create({
             data: {
@@ -1224,7 +1234,7 @@ class VirtualAccountService {
                 blockchain,
                 address,
                 xpub,
-                index,
+                index: index ?? null,  // ← store null if no index
                 isActive: true,
                 isToken: chainConfig?.isToken ?? false,
                 tokenMint: chainConfig?.tokenMint,
@@ -1295,6 +1305,7 @@ class VirtualAccountService {
         if (!account) throw new Error('Virtual account not found');
 
         const config = CHAIN_CONFIG[chainKey.toUpperCase()];
+        console.log('chainconfig',config)
         if (!config) throw new Error(`Unsupported chain: ${chainKey}`);
 
         const { blockchain, walletType } = config;
@@ -1302,8 +1313,7 @@ class VirtualAccountService {
         // ── HD wallet ────────────────────────────────────────────
         if (walletType === 'HD') {
 
-            const accountXpub = xpub ?? account.xpub ??
-                (config.xpubEnvKey ? process.env[config.xpubEnvKey] : undefined);
+            const accountXpub = config.xpub ?? xpub ?? account.xpub ?? undefined
 
             if (!accountXpub) throw new Error(`xpub is required for ${blockchain}`);
 
@@ -1334,7 +1344,7 @@ class VirtualAccountService {
                     blockchain,
                     address,
                     accountXpub,
-                    undefined as any, // index managed by gas pump service
+                    null, // index managed by gas pump service
                     config
                 );
 

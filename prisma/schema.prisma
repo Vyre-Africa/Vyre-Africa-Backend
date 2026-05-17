@@ -1108,7 +1108,7 @@ model VirtualAccount {
   blocks                Block[]
   VirtualAccountAddress VirtualAccountAddress[]
 
-  @@unique([userId, currency, type])
+  @@unique([userId, currency, type, blockchain])
   @@index([userId])
   @@index([currency])
   @@index([status])
@@ -1141,7 +1141,6 @@ model VirtualAccountAddress {
   virtualAccount VirtualAccount @relation(fields: [virtualAccountId], references: [id])
 
   @@unique([address, blockchain, tokenMint])
-  @@unique([xpub, index, blockchain])
   @@index([virtualAccountId])
   @@index([blockchain])
   @@index([address])
