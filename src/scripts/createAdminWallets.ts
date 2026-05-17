@@ -111,7 +111,7 @@ async function subscribeAddress(address: string, webhookChain: string): Promise<
             attr: {
                 address,
                 chain: webhookChain,
-                url: `${process.env.WEBHOOK_URL}/api/v1/webhook/tatum`
+                url: "https://api-dev.vyre.africa/api/v1/webhook/tatum"
             }
         },
         { headers: { 'x-api-key': process.env.TATUM_LIVE_KEY! } }
