@@ -1966,13 +1966,18 @@ class eventService {
               }
 
               const shouldSweep =
-                  wallet.userId      !== config.Admin_Id &&
-                  wallet.derivationKey !== null &&
-                  wallet.derivationKey !== undefined &&
+                  wallet.userId !== config.Admin_Id &&
                   wallet.depositAddress &&
                   wallet.currencyId
 
-              if (!shouldSweep) return
+              if (!shouldSweep) {
+                  console.log(`[Sweep] Skipping — conditions not met`, {
+                      isAdmin: wallet.userId === config.Admin_Id,
+                      hasAddress: !!wallet.depositAddress,
+                      hasCurrencyId: !!wallet.currencyId,
+                  });
+                  return;
+              }
 
               sweepLog = await prisma.sweepLog.create({
                   data: {
