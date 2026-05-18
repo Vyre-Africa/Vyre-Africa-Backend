@@ -30,25 +30,25 @@ const ADMIN_WALLET_CONFIGS = [
     // { currency: 'BTC',  blockchain: 'BTC',      chainKey: 'BTC' },
     // { currency: 'TRX',  blockchain: 'TRON',     chainKey: 'TRON' },
     // { currency: 'LTC',  blockchain: 'LTC',      chainKey: 'LTC' },
-    // { currency: 'SOL',  blockchain: 'SOL',      chainKey: 'SOL' },
+    // { currency: 'SOL',  blockchain: 'SOLANA',   chainKey: 'SOL' },
     // { currency: 'XRP',  blockchain: 'XRP',      chainKey: 'XRP' },
 
     // Stablecoins
     // { currency: 'USDT', blockchain: 'TRON',     chainKey: 'USDT_TRON' },
     // { currency: 'USDT', blockchain: 'ETHEREUM', chainKey: 'USDT_ETH' },
-    // { currency: 'USDT', blockchain: 'BSC',      chainKey: 'USDT_BSC' },
+    { currency: 'USDT', blockchain: 'BSC',      chainKey: 'USDT_BSC' },
     // { currency: 'USDT', blockchain: 'BASE',     chainKey: 'USDT_BASE' },
     // { currency: 'USDT', blockchain: 'ARBITRUM', chainKey: 'USDT_ARB' },
     // { currency: 'USDT', blockchain: 'OPTIMISM', chainKey: 'USDT_OP' },
-    { currency: 'USDC', blockchain: 'ETHEREUM',    chainKey: 'USDC_ETH' },
+    // { currency: 'USDC', blockchain: 'ETHEREUM',    chainKey: 'USDC_ETH' },
     // { currency: 'USDC', blockchain: 'BSC',      chainKey: 'USDC_BSC' },
     // { currency: 'USDC', blockchain: 'BASE',     chainKey: 'USDC_BASE' },
     // { currency: 'USDC', blockchain: 'ARBITRUM', chainKey: 'USDC_ARB' },
     // { currency: 'USDC', blockchain: 'OPTIMISM', chainKey: 'USDC_OP' },
     // { currency: 'USDC', blockchain: 'POLYGON',  chainKey: 'USDC_MATIC' },
     // { currency: 'USDT', blockchain: 'POLYGON',  chainKey: 'USDT_MATIC' },
-    // { currency: 'USDC', blockchain: 'SOL',      chainKey: 'USDC_SOL' },
-    // { currency: 'USDT', blockchain: 'SOL',      chainKey: 'USDT_SOL' },
+    // { currency: 'USDC', blockchain: 'SOLANA',   chainKey: 'USDC_SOL' },
+    // { currency: 'USDT', blockchain: 'SOLANA',   chainKey: 'USDT_SOL' },
 ];
 
 // ── Generate direct address from Tatum (no gas pump) ────────
@@ -57,7 +57,22 @@ async function generateDirectAddress(
     xpub: string,
     index: number
 ): Promise<string> {
-    const config = CHAIN_CONFIG[blockchain.toUpperCase()];
+    // Map internal blockchain names to CHAIN_CONFIG keys
+    const blockchainKeyMap: Record<string, string> = {
+        'ETHEREUM': 'ETH',
+        'POLYGON':  'POLYGON',
+        'BSC':      'BSC',
+        'TRON':     'TRON',
+        'BASE':     'BASE',
+        'ARBITRUM': 'ARBITRUM',
+        'OPTIMISM': 'OPTIMISM',
+        'BITCOIN':  'BTC',
+        'LITECOIN': 'LTC',
+    };
+
+    const configKey = blockchainKeyMap[blockchain.toUpperCase()] ?? blockchain.toUpperCase();
+    const config = CHAIN_CONFIG[configKey];
+    
     if (!config?.tatumEndpoint) throw new Error(`No endpoint for ${blockchain}`);
 
     try {
@@ -71,7 +86,6 @@ async function generateDirectAddress(
         return address;
 
     } catch (error: any) {
-        // Log full Tatum error response
         console.error(`Tatum error for ${blockchain}:`, {
             status: error.response?.status,
             data:   error.response?.data,

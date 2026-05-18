@@ -139,7 +139,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     // ── Native Keypair Chains ────────────────────────────────────
 
     SOL: {
-        blockchain: 'SOL',
+        blockchain: 'SOLANA',
         walletType: 'KEYPAIR',
         tatumWalletEndpoint: 'https://api.tatum.io/v3/solana/wallet',
         tatumTransferEndpoint: 'https://api.tatum.io/v3/solana/transaction',
@@ -269,7 +269,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     // ── SPL Tokens (Solana chain) ────────────────────────────────
 
     USDC_SOL: {
-        blockchain: 'SOL',
+        blockchain: 'SOLANA',
         walletType: 'KEYPAIR',
         tatumWalletEndpoint: 'https://api.tatum.io/v3/solana/wallet',
         tatumTransferEndpoint: 'https://api.tatum.io/v3/blockchain/token/transaction',
@@ -283,7 +283,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     USDT_SOL: {
-        blockchain: 'SOL',
+        blockchain: 'SOLANA',
         walletType: 'KEYPAIR',
         tatumWalletEndpoint: 'https://api.tatum.io/v3/solana/wallet',
         tatumTransferEndpoint: 'https://api.tatum.io/v3/blockchain/token/transaction',

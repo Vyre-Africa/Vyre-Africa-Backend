@@ -1,6 +1,6 @@
 
 
-type Network = 'ETHEREUM' | 'POLYGON' | 'ARBITRUM' | 'OPTIMISM' | 'BASE' | 'BSC' | 'TRON';
+type Network = 'ETHEREUM' | 'POLYGON' | 'ARBITRUM' | 'OPTIMISM' | 'BASE' | 'BSC' | 'TRON' | 'SOLANA';
 
 interface NetworkConfig {
   base: number;
@@ -56,6 +56,12 @@ class TransferfeeService {
       max: 2,
       minWithdrawal: 2,
       description: "Energy-based fees"
+    },
+    'SOLANA': { 
+      base: 0.1, 
+      max: 0.5,
+      minWithdrawal: 1,
+      description: "fees"
     }
   };
 
