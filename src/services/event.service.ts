@@ -473,19 +473,31 @@ class eventService {
         return { status: 'ignored', reason: 'duplicate' }
       }
 
-      // ── Step 6: Determine transfer type ──────────────────────
-        const walletAddress = wallet.depositAddress?.toLowerCase();
+        // ── Step 6: Determine transfer type ──────────────────────
         let transferType: 'CREDIT' | 'DEBIT';
         let actualSender: string;
 
-        if (type === 'token') {
-            // Token: address = receiver, counterAddress = sender
-            transferType = address?.toLowerCase() === walletAddress ? 'CREDIT' : 'DEBIT';
-            actualSender = counterAddress;
-        } else {
-            // Native: address = sender, counterAddress = receiver
-            transferType = counterAddress?.toLowerCase() === walletAddress ? 'CREDIT' : 'DEBIT';
+        const walletAddress = wallet.depositAddress?.toLowerCase();
+
+        // Fee type — always a debit (gas cost)
+        if (type === 'fee') {
+            transferType = 'DEBIT';
             actualSender = address;
+        }
+        // Token transfer
+        else if (type === 'token') {
+            // token CREDIT: counterAddress = our wallet
+            // token DEBIT:  address = our wallet
+            transferType = counterAddress?.toLowerCase() === walletAddress ? 'CREDIT' : 'DEBIT';
+            actualSender = transferType === 'CREDIT' ? address : counterAddress;
+        }
+        // Native transfer
+        else {
+            // native: address = our wallet for both CREDIT and DEBIT
+            // use amount sign or check if we are sending or receiving
+            // For native — address is always our wallet, so check amount sign
+            transferType = parseFloat(amount) >= 0 ? 'CREDIT' : 'DEBIT';
+            actualSender = counterAddress;
         }
 
         console.log('Transfer type determined', {
@@ -556,23 +568,23 @@ class eventService {
 
 
       return await prisma.$transaction(async (tx) => {
-        // if (transferType === 'CREDIT') {
+        if (transferType === 'CREDIT') {
           return await this.handleCreditTransaction({
             tx, wallet, amount: roundedAmount,
             sender: actualSender,
             awaiting, txId, chain, contractAddress
           })
-        // }
+        }
 
-        // if (transferType === 'DEBIT') {
-        //   return await this.handleDebitTransaction({
-        //     tx, wallet,
-        //     amount: roundedAmount,
-        //     txId
-        //   })
-        // }
+        if (transferType === 'DEBIT') {
+          return await this.handleDebitTransaction({
+            tx, wallet,
+            amount: roundedAmount,
+            txId
+          })
+        }
 
-        // throw new Error(`Unable to determine transfer type`)
+        throw new Error(`Unable to determine transfer type`)
 
       }, {
         maxWait:        10000,
@@ -1066,9 +1078,6 @@ class eventService {
     }
   }
 
-  
-
-
 
   private async handleCreditTransaction(params: {
     tx: any;
@@ -1092,8 +1101,9 @@ class eventService {
         userId: wallet.userId,
         currency: wallet.currency.ISO,        // currency e.g 'USDT', 'USDC'
         amount,
-        txHash: txId,                       // txHash — used for idempotency
-        blockchain: chain,                      // blockchain e.g 'ETHEREUM', 'TRON'
+        txHash: txId,       
+        accountId: wallet.id,                // txHash — used for idempotency
+        // blockchain: chain,                      // blockchain e.g 'ETHEREUM', 'TRON'
         walletAddress: wallet.depositAddress,      // the wallet address that received the deposit
         metadata:{
           sender,                 // who sent the funds
