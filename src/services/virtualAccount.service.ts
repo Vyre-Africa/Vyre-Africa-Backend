@@ -476,18 +476,19 @@ class VirtualAccountService {
 
     async cryptoDeposit(payload: {
         userId: string,
+        accountId: string,
         currency: string,
         amount: string,
         txHash: string,
-        blockchain: string,
+        // blockchain: string,
         walletAddress: string,
         metadata?: any
     }) {
 
-        const { userId, currency, amount, txHash, blockchain, walletAddress, metadata } = payload;
+        const { userId, accountId, currency, amount, txHash, walletAddress, metadata } = payload;
 
         const decimalAmount = toDecimal(amount);
-        const account = await this.getAccount(userId, currency, 'STANDARD', blockchain);
+        const account = await this.getAccountById(accountId);
         const reference = generateRef('DEP');
 
         return await prisma.$transaction(async (tx) => {
@@ -515,7 +516,7 @@ class VirtualAccountService {
                     status: 'COMPLETED',
                     reference,
                     txHash,
-                    blockchain,
+                    blockchain: account.blockchain,
                     walletAddress,
                     metadata,
                     completedAt: new Date()
