@@ -556,23 +556,23 @@ class eventService {
 
 
       return await prisma.$transaction(async (tx) => {
-        if (transferType === 'CREDIT') {
+        // if (transferType === 'CREDIT') {
           return await this.handleCreditTransaction({
             tx, wallet, amount: roundedAmount,
             sender: actualSender,
             awaiting, txId, chain, contractAddress
           })
-        }
+        // }
 
-        if (transferType === 'DEBIT') {
-          return await this.handleDebitTransaction({
-            tx, wallet,
-            amount: roundedAmount,
-            txId
-          })
-        }
+        // if (transferType === 'DEBIT') {
+        //   return await this.handleDebitTransaction({
+        //     tx, wallet,
+        //     amount: roundedAmount,
+        //     txId
+        //   })
+        // }
 
-        throw new Error(`Unable to determine transfer type`)
+        // throw new Error(`Unable to determine transfer type`)
 
       }, {
         maxWait:        10000,
