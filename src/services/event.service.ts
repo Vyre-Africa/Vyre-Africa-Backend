@@ -473,29 +473,68 @@ class eventService {
         return { status: 'ignored', reason: 'duplicate' }
       }
 
+      // ── Step 6: Determine transfer type ──────────────────────
+        const walletAddress = wallet.depositAddress?.toLowerCase();
+        let transferType: 'CREDIT' | 'DEBIT';
+        let actualSender: string;
 
-      // ── Step 6: Sync VA balance from Tatum ───────────────────────────
-      logger.info('Syncing wallet balance', { walletId: wallet.id });
-      const syncedWallet = await walletService.getAccount(wallet.id);
-      if (!syncedWallet) {
-        throw new Error(`Failed to sync wallet ${wallet.id}`);
-      }
-      logger.info('Wallet synced', {
-        walletId: wallet.id,
-        newBalance: syncedWallet.accountBalance?.toString()
-      });
+        if (type === 'token') {
+            // Token: address = receiver, counterAddress = sender
+            transferType = address?.toLowerCase() === walletAddress ? 'CREDIT' : 'DEBIT';
+            actualSender = counterAddress;
+        } else {
+            // Native: address = sender, counterAddress = receiver
+            transferType = counterAddress?.toLowerCase() === walletAddress ? 'CREDIT' : 'DEBIT';
+            actualSender = address;
+        }
+
+        console.log('Transfer type determined', {
+            walletAddress,
+            address,
+            counterAddress,
+            type,
+            transferType,
+            actualSender,
+            txId
+        });
+
+        logger.info('Transfer type determined', {
+            walletAddress,
+            address,
+            counterAddress,
+            type,
+            transferType,
+            actualSender,
+            txId
+        });
+
+
+      // // ── Step 6: Sync VA balance from Tatum ───────────────────────────
+      // logger.info('Syncing wallet balance', { walletId: wallet.id });
+      // const syncedWallet = await walletService.getAccount(wallet.id);
+      // if (!syncedWallet) {
+      //   throw new Error(`Failed to sync wallet ${wallet.id}`);
+      // }
+      // logger.info('Wallet synced', {
+      //   walletId: wallet.id,
+      //   newBalance: syncedWallet.accountBalance?.toString()
+      // });
 
 
       // ── Step 7: Detect transfer direction ─────────────────────────────
-      const { transferType, balanceDifference } = this.detectTransferType(
-        wallet.accountBalance,
-        syncedWallet.accountBalance,
-        amountDecimal,
-        txId
-      )
+      // const { transferType, balanceDifference } = this.detectTransferType(
+      //   wallet.accountBalance,
+      //   syncedWallet.accountBalance,
+      //   amountDecimal,
+      //   txId
+      // )
+
+      // const transferType = address.toLowerCase() === wallet.depositAddress?.toLowerCase()
+      // ? 'CREDIT'
+      // : 'DEBIT';
 
       // ── Step 8: Resolve actual sender ─────────────────────────────────
-      const actualSender = wallet.depositAddress === address ? counterAddress : address
+      // const actualSender = wallet.depositAddress === address ? counterAddress : address
 
       // ── Step 9: Find pending awaiting order ───────────────────────────
       const awaiting = await prisma.awaiting.findFirst({
@@ -527,7 +566,7 @@ class eventService {
 
         if (transferType === 'DEBIT') {
           return await this.handleDebitTransaction({
-            tx, wallet, syncedWallet,
+            tx, wallet,
             amount: roundedAmount,
             txId
           })
@@ -1125,11 +1164,22 @@ class eventService {
   private async handleDebitTransaction(params: {
     tx: any;
     wallet: any;
-    syncedWallet: any;
+    // syncedWallet: any;
     amount: string;
     txId: string;
   }) {
-    const { tx, wallet, syncedWallet, amount, txId } = params;
+    const { tx, wallet, amount, txId } = params;
+
+    // Sync VA balance  ───────────────────────────
+      logger.info('Syncing wallet balance', { walletId: wallet.id });
+      const syncedWallet = await walletService.getAccount(wallet.id);
+      if (!syncedWallet) {
+        throw new Error(`Failed to sync wallet ${wallet.id}`);
+      }
+      logger.info('Wallet synced', {
+        walletId: wallet.id,
+        newBalance: syncedWallet.accountBalance?.toString()
+      });
 
     // 1. Create transaction record
     const transaction = await tx.transaction.create({
