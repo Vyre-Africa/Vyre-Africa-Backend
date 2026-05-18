@@ -1,0 +1,33 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    env:
+      - 'DOCKER_API_VERSION=1.41'
+    args:
+      - build
+      - '-t'
+      - 'us-central1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-backend-production:$COMMIT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    env:
+      - 'DOCKER_API_VERSION=1.41'
+    args:
+      - push
+      - 'us-central1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-backend-production:$COMMIT_SHA'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - vyre-backend-production
+      - '--image=us-central1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-backend-production:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--quiet'
+
+images:
+  - 'us-central1-docker.pkg.dev/thinking-glass-476205-m2/cloud-run-source-deploy/vyre-backend-production:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -10,8 +10,8 @@ dotenv.config();
 
 // ── Admin user IDs ───────────────────────────────────────────
 const ADMIN_USER_IDS = [
-    "user_38OI3Y47pS0u4gKiRoee5GySGiV",
-    // process.env.Admin_Id!,
+    // "user_38OI3Y47pS0u4gKiRoee5GySGiV",
+    process.env.Admin_Id!,
     
     // add more admin IDs here if needed
 ];
@@ -36,7 +36,7 @@ const ADMIN_WALLET_CONFIGS = [
     // Stablecoins
     // { currency: 'USDT', blockchain: 'TRON',     chainKey: 'USDT_TRON' },
     // { currency: 'USDT', blockchain: 'ETHEREUM', chainKey: 'USDT_ETH' },
-    { currency: 'USDT', blockchain: 'BSC',      chainKey: 'USDT_BSC' },
+    // { currency: 'USDT', blockchain: 'BSC',      chainKey: 'USDT_BSC' },
     // { currency: 'USDT', blockchain: 'BASE',     chainKey: 'USDT_BASE' },
     // { currency: 'USDT', blockchain: 'ARBITRUM', chainKey: 'USDT_ARB' },
     // { currency: 'USDT', blockchain: 'OPTIMISM', chainKey: 'USDT_OP' },
@@ -46,7 +46,7 @@ const ADMIN_WALLET_CONFIGS = [
     // { currency: 'USDC', blockchain: 'ARBITRUM', chainKey: 'USDC_ARB' },
     // { currency: 'USDC', blockchain: 'OPTIMISM', chainKey: 'USDC_OP' },
     // { currency: 'USDC', blockchain: 'POLYGON',  chainKey: 'USDC_MATIC' },
-    // { currency: 'USDT', blockchain: 'POLYGON',  chainKey: 'USDT_MATIC' },
+    { currency: 'USDT', blockchain: 'POLYGON',  chainKey: 'USDT_MATIC' },
     // { currency: 'USDC', blockchain: 'SOLANA',   chainKey: 'USDC_SOL' },
     // { currency: 'USDT', blockchain: 'SOLANA',   chainKey: 'USDT_SOL' },
 ];
