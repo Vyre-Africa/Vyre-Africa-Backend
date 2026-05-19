@@ -286,9 +286,9 @@ class nativeCoinService
         const data = {
             type: "ADDRESS_EVENT",
             attr: {
-            address: payload.address,
-            chain: payload.chain,
-            url: `https://api-dev.vyre.africa/api/v1/webhook/tatum`
+              address: payload.address,
+              chain: payload.chain,
+              url: `https://api-dev.vyre.africa/api/v1/webhook/tatum`
             }
         };
 

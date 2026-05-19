@@ -109,22 +109,45 @@ class stableCoinService
         }
     }
 
-    private async subscribeAddress(payload: { address: string; chain: string }) {
+    private async subscribeAddress(payload: { 
+        address: string; 
+        chain: string; 
+        contractAddress?: string 
+    }) {
         try {
-        const data = {
-            type: "ADDRESS_EVENT",
-            attr: {
-            address: payload.address,
-            chain: payload.chain,
-            url: `https://api-dev.vyre.africa/api/v1/webhook/tatum`
-            }
-        };
+            const attr: any = {
+                address: payload.address,
+                chain:   payload.chain,
+                url:     `https://api-dev.vyre.africa/api/v1/webhook/tatum`
+            };
 
-        const response = await this.tatumAxiosV4.post('/subscription', data);
-        return response.data;
+            // Only add conditions for token transfers with a known contract
+            if (payload.contractAddress) {
+                attr.conditions = [
+                    {
+                        field:    'contractAddress',
+                        operator: '==',
+                        value:    payload.contractAddress  // e.g. USDC contract on Base
+                    },
+                    {
+                        field:    'value',
+                        operator: '>=',
+                        value:    '1000000'  // minimum 1 USDC (6 decimals)
+                    }
+                ];
+            }
+
+            const data = {
+                type: 'ADDRESS_EVENT',
+                attr
+            };
+
+            const response = await this.tatumAxiosV4.post('/subscription', data);
+            return response.data;
+
         } catch (error) {
-        logger.error('Failed to subscribe address:', error);
-          throw new Error('Failed to subscribe to address events');
+            logger.error('Failed to subscribe address:', error);
+            throw new Error('Failed to subscribe to address events');
         }
     }
 
@@ -197,7 +220,8 @@ class stableCoinService
             // ── 5. Subscribe to deposit events ───────────────────────
             const subscription = await this.subscribeAddress({
                 address: depositAddress,
-                chain:   chainConfig.webhookChain!
+                chain:   chainConfig.webhookChain!,
+                contractAddress: chainConfig.tokenMint  // Only add contract condition for ERC20 tokens
             });
 
             // ── 6. Update wallet with address + subscription ─────────
