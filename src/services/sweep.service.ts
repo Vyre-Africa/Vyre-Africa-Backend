@@ -156,12 +156,28 @@ class SweepService{
         const masterAddress = adminWallet.depositAddress
         if (!masterAddress) throw new Error(`No master address for chain: ${chain}`)
 
+        const adminAddress = await prisma.virtualAccountAddress.findFirst({
+            where: {
+                address: adminWallet.depositAddress!,
+                isActive: true
+            },
+            select: {
+                index: true,
+                xpub: true
+            }
+        });
+
+        if (!adminAddress) throw new Error(`No virtual account address found for admin on ${chain}`);
+        if (adminAddress.index === null || adminAddress.index === undefined) {
+            throw new Error(`No derivation index found for admin wallet on ${chain}`);
+        }
+
         const endpoint = this.CHAIN_ENDPOINT_MAP[chain]
 
         // Derive master private key
         const masterPrivRes = await tatumPost(`/${endpoint}/wallet/priv`, {
             mnemonic: chainConfig.mnemonic,
-            index: adminWallet.derivationKey
+            index: adminAddress.index
         })
         console.log('masterPrivRes',masterPrivRes)
         const masterPrivateKey = masterPrivRes.key
@@ -234,18 +250,47 @@ class SweepService{
         if (!adminWallet) throw new Error(`No admin wallet for admin: ${config.Admin_Id}`)
 
         const endpoint = this.CHAIN_ENDPOINT_MAP[chain]
-        const masterAddress = adminWallet.depositAddress
-        if (!masterAddress) throw new Error(`No master address for chain: ${chain}`)
+        if (!adminWallet.depositAddress) throw new Error(`No master address for chain: ${chain}`)
+
+
+        const [userAddress, masterAddress] = await Promise.all([
+
+            prisma.virtualAccountAddress.findFirst({
+                where: {
+                    address: depositAddress,
+                    isActive: true
+                },
+                select: {
+                    index: true,
+                    xpub: true
+                }
+            }),
+
+            prisma.virtualAccountAddress.findFirst({
+                where: {
+                    address: adminWallet.depositAddress!,
+                    isActive: true
+                },
+                select: {
+                    index: true,
+                    xpub: true
+                }
+            })
+
+        ])
+
+        if (!masterAddress) throw new Error(`No virtual account address found for admin on ${chain}`);
+        if (!userAddress) throw new Error(`No virtual account address found for user on ${chain}`);
 
         // ── Step A: derive private keys in parallel ──────────────────────────────
         const [userPrivRes, masterPrivRes] = await Promise.all([
             tatumPost(`/${endpoint}/wallet/priv`, {
                 mnemonic: chainConfig.mnemonic,
-                index: derivationKey
+                index: userAddress.index
             }),
             tatumPost(`/${endpoint}/wallet/priv`, {
                 mnemonic: chainConfig.mnemonic,
-                index: adminWallet.derivationKey
+                index: masterAddress.index
             })
         ])
 
@@ -260,7 +305,7 @@ class SweepService{
         // ── Step B: get nonces in parallel ───────────────────────────────────────
         const [userNonceRaw, masterNonceRaw] = await Promise.all([
             tatumGet(`/${endpoint}/transaction/count/${depositAddress}`),
-            tatumGet(`/${endpoint}/transaction/count/${masterAddress}`)
+            tatumGet(`/${endpoint}/transaction/count/${adminWallet.depositAddress}`)
         ])
 
         console.log('nonces', userNonceRaw, masterNonceRaw )
@@ -414,6 +459,22 @@ class SweepService{
             throw new Error(`currency not found : ${chain}`)
         }
 
+        const adminAddress = await prisma.virtualAccountAddress.findFirst({
+            where: {
+                address: adminWallet.depositAddress!,
+                isActive: true
+            },
+            select: {
+                index: true,
+                xpub: true
+            }
+        });
+
+        if (!adminAddress) throw new Error(`No virtual account address found for admin on ${chain}`);
+        if (adminAddress.index === null || adminAddress.index === undefined) {
+            throw new Error(`No derivation index found for admin wallet on ${chain}`);
+        }
+
         const endpoint = this.CHAIN_ENDPOINT_MAP[chain]
 
         const chainConfig = chainService.getChainConfig(
@@ -424,7 +485,7 @@ class SweepService{
         // Derive master private key
         const masterPrivRes = await tatumPost(`/${endpoint}/wallet/priv`, {
             mnemonic: chainConfig.mnemonic,
-            index:    adminWallet.derivationKey
+            index:    adminAddress.index
         })
 
         const masterPrivateKey = masterPrivRes.key
