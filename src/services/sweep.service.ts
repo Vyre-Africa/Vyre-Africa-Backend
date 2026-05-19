@@ -358,7 +358,7 @@ class SweepService{
         const tatumCurrency = chainService.getTatumCurrency(chain, ISO)
 
         const res = await tatumPost(`/${endpoint}/transaction`, {
-            to:             masterAddress,
+            to:             adminWallet.depositAddress!,
             amount,
             currency:       tatumCurrency,
             fromPrivateKey: userPrivateKey,
