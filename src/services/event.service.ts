@@ -333,6 +333,12 @@ class eventService {
         return { status: 'ignored', reason: 'missing_contract' }
       }
 
+      // Ignore zero or negative amounts ───────────────
+      if (!amount || parseFloat(amount) <= 0) {
+          logger.info('Ignored — zero or negative amount', { amount, txId, chain });
+          return { status: 'ignored', reason: 'zero_amount' };
+      }
+
       await this.handleCryptoEvent({
         address,
         subscriptionId,
@@ -1783,7 +1789,6 @@ class eventService {
     'USDT_OPTIMISM':  '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58',
     'USDT_TRON':      'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
   }
-
   WEBHOOK_CHAIN_MAP: Record<string, string> = {
     'ethereum-mainnet': 'ETHEREUM',
     'base-mainnet':     'BASE',
