@@ -9,7 +9,7 @@ const connection = new IORedis({
   host: config.redisHost,
   port: 6379,
   password: config.redisPassWord,
-  lazyConnect: false,
+  lazyConnect: true,
   connectTimeout: 30000,
   keepAlive: 30000,
 //   username: "default",
@@ -17,6 +17,12 @@ const connection = new IORedis({
     servername: config.redisServerName, // IMPORTANT: SNI for TLS
   },
 //   tls: {}, // Required for Upstash
+  reconnectOnError: (err) => {
+    const targetErrors = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED'];
+    return targetErrors.some(e => err.message.includes(e));
+  },
+  // maxRetriesPerRequest: 3,
+  enableOfflineQueue: false,
   maxRetriesPerRequest: null,
   family: 4
 });
