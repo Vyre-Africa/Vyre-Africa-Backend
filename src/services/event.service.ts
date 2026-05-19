@@ -339,6 +339,23 @@ class eventService {
           return { status: 'ignored', reason: 'zero_amount' };
       }
 
+      // ── Gate 4: Ignore transactions FROM any admin address ────────
+      const adminAddresses = await prisma.virtualAccountAddress.findMany({
+          where: {
+              virtualAccount: { userId: config.Admin_Id }
+          },
+          select: { address: true }
+      });
+
+      const adminAddressSet = new Set(
+          adminAddresses.map(a => a.address.toLowerCase())
+      );
+
+      if (adminAddressSet.has(address?.toLowerCase())) {
+          logger.info('Ignored — sent from admin address', { address, txId });
+          return { status: 'ignored', reason: 'admin_transfer' };
+      }
+
       await this.handleCryptoEvent({
         address,
         subscriptionId,
