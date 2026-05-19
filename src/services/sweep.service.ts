@@ -81,6 +81,11 @@ class SweepService{
             where: {id: currencyId}
         })
 
+        if (!amount || parseFloat(amount) <= 0) {
+            console.log(`[SweepWorker:${chain}] Skipping sweep — amount is 0 or invalid: ${amount}`)
+            return 'skipped_zero_amount'
+        }
+
         if (!currency) throw new Error(`Currency not found: ${currencyId}`)
 
 
