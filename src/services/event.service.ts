@@ -333,11 +333,13 @@ class eventService {
         return { status: 'ignored', reason: 'missing_contract' }
       }
 
-      // // Ignore zero or negative amounts ───────────────
-      // if (!amount || parseFloat(amount) <= 0) {
-      //     logger.info('Ignored — zero or negative amount', { amount, txId, chain });
-      //     return { status: 'ignored', reason: 'zero_amount' };
-      // }
+      // ── Gate 8: Ignore events from known user addresses ───────────
+      // Prevents sweep feedback and internal transfers from being processed
+      const senderIsKnownUser = await this.isKnownUserAddress(address);
+      if (senderIsKnownUser) {
+          logger.info('Ignored — sender is a known user address', { address, txId });
+          return { status: 'ignored', reason: 'known_user_address' };
+      }
 
       // ── Gate 7: Ignore amounts below minimum threshold ────────────
       if (!this.isAboveMinimumAmount(amount, contractAddress)) {
@@ -2075,6 +2077,21 @@ class eventService {
     return parseFloat(amount) >= minAmount;
   }
 
+  private async isKnownUserAddress(address: string): Promise<boolean> {
+      const knownAddress = await prisma.virtualAccountAddress.findFirst({
+          where: {
+              address: { equals: address, mode: 'insensitive' },
+              isActive: true,
+              virtualAccount: {
+                  userId: { not: undefined }
+              }
+          },
+          select: { id: true }
+      });
+
+      return !!knownAddress;
+  }
+
 
 
    
@@ -2083,115 +2100,5 @@ class eventService {
 export default new eventService()
 
 
-// data: { error: 'Invalid or revoked API key' },
-// status: 401
 
-
-
-// Message received: 
-// Object
-// amount
-// : 
-// "10"
-// bank
-// : 
-// null
-// bank_Account_Name
-// : 
-// null
-// bank_Account_Number
-// : 
-// null
-// bank_Name
-// : 
-// null
-// bank_expires_At
-// : 
-// null
-// createdAt
-// : 
-// "2026-04-01T08:24:57.261Z"
-// crypto
-// : 
-// {chain: 'BASE', amount: 10, address: '0xb0a7a90ec013d3897a8a861bb499fad985936e81', currency: 'USDC'}
-// currencyId
-// : 
-// "4e44778a-c7eb-4b6b-97c2-740d40313823"
-// duration
-// : 
-// "2026-04-01T08:54:57.606Z"
-// id
-// : 
-// "cmnfs5til0005144cmxmt8hrt"
-// log
-// : 
-// baseAmount
-// : 
-// 10
-// baseCurrency
-// : 
-// "USDC"
-// createdAt
-// : 
-// "2026-04-01T08:27:00.858Z"
-// id
-// : 
-// "cmnfs8gvu0009tb9mzefrt8dc"
-// metadata
-// : 
-// null
-// orderId
-// : 
-// "ORD-01KKVPAWT65E2JGV57BZAMMWAR"
-// orderType
-// : 
-// "BUY"
-// quoteAmount
-// : 
-// 5000
-// quoteCurrency
-// : 
-// "NGN"
-// rate
-// : 
-// 500
-// userId
-// : 
-// "user_38OI3Y47pS0u4gKiRoee5GySGiV"
-// [[Prototype]]
-// : 
-// Object
-// metadata
-// : 
-// null
-// method
-// : 
-// "CRYPTO"
-// orderId
-// : 
-// "ORD-01KKVPAWT65E2JGV57BZAMMWAR"
-// orderType
-// : 
-// "BUY"
-// paymentDetails
-// : 
-// null
-// reference
-// : 
-// null
-// status
-// : 
-// "SUCCESS"
-// triggerAddress
-// : 
-// "0xb0a7a90ec013d3897a8a861bb499fad985936e81"
-// userId
-// : 
-// "user_38OI3Y47pS0u4gKiRoee5GySGiV"
-// walletId
-// : 
-// "699d1ef88d2714a585eca8bf"
-// [[Prototype]]
-// : 
-// Object
 

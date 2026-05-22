@@ -541,68 +541,6 @@ class WalletService
     }
 
 
-
-    // private complete_Withdrawal = async(
-    //     withdrawal_Id: string,
-    //     txId: string
-    // )=>{
-
-    //     await tatumAxios.put(`/offchain/withdrawal/${withdrawal_Id}/${txId}`)
-
-    //     const updatedTransaction = await prisma.transaction.update({
-    //         where:{id: withdrawal_Id },
-    //         data:{
-    //           status:'SUCCESSFUL',
-    //         }
-    //     })
-
-    //     return updatedTransaction
-
-    // }
-
-
-    // private Withdraw_USDC_ETH = async(
-    //     userId: string, 
-    //     account_ID: string,
-    //     address: string,
-    //     amount: number,
-    // )=>{
-    //     const data = {
-    //         senderAccountId: account_ID,
-    //         mnemonic: config.USDT.ETH_MNEMONIC,
-    //         index: 1,
-    //         address,
-    //         amount
-    //     };
-
-    //     let transaction;
-
-    //     const response = await tatumAxios.post('/offchain/ethereum/erc20/transfer', data)
-    //     console.log(response)
-    //     const result = response.data
-
-    //     transaction = await prisma.transaction.create({
-    //         data:{
-    //             id: result.id,
-    //             userId: userId,
-    //             currency: 'USDC',
-    //             amount,
-    //             status: result.completed ? 'SUCCESSFUL' : 'PENDING',
-    //             walletId: account_ID,
-    //             type:'DEBIT_PAYMENT',
-    //             description:'USD COIN transfer'
-    //         }
-    //     })
-
-    //     if(!result.completed){
-    //         transaction = await this.complete_Withdrawal(result.id, result.txId)
-    //     }
-
-    //     return transaction
-
-        
-    // }
-
     
     async subscribe_address(payload:{
         address: string,
