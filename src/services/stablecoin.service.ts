@@ -284,7 +284,16 @@ class stableCoinService
                 throw new Error('Transfer amount must be greater than 0');
             }
 
-            const chainConfig = CHAIN_CONFIG[chain];
+            const chainConfig = getChainConfigByCurrency(chain, stablecoin)
+
+            if (!chainConfig) {
+                throw new Error(`No chainConfig found for ${chain}/${stablecoin}`);
+            }
+            const chainKey = getChainKey(chainConfig.blockchain, chainConfig.currency);
+            if (!chainKey) {
+                throw new Error(`No chainKey found for ${chainConfig.blockchain}/${chainConfig.currency}`);
+            }
+            
             const withdrawalFeeDecimal = new Decimal(transferfeeService.calculateFee(chain));
             const netAmountDecimal = amountDecimal.minus(withdrawalFeeDecimal);
 
@@ -360,7 +369,7 @@ class stableCoinService
                     virtualAccountId: adminWallet.id,
                     toAddress: address,
                     amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin),
-                    chainKey: chain,
+                    chainKey,
                     metadata: {
                         availableBalance: availableBalance.toString(),
                         accountBalance: accountBalance.toString(),
@@ -376,7 +385,7 @@ class stableCoinService
                     virtualAccountId: walletId,
                     toAddress: address,
                     amount: DecimalUtil.roundForDisplay(netAmountDecimal,stablecoin),
-                    chainKey: chain,
+                    chainKey,
                     metadata: {
                         availableBalance: availableBalance.toString(),
                         accountBalance: accountBalance.toString(),
@@ -400,7 +409,7 @@ class stableCoinService
                     status: 'SUCCESSFUL',
                     reference: result.txHash,
                     walletId,
-                    type: 'DEBIT_PAYMENT',
+                    type: 'CRYPTO_WITHDRAWAL',
                     description: `${stablecoin} ${chain} transfer`,
                     metadata: {
                         grossAmount: amountDecimal.toString(),
