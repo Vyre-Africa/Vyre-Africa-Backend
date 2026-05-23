@@ -1,6 +1,9 @@
 import sweepService from '../services/sweep.service'
-import chainService from '../services/chain.service'
+import { getChainConfigByCurrency } from '../config/blockchain.config'
 import prisma from '../config/prisma.client'
+import dotenv from 'dotenv'
+
+dotenv.config()
 
 async function testNonceChainSweep() {
 
@@ -10,9 +13,7 @@ async function testNonceChainSweep() {
 
     // ── 1. Find a BASE USDC wallet to test with ──────────────────────────
     const wallet = await prisma.wallet.findUnique({
-        where: {
-            id: '69b42190abe7a4e76c81096d'
-        },
+        where: { id: 'cmpb531q2000f0ds673zi33a0' },
         include: {
             currency: true,
             user:     true
@@ -30,27 +31,37 @@ async function testNonceChainSweep() {
     console.log('  derivationKey:  ', wallet.derivationKey)
     console.log('  userId:         ', wallet.userId)
     console.log('  currency:       ', wallet.currency?.ISO)
+    console.log('  chain:          ', wallet.currency?.chain)
     console.log('─────────────────────────────────────────')
 
-    // ── 2. Get chain config ───────────────────────────────────────────────
-    const chainConfig = chainService.getChainConfig('USDC', 'BASE')
+    // ── 2. Get chain config using new blockchain.config ───────────────────
+    const chainConfig = getChainConfigByCurrency(
+        wallet.currency?.chain!,   // 'BASE'
+        wallet.currency?.ISO!      // 'USDC'
+    )
+
+    if (!chainConfig) {
+        console.error('No chain config found for', wallet.currency?.chain, wallet.currency?.ISO)
+        process.exit(1)
+    }
 
     console.log('Chain config found:')
-    console.log('  tatumCurrency:  ', chainConfig.tatumCurrency)
+    console.log('  blockchain:     ', chainConfig.blockchain)
+    console.log('  currency:       ', chainConfig.currency)
+    console.log('  tokenMint:      ', chainConfig.tokenMint)
     console.log('  webhookChain:   ', chainConfig.webhookChain)
     console.log('  mnemonic set:   ', !!chainConfig.mnemonic)
     console.log('─────────────────────────────────────────')
 
     // ── 3. Run the sweep ──────────────────────────────────────────────────
-    // Use a small test amount — adjust as needed
-    const testAmount = '7.4'  // 0.01 USDC
+    const testAmount = '16.5'
 
     console.log(`Running nonceChainSweep for ${testAmount} USDC on BASE...`)
 
     try {
         const txId = await sweepService.nonceChainSweep({
-            chain:          'BASE',
-            ISO:            'USDC',
+            chain:          wallet.currency?.chain!,  // 'BASE'
+            ISO:            wallet.currency?.ISO!,    // 'USDC'
             currencyId:     wallet.currencyId!,
             chainConfig,
             depositAddress: wallet.depositAddress!,

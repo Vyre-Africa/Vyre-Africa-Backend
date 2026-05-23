@@ -884,6 +884,11 @@ class WalletService
                         this.getAccount(receipient_Wallet.id)
                     ]);
 
+                    const [sender, recipient] = await Promise.all([
+                        prisma.user.findUnique({ where: { id: userId }, select: { id: true, firstName: true } }),
+                        prisma.user.findUnique({ where: { id: receipientId }, select: { id: true, firstName: true, lastName:true, email: true, photoUrl: true } })
+                    ]);
+
                     // Create transaction records
                     await prisma.transaction.createMany({
                         data: [
@@ -894,8 +899,8 @@ class WalletService
                             reference: response.reference,
                             status: 'SUCCESSFUL',
                             walletId: user_Wallet.id,
-                            type: 'DEBIT_PAYMENT',
-                            description: `${currency.name} transfer to ${receipientId.slice(0, 8)}`,
+                            type: 'P2P_TRANSFER',
+                            description: `${currency.name} transfer to ${(recipient?.firstName || 'a user')}`,
                             metadata: {
                                 recipientId: receipientId,
                                 recipientWalletId: receipient_Wallet.id,
@@ -910,8 +915,8 @@ class WalletService
                             reference: response.reference,
                             status: 'SUCCESSFUL',
                             walletId: receipient_Wallet.id,
-                            type: 'CREDIT_PAYMENT',
-                            description: `${currency.name} transfer from ${userId.slice(0, 8)}`,
+                            type: 'P2P_TRANSFER',
+                            description: `${currency.name} transfer from ${(sender?.firstName || 'a user')}`,
                             metadata: {
                                 senderId: userId,
                                 senderWalletId: user_Wallet.id,
@@ -922,10 +927,7 @@ class WalletService
                         ]
                     });
 
-                    const [sender, recipient] = await Promise.all([
-                        prisma.user.findUnique({ where: { id: userId }, select: { id: true, firstName: true } }),
-                        prisma.user.findUnique({ where: { id: receipientId }, select: { id: true, firstName: true, lastName:true, email: true, photoUrl: true } })
-                    ]);
+                    
 
                     await Promise.all([
                         // for sender 
