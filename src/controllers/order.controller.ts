@@ -581,9 +581,9 @@ class OrderController {
           order: canceledOrder,
         });
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      return res.status(500).send({ msg: 'Internal Server Error', success: false, error });
+      return res.status(500).send({ msg: error.message, success: false, error });
     }
   }
 
