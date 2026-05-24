@@ -284,7 +284,7 @@ class nativeCoinService
     private async subscribeAddress(payload: { address: string; chain: string }) {
         try {
         const data = {
-            type: "ADDRESS_EVENT",
+            type: "INCOMING_NATIVE_TX",
             attr: {
               address: payload.address,
               chain: payload.chain,

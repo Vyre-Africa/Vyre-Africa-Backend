@@ -18,6 +18,7 @@ import orderslotService from './orderslot.service';
 import sweepService from './sweep.service';
 import gaspumpService from './gaspump.service';
 import virtualAccountService from './virtualAccount.service';
+import { currency } from '../globals';
 
 
   // {
@@ -176,6 +177,7 @@ class eventService {
     Tatum_SubscriptionId?: string;
     Tatum_EventType?: string;
     Tatum_TxId?: string;
+    Tatum_currency?: string;
 
 
     type: 'TATUM' | 'QOREPAY' | 'FERN'
@@ -196,6 +198,7 @@ class eventService {
       Tatum_Amount, 
       Tatum_SubscriptionId, 
       Tatum_EventType,
+      Tatum_currency,
       Tatum_TxId
     } = payload
 
@@ -221,6 +224,7 @@ class eventService {
         subscriptionId: Tatum_SubscriptionId,
         eventType: Tatum_EventType,
         txId: Tatum_TxId,
+        currency: Tatum_currency
 
         
       });
@@ -299,6 +303,7 @@ class eventService {
     subscriptionId: string;
     txId: string;
     eventType: string;
+    currency?: string;
 
   }) {
     console.log('-----------Tatum event received------------')
@@ -321,23 +326,23 @@ class eventService {
 
     try {
 
-      // Gate 1 — only process token transfers
-      if (type !== 'token') {
-        logger.info('Ignored — non-token transfer', { type, txId, chain })
-        return { status: 'ignored', reason: 'native_transfer' }
+      // ── Gate 0: Only process INCOMING_FUNGIBLE_TX ─────────────
+      if (eventType && eventType !== 'INCOMING_FUNGIBLE_TX') {
+          logger.info('Ignored — not an incoming fungible tx', { eventType, txId });
+          return { status: 'ignored', reason: 'unsupported_subscription_type' };
       }
 
       // Gate 2 — token must have a contract address
       if (!contractAddress) {
-        logger.warn('Ignored — token missing contractAddress', { txId, chain })
+        logger.warn('Ignored — missing contractAddress', { txId, chain })
         return { status: 'ignored', reason: 'missing_contract' }
       }
 
       // ── Gate 8: Ignore events from known user addresses ───────────
       // Prevents sweep feedback and internal transfers from being processed
-      const senderIsKnownUser = await this.isKnownUserAddress(address);
+      const senderIsKnownUser = await this.isKnownUserAddress(counterAddress);
       if (senderIsKnownUser) {
-          logger.info('Ignored — sender is a known user address', { address, txId });
+          logger.info('Ignored — sender is a known user address', { counterAddress, txId });
           return { status: 'ignored', reason: 'known_user_address' };
       }
 
@@ -347,22 +352,6 @@ class eventService {
         return { status: 'ignored', reason: 'below_minimum_amount' };
       }
 
-      // ── Gate 4: Ignore transactions FROM any admin address ────────
-      const adminAddresses = await prisma.virtualAccountAddress.findMany({
-          where: {
-              virtualAccount: { userId: config.Admin_Id }
-          },
-          select: { address: true }
-      });
-
-      const adminAddressSet = new Set(
-          adminAddresses.map(a => a.address.toLowerCase())
-      );
-
-      if (adminAddressSet.has(address?.toLowerCase())) {
-          logger.info('Ignored — sent from admin address', { address, txId });
-          return { status: 'ignored', reason: 'admin_transfer' };
-      }
 
       await this.handleCryptoEvent({
         address,
@@ -372,7 +361,7 @@ class eventService {
         contractAddress,
         txId,
 
-        type, 
+        type: 'token',    // always token for INCOMING_FUNGIBLE_TX,
         asset, 
         eventType, 
         chain
@@ -505,31 +494,33 @@ class eventService {
       }
 
         // ── Step 6: Determine transfer type ──────────────────────
-        let transferType: 'CREDIT' | 'DEBIT';
-        let actualSender: string;
+        // let transferType: 'CREDIT' | 'DEBIT';
+        // ── Transfer type is always CREDIT for INCOMING_FUNGIBLE_TX ──
+        const transferType = 'CREDIT';
+        const actualSender = counterAddress; // sender is always counterAddress
 
         const walletAddress = wallet.depositAddress?.toLowerCase();
 
-        // Fee type — always a debit (gas cost)
-        if (type === 'fee') {
-            transferType = 'DEBIT';
-            actualSender = address;
-        }
-        // Token transfer
-        else if (type === 'token') {
-            // token CREDIT: counterAddress = our wallet
-            // token DEBIT:  address = our wallet
-            transferType = counterAddress?.toLowerCase() === walletAddress ? 'CREDIT' : 'DEBIT';
-            actualSender = transferType === 'CREDIT' ? address : counterAddress;
-        }
-        // Native transfer
-        else {
-            // native: address = our wallet for both CREDIT and DEBIT
-            // use amount sign or check if we are sending or receiving
-            // For native — address is always our wallet, so check amount sign
-            transferType = parseFloat(amount) >= 0 ? 'CREDIT' : 'DEBIT';
-            actualSender = counterAddress;
-        }
+        // // Fee type — always a debit (gas cost)
+        // if (type === 'fee') {
+        //     transferType = 'DEBIT';
+        //     actualSender = address;
+        // }
+        // // Token transfer
+        // else if (type === 'token') {
+        //     // token CREDIT: counterAddress = our wallet
+        //     // token DEBIT:  address = our wallet
+        //     transferType = counterAddress?.toLowerCase() === walletAddress ? 'CREDIT' : 'DEBIT';
+        //     actualSender = transferType === 'CREDIT' ? address : counterAddress;
+        // }
+        // // Native transfer
+        // else {
+        //     // native: address = our wallet for both CREDIT and DEBIT
+        //     // use amount sign or check if we are sending or receiving
+        //     // For native — address is always our wallet, so check amount sign
+        //     transferType = parseFloat(amount) >= 0 ? 'CREDIT' : 'DEBIT';
+        //     actualSender = counterAddress;
+        // }
 
         console.log('Transfer type determined', {
             walletAddress,
@@ -1135,7 +1126,8 @@ class eventService {
         txHash: txId,       
         accountId: wallet.id,                // txHash — used for idempotency
         // blockchain: chain,                      // blockchain e.g 'ETHEREUM', 'TRON'
-        walletAddress: wallet.depositAddress,      // the wallet address that received the deposit
+        walletAddress: wallet.depositAddress, // the wallet address that received the deposit
+        contractAddress,      
         metadata:{
           sender,                 // who sent the funds
           contractAddress,        // token contract if applicable

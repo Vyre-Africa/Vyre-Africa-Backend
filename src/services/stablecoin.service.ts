@@ -138,7 +138,7 @@ class stableCoinService
             }
 
             const data = {
-                type: 'ADDRESS_EVENT',
+                type: 'INCOMING_FUNGIBLE_TX',
                 attr
             };
 
