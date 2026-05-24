@@ -32,7 +32,7 @@ const connection = new IORedis({
         return targetErrors.some(e => err.message.includes(e));
   },
   // maxRetriesPerRequest: 3,
-  enableOfflineQueue: false,
+  enableOfflineQueue: true,
   maxRetriesPerRequest: null,
   family: 4
 });
