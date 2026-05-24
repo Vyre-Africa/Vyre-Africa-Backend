@@ -548,7 +548,7 @@ class WalletService
     }){
 
         const data = {
-            type:"ADDRESS_EVENT",
+            type: 'INCOMING_FUNGIBLE_TX',
             attr:{
                address: payload.address,
                chain: payload.chain,

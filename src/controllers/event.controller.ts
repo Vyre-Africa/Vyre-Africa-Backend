@@ -476,13 +476,14 @@ class EventController {
         Tatum_Address:         body.address, 
         Tatum_CounterAddress:  body.counterAddress,
         Tatum_Chain:           body.chain,
-        Tatum_Type:            body.type,
+        Tatum_Type:            body?.type,
         Tatum_Amount:          body.amount, 
         Tatum_SubscriptionId:  body.subscriptionId, 
         Tatum_EventType:       body.subscriptionType,
         Tatum_TxId:            body.txId,
         Tatum_ContractAddress: body.contractAddress,
-        Tatum_Asset:           body.asset
+        Tatum_Asset:           body.asset,
+        Tatum_currency:        body.currency
       })
 
 

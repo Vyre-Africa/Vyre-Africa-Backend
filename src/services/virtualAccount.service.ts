@@ -13,7 +13,7 @@ import Ably from 'ably';
 import { ulid } from 'ulid';
 import axios from 'axios';
 import { encrypt, decrypt } from '../utils/encryption';
-import { CHAIN_CONFIG, ChainConfig } from '../config/blockchain.config';
+import { CHAIN_CONFIG, ChainConfig, getChainConfigByCurrency } from '../config/blockchain.config';
 import gaspumpService from './gaspump.service';
 
        
@@ -482,14 +482,35 @@ class VirtualAccountService {
         txHash: string,
         // blockchain: string,
         walletAddress: string,
+        contractAddress?: string,
         metadata?: any
     }) {
 
-        const { userId, accountId, currency, amount, txHash, walletAddress, metadata } = payload;
+        const { userId, contractAddress, accountId, currency, amount, txHash, walletAddress, metadata } = payload;
 
         const decimalAmount = toDecimal(amount);
         const account = await this.getAccountById(accountId);
         const reference = generateRef('DEP');
+
+        // ── Validate contract address against account's chain config ──
+        if (contractAddress && account.blockchain) {
+            const chainConfig = getChainConfigByCurrency(
+                account.blockchain,
+                account.currency
+            );
+
+            if (chainConfig?.tokenMint) {
+                const expectedContract = chainConfig.tokenMint.toLowerCase();
+                const receivedContract = contractAddress.toLowerCase();
+
+                if (expectedContract !== receivedContract) {
+                    throw new Error(
+                        `Contract address mismatch for ${account.currency} on ${account.blockchain}. ` +
+                        `Expected: ${expectedContract}, Received: ${receivedContract}`
+                    );
+                }
+            }
+        }
 
         return await prisma.$transaction(async (tx) => {
 
