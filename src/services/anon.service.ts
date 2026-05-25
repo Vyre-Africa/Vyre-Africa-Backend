@@ -94,303 +94,142 @@ class AnonService {
   // ROBUST USER SETUP (Simplified - Service is Idempotent)
   // ============================================
   async setUpUser(payload: {
-    firstName: string;
-    lastName: string;
-    phoneNumber: string;
-    email: string;
-    orderId: string;
-    accessPin: string;
+      firstName: string;
+      lastName: string;
+      phoneNumber: string;
+      email: string;
+      orderId: string;
+      accessPin: string;
   }) {
     const { firstName, lastName, phoneNumber, email, orderId, accessPin } = payload;
 
     try {
-      logger.info('Starting user setup', { email, orderId });
+        logger.info('Starting anonymous user setup', { email, orderId });
 
-      if (!accessPin || !/^\d{6}$/.test(accessPin)) {
-        throw new Error('INVALID_PIN_FORMAT: PIN must be 6 digits');
-      }
-
-      // ============================================
-      // STEP 1: Fetch order and user with retry
-      // ============================================
-      const [order, existingUser, tempUser] = await this.retryOperation(
-        async () => {
-          return await Promise.all([
-            prisma.order.findUnique({
-              where: { id: orderId },
-              select: {
-                id: true,
-                type: true,
-                pair: {
-                  select: {
-                    id: true,
-                    baseCurrency: {
-                      select: { id: true, ISO: true, tatumChain: true }
-                    },
-                    quoteCurrency: {
-                      select: { id: true, ISO: true, tatumChain: true }
-                    }
-                  }
-                }
-              }
-            }),
-            prisma.user.findUnique({ // ✅ Changed from findUnique
-              where: { 
-                email
-                // phoneNumber 
-              },
-              select: {
-                id: true,
-                email: true,
-                firstName: true,
-                lastName: true,
-                phoneNumber: true,
-                isDeactivated: true,
-                accessPin: true,
-                pinExpiresAt: true,
-                pinAttempts: true,
-                pinLockedUntil: true
-              }
-            }),
-            prisma.tempUser.findFirst({
-              where: { 
-                email,
-                phoneNumber 
-              },
-              select: {
-                id: true,
-                email: true,
-                phoneNumber: true,
-                accessPin: true,
-                pinExpiresAt: true
-              }
-            })
-          ]);
-        },
-        'Fetch order, user and tempUser',
-        3,
-        1500
-      );
-
-      console.log('existingUser', existingUser)
-      console.log('tempUser',tempUser)
-
-      if (!order) {
-        throw new Error('Order not found');
-      }
-
-      const pair = order.pair;
-
-      if (!pair) {
-        throw new Error('Order pair not found');
-      }
-
-      // ============================================
-      // STEP 2: Validate user record exists
-      // ============================================
-      const userRecord = existingUser || tempUser;
-
-      // ✅ Add null check
-      if (!userRecord) {
-        throw new Error('No PIN found. Please generate a PIN first.');
-      }
-
-      // ✅ Check lockout (existing users only)
-      if (existingUser?.pinLockedUntil && new Date() < existingUser.pinLockedUntil) {
-        const minutesLeft = Math.ceil((existingUser.pinLockedUntil.getTime() - Date.now()) / 60000);
-        throw new Error(`PIN_LOCKED: Too many failed attempts. Try again in ${minutesLeft} minutes.`);
-      }
-
-      // ✅ Check expiry ONLY FOR TEMP USERS
-      if (tempUser && tempUser.pinExpiresAt && new Date() > tempUser.pinExpiresAt) {
-        // Delete expired temp user
-        await prisma.tempUser.delete({ where: { id: tempUser.id } }).catch(() => {});
-        throw new Error('PIN_EXPIRED: Your PIN has expired. Please request a new one.');
-      }
-
-      // ============================================
-      // STEP 3: Verify PIN
-      // ============================================
-      // ✅ Remove type assertion (no longer needed with null check)
-      const pinValid = await verifyPin(accessPin, userRecord.accessPin as string);
-
-      if (!pinValid) {
-        if (existingUser) {
-          const attempts = (existingUser.pinAttempts || 0) + 1;
-          const shouldLock = attempts >= 5;
-
-          await prisma.user.update({
-            where: { id: existingUser.id },
-            data: {
-              pinAttempts: attempts,
-              pinLockedUntil: shouldLock 
-                ? new Date(Date.now() + 30 * 60 * 1000)
-                : null
-            }
-          });
-
-          if (shouldLock) {
-            throw new Error('PIN_LOCKED: Too many failed attempts. Your PIN is locked for 30 minutes.');
-          }
-
-          throw new Error(`INVALID_PIN: Incorrect PIN. ${5 - attempts} attempts remaining.`);
-        } else {
-          throw new Error('INVALID_PIN: Incorrect PIN. Please check your email and try again.');
+        if (!accessPin || !/^\d{6}$/.test(accessPin)) {
+            throw new Error('INVALID_PIN_FORMAT: PIN must be 6 digits');
         }
-      }
 
-      logger.info('✅ PIN verified successfully', { 
-        email,
-        isExisting: !!existingUser 
-      });
+        // ── Step 1: Fetch order and tempUser ─────────────────────
+        const [order, tempUser] = await this.retryOperation(
+            async () => Promise.all([
+                prisma.order.findUnique({
+                    where: { id: orderId },
+                    select: {
+                        id: true,
+                        type: true,
+                        pair: {
+                            select: {
+                                id: true,
+                                baseCurrency:  { select: { id: true, ISO: true, tatumChain: true } },
+                                quoteCurrency: { select: { id: true, ISO: true, tatumChain: true } }
+                            }
+                        }
+                    }
+                }),
+                prisma.tempUser.findFirst({
+                    where: { email, phoneNumber },
+                    select: {
+                        id: true,
+                        email: true,
+                        phoneNumber: true,
+                        accessPin: true,
+                        pinExpiresAt: true
+                    }
+                })
+            ]),
+            'Fetch order and tempUser', 3, 1500
+        );
 
-      // ============================================
-      // STEP 4: CREATE OR UPDATE USER
-      // ============================================
-      let user: any;
+        if (!order)       throw new Error('Order not found');
+        if (!order.pair)  throw new Error('Order pair not found');
+        if (!tempUser)    throw new Error('No PIN found. Please generate a PIN first.');
 
-      if (existingUser) {
-        console.log('Existing user - just update and reset attempts')
-        // Existing user - just update and reset attempts
-        user = await prisma.user.update({
-          where: { id: existingUser.id },
-          data: {
-            firstName,
-            lastName,
-            isDeactivated: false,
-            pinAttempts: 0,
-            pinLockedUntil: null,
-            // ✅ Keep accessPin - it's reusable!
-          },
-          select: {
-            id: true,
-            email: true,
-            firstName: true,
-            lastName: true,
-            phoneNumber: true
-          }
+        // ── Step 2: Check PIN expiry ──────────────────────────────
+        if (tempUser.pinExpiresAt && new Date() > tempUser.pinExpiresAt) {
+            await prisma.tempUser.delete({ where: { id: tempUser.id } }).catch(() => {});
+            throw new Error('PIN_EXPIRED: Your PIN has expired. Please request a new one.');
+        }
+
+        // ── Step 3: Verify PIN ────────────────────────────────────
+        const pinValid = await verifyPin(accessPin, tempUser.accessPin);
+        if (!pinValid) throw new Error('INVALID_PIN: Incorrect PIN. Please check your email and try again.');
+
+        logger.info('PIN verified successfully', { email });
+
+        // ── Step 4: Create isolated anonymous user ────────────────
+        // Always create a fresh anonymous user regardless of whether
+        // email exists on a real Vyre account — never touch real accounts
+        const user = await prisma.user.create({
+            data: {
+                // If email already exists on real account use internal email
+                // Otherwise use their real email
+                email: await this.resolveAnonymousEmail(email),
+                firstName,
+                lastName,
+                phoneNumber,
+                accessPin:     tempUser.accessPin,
+                pinExpiresAt:  null,
+                pinAttempts:   0,
+                isDeactivated: false,
+                isAnonymous:   true,
+            },
+            select: {
+                id:          true,
+                email:       true,
+                firstName:   true,
+                lastName:    true,
+                phoneNumber: true
+            }
         });
-        
-        logger.info('✅ Existing user updated', { userId: user.id });
-      } else {
-        console.log('✅ NEW USER: Convert temp to permanent,')
-        // ✅ NEW USER: Convert temp to permanent, remove expiry
-        user = await prisma.user.create({
-          data: {
-            firstName,
-            lastName,
-            phoneNumber,
-            email,
-            accessPin: tempUser!.accessPin,
-            pinExpiresAt: null, // ✅ No expiry for permanent users
-            pinAttempts: 0,
-            isDeactivated: false
-          },
-          select: {
-            id: true,
-            email: true,
-            firstName: true,
-            lastName: true,
-            phoneNumber: true
-          }
-        });
 
-        // Delete temp user
-        await prisma.tempUser.delete({
-          where: { id: tempUser!.id }
+        // Clean up temp user
+        await prisma.tempUser.delete({ 
+            where: { id: tempUser.id } 
         }).catch((err: any) => logger.warn('Failed to delete temp user', err));
 
-        logger.info('✅ New user created with reusable PIN', { userId: user.id });
+        logger.info('Anonymous user created', { userId: user.id });
 
-        // ✅ Send welcome email with PIN info
-        setImmediate(async () => {
-          await notificationService.queue({
-            userId: user.id,
-            title: 'Welcome! Your PIN is Now Reusable',
-            type: 'GENERAL',
-            content: `Hi ${firstName},
+        if (!order.pair.baseCurrency)  throw new Error('Base currency not found');
+        if (!order.pair.quoteCurrency) throw new Error('Quote currency not found');
 
-            Welcome! Your customer account has been linked successfully.
+        // ── Step 5: Create wallets ────────────────────────────────
+        const baseWallet = await this.retryOperation(
+            () => walletService.createWallet({
+                userId:     user.id,
+                currencyId: order.pair!.baseCurrency!.id
+            }),
+            'Create base wallet', 3, 2000
+        );
 
-            Your PIN is now permanent and can be reused for all future orders. You do not need to check your email every time.
+        if (!baseWallet) throw new Error('Base wallet creation failed');
 
-            If you forget your PIN, you can always regenerate a new one from the order page.
+        const quoteWallet = await this.retryOperation(
+            () => walletService.createWallet({
+                userId:     user.id,
+                currencyId: order.pair!.quoteCurrency!.id
+            }),
+            'Create quote wallet', 3, 2000
+        );
 
-            Keep your PIN secure!`
-          });
+        if (!quoteWallet) throw new Error('Quote wallet creation failed');
+
+        logger.info('Anonymous user setup completed', {
+            userId:       user.id,
+            baseWalletId: baseWallet.id,
+            quoteWalletId: quoteWallet.id
         });
-      }
 
-      // ============================================
-      // STEP 5: Create wallets SEQUENTIALLY
-      // ============================================
-      
-      // Create base wallet with retry
-      const baseWallet = await this.retryOperation(
-        async () => {
-          return await walletService.createWallet({
-            userId: user.id,
-            currencyId: pair?.baseCurrency?.id as string
-          });
-        },
-        'Create base wallet',
-        3,
-        2000
-      );
-
-      if (!baseWallet) {
-        throw new Error('Base wallet creation failed');
-      }
-      
-      logger.info('Base wallet ready', { 
-        walletId: baseWallet.id,
-        currency: pair?.baseCurrency?.ISO 
-      });
-
-      // Create quote wallet with retry
-      const quoteWallet = await this.retryOperation(
-        async () => {
-          return await walletService.createWallet({
-            userId: user.id,
-            currencyId: pair?.quoteCurrency?.id as string
-          });
-        },
-        'Create quote wallet',
-        3,
-        2000
-      );
-
-      if (!quoteWallet) {
-        throw new Error('Quote wallet creation failed');
-      }
-
-      logger.info('Quote wallet ready', { 
-        walletId: quoteWallet.id,
-        currency: pair?.quoteCurrency?.ISO 
-      });
-
-      logger.info('User setup completed successfully', {
-        userId: user.id,
-        baseWalletId: baseWallet.id,
-        quoteWalletId: quoteWallet.id
-      });
-
-      return {
-        user,
-        baseWallet,
-        quoteWallet,
-        order,
-        pair
-      };
+        return { user, baseWallet, quoteWallet, order, pair: order.pair };
 
     } catch (error: any) {
-      logger.error('User setup failed completely', {
-        email,
-        orderId,
-        error: error.message,
-        stack: error.stack
-      });
-      throw error;
+        logger.error('Anonymous user setup failed', {
+            email,
+            orderId,
+            error: error.message,
+            stack: error.stack
+        });
+        throw error;
     }
   }
 
@@ -729,6 +568,24 @@ class AnonService {
       });
       throw error;
     }
+  }
+
+  // ── Resolve email for anonymous user ─────────────────────────
+  // If email belongs to real Vyre account — use internal email
+  // This prevents collision while keeping the trade isolated
+  private async resolveAnonymousEmail(email: string): Promise<string> {
+      const existingUser = await prisma.user.findUnique({
+          where: { email },
+          select: { id: true }
+      });
+
+      if (existingUser) {
+          // Real account exists — use internal anonymous email
+          return `anon_${Date.now()}_${email}`;
+      }
+
+      // No real account — use their real email
+      return email;
   }
 
  
