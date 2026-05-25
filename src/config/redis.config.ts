@@ -9,9 +9,9 @@ const connection = new IORedis({
   host: config.redisHost,
   port: 6379,
   password: config.redisPassWord,
-  lazyConnect: true,
+  lazyConnect: false,
   connectTimeout: 30000,
-  keepAlive: 10000,
+  keepAlive: 50000,
 //   username: "default",
   tls: {
     servername: config.redisServerName, // IMPORTANT: SNI for TLS
