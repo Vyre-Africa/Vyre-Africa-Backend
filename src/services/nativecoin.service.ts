@@ -336,11 +336,31 @@ class nativeCoinService
             const coinConfig = CoinConfigurations.getConfig(coin);
             const isCrypto = CoinConfigurations.isCrypto(coin);
 
-            const currency = await prisma.currency.findUnique({
-                where: { id: currencyId }
-            });
+            // const currency = await prisma.currency.findUnique({
+            //     where: { id: currencyId }
+            // });
+
+            const [user, currency] = await Promise.all([
+                        
+                prisma.user.findUnique({
+                    where: { id: userId },
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                        bvnSubmitted: true,
+                    }
+                }),
+                prisma.currency.findUnique({
+                    where: { id: currencyId }
+                })
+                        
+            ]);
 
             if (!currency) throw new Error(`Currency not found: ${currencyId}`);
+
+            if (!user) { throw new Error(`User not found with id: ${userId}`); }
 
             // ── 2. Get chain config for crypto coins ─────────────────
             let chainConfig;
@@ -432,7 +452,8 @@ class nativeCoinService
             }
 
             // ── 8. Fiat wallet (NGN, USD) ────────────────────────────
-            if (coin === 'NGN') {
+            if (user.bvnSubmitted && coin === 'NGN') {
+                
                 const bankResult = await qorepayService.create_virtual_Account({ userId });
                 if (bankResult) {
                     await prisma.bankDetails.create({
