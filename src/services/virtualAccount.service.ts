@@ -45,14 +45,23 @@ class VirtualAccountService {
 
         const { userId, currency, type = 'STANDARD', label, xpub, blockchain } = payload;
 
-        const existing = await prisma.virtualAccount.findUnique({
+        // const existing = await prisma.virtualAccount.findUnique({
+        //     where: {
+        //         userId_currency_type_blockchain: {
+        //             userId,
+        //             currency,
+        //             type: type as any,
+        //             blockchain: blockchain ?? ''
+        //         }
+        //     }
+        // });
+
+        const existing = await prisma.virtualAccount.findFirst({
             where: {
-                userId_currency_type_blockchain: {
-                    userId,
-                    currency,
-                    type: type as any,
-                    blockchain: blockchain ?? ''
-                }
+                userId,
+                currency,
+                type: type as any,
+                blockchain: blockchain ?? null  // ← null for fiat
             }
         });
 
@@ -103,14 +112,13 @@ class VirtualAccountService {
     // ── Get Account ──────────────────────────────────────────────
 
     async getAccount(userId: string, currency: string, type = 'STANDARD', blockchain?: string) {
-        const account = await prisma.virtualAccount.findUnique({
+
+        const account = await prisma.virtualAccount.findFirst({
             where: {
-                userId_currency_type_blockchain: {
-                    userId,
-                    currency,
-                    type: type as any,
-                    blockchain: blockchain ?? ''
-                }
+                userId,
+                currency,
+                type: type as any,
+                blockchain: blockchain ?? null  // ← null for fiat, chain name for crypto
             }
         });
 
