@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import logger from '../config/logger';
@@ -368,6 +369,10 @@ class OrderSlotService {
           });
         }
 
+      },{
+          maxWait: 10000,   // ← increase from default
+          timeout: 30000,   // ← increase from 5000
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted
       });
 
       logger.info('Awaiting cancelled successfully', {

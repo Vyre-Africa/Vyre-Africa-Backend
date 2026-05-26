@@ -402,233 +402,189 @@ class OrderService {
   // DIRECT PROCESSING WITH EARLY VERSION CHECK
   // ============================================
 
-  private async attemptDirectProcessing(payload: {
-    userId: string;
-    orderId: string;
-    amount: number;
-    userBaseWallet: Wallet;
-    userQuoteWallet: Wallet;
-  }) {
-    const { userId, orderId, amount, userBaseWallet, userQuoteWallet } = payload;
+    private async attemptDirectProcessing(payload: {
+      userId: string;
+      orderId: string;
+      amount: number;
+      userBaseWallet: Wallet;
+      userQuoteWallet: Wallet;
+    }) {
+      const { userId, orderId, amount, userBaseWallet, userQuoteWallet } = payload;
 
-    return await prisma.$transaction(
-      async (tx) => {
-        // ============================================
-        // STEP 1: LOCK ORDER & CHECK VERSION
-        // ============================================
-        // const [orderRow] = await tx.$queryRaw<any[]>`
-        //   SELECT * FROM "Order" 
-        //   WHERE id = ${orderId}
-        //   FOR UPDATE
-        // `;
+      // ── Step 1-4: DB reads and order update inside transaction ──
+      const { order, pair, amountToProcess, newAmountProcessed, newAmountReserved, newPercentage, newStatus, currentVersion } = await prisma.$transaction(
+          async (tx) => {
 
-        const order = await tx.order.findUnique({
-          where: { id: orderId }
-        });
+              const order = await tx.order.findUnique({
+                  where: { id: orderId }
+              });
 
-        if (!order) {
-          throw new Error('Order not found');
-        }
+              if (!order) throw new Error('Order not found');
 
-        logger.info('Order fetched (no lock)', { 
-          orderId, 
-          version: order.version,
-          amountProcessed: order.amountProcessed,
-          amountReserved: order.amountReserved
-        });
+              const currentVersion = order.version;
 
-        const currentVersion = order.version;
-        // const order = orderRow;
+              const pair = await tx.pair.findUnique({
+                  where: { id: order.pairId },
+                  include: {
+                      quoteCurrency: { select: { id: true, ISO: true } },
+                      baseCurrency:  { select: { id: true, ISO: true } },
+                      quoteWallet:   true,
+                      baseWallet:    true,
+                  }
+              });
 
-        // logger.info('Order locked', { 
-        //   orderId, 
-        //   version: currentVersion,
-        //   amountProcessed: order.amountProcessed 
-        // });
+              if (!pair) throw new Error('Trading pair not found');
 
-        // ============================================
-        // STEP 2: VALIDATE
-        // ============================================
-        const pair = await tx.pair.findUnique({
-          where: { id: order.pairId },
-          include: {
-            quoteCurrency: {
-              select: { id: true, ISO: true },
-            },
-            baseCurrency: {
-              select: { id: true, ISO: true },
-            },
-            quoteWallet: true,
-            baseWallet: true,
-          }
-        });
+              this.validateOrderProcessing(order, amount, userBaseWallet, userQuoteWallet);
 
-        if (!pair) throw new Error('Trading pair not found');
+              const [orderBaseWallet, orderQuoteWallet] = await Promise.all([
+                  tx.wallet.findFirst({ where: { currencyId: pair.baseCurrency?.id, userId: order.userId } }),
+                  tx.wallet.findFirst({ where: { currencyId: pair.quoteCurrency?.id, userId: order.userId } })
+              ]);
 
-        this.validateOrderProcessing(order, amount, userBaseWallet, userQuoteWallet);
+              if (!orderBaseWallet || !orderQuoteWallet) throw new Error('Order owner wallets not found');
 
-        const [orderBaseWallet, orderQuoteWallet] = await Promise.all([
-          tx.wallet.findFirst({
-            where: { currencyId: pair.baseCurrency?.id, userId: order.userId }
-          }),
-          tx.wallet.findFirst({
-            where: { currencyId: pair.quoteCurrency?.id, userId: order.userId }
-          })
-        ]);
+              // ── Calculate amounts ────────────────────────────────
+              const amountDecimal                  = new Decimal(amount);
+              const priceDecimal                   = new Decimal(order.price);
+              const orderAmountDecimal             = new Decimal(order.amount);
+              const orderAmountProcessedDecimal    = new Decimal(order.amountProcessed || 0);
+              const orderAmountReservedDecimal     = new Decimal(order.amountReserved || 0);
 
-        if (!orderBaseWallet || !orderQuoteWallet) {
-          throw new Error('Order owner wallets not found');
-        }
+              const amountToProcess = order.type === 'BUY'
+                  ? amountDecimal.times(priceDecimal)
+                  : amountDecimal.dividedBy(priceDecimal);
 
-        // ============================================
-        // STEP 3: CALCULATE AMOUNTS WITH DECIMAL
-        // ============================================
-        const amountDecimal = new Decimal(amount);
-        const priceDecimal = new Decimal(order.price);
-        const orderAmountDecimal = new Decimal(order.amount);
-        const orderAmountProcessedDecimal = new Decimal(order.amountProcessed || 0);
-        const orderAmountReservedDecimal = new Decimal(order.amountReserved || 0);
+              const newAmountProcessed = orderAmountProcessedDecimal.plus(amountToProcess);
+              const newAmountReserved  = orderAmountReservedDecimal.minus(amountToProcess);
+              const newPercentage      = newAmountProcessed
+                  .dividedBy(orderAmountDecimal)
+                  .times(100)
+                  .toDecimalPlaces(2);
 
-        // Calculate amount to process
-        const amountToProcess = order.type === 'BUY'
-          ? amountDecimal.times(priceDecimal)      // base * price = quote
-          : amountDecimal.dividedBy(priceDecimal); // quote / price = base
+              const newStatus = newAmountProcessed.gte(orderAmountDecimal) ? 'CLOSED' : 'OPEN';
 
-        // Calculate new totals
-        const newAmountProcessed = orderAmountProcessedDecimal.plus(amountToProcess);
-        //Release the reserved amount as we process it
-        const newAmountReserved = orderAmountReservedDecimal.minus(amountToProcess);
-        const newPercentage = newAmountProcessed
-          .dividedBy(orderAmountDecimal)
-          .times(100)
-          .toDecimalPlaces(2);
+              logger.info('Amounts calculated', {
+                  orderId,
+                  amountToProcess:    amountToProcess.toString(),
+                  newAmountProcessed: newAmountProcessed.toString(),
+                  newStatus
+              });
 
-        const newStatus = newAmountProcessed.greaterThanOrEqualTo(orderAmountDecimal) 
-          ? 'CLOSED' 
-          : 'OPEN';
+              // ── Update order ─────────────────────────────────────
+              const updateResult = await tx.order.updateMany({
+                  where: { id: orderId, version: currentVersion },
+                  data: {
+                      amountProcessed:     DecimalUtil.roundForStorage(
+                          newAmountProcessed,
+                          order.type === 'BUY'
+                              ? pair.quoteCurrency?.ISO as string
+                              : pair.baseCurrency?.ISO as string
+                      ),
+                      percentageProcessed: newPercentage.toNumber(),
+                      status:              newStatus,
+                      version:             currentVersion + 1
+                  }
+              });
 
-        logger.info('Amounts calculated', {
-          orderId,
-          amountToProcess: amountToProcess.toString(),
-          newAmountProcessed: newAmountProcessed.toString(),
-          newAmountReserved: newAmountReserved.toString(),
-          newPercentage: newPercentage.toString(),
-          newStatus
-        });
+              if (updateResult.count === 0) {
+                  throw new Error('VERSION_CONFLICT: Order was modified by another transaction');
+              }
 
-        // ============================================
-        // STEP 4: UPDATE ORDER
-        // ============================================
-        const updateResult = await tx.order.updateMany({
-          where: {
-            id: orderId,
-            version: currentVersion
+              logger.info('Order updated successfully', {
+                  orderId,
+                  newVersion:         currentVersion + 1,
+                  newAmountProcessed: newAmountProcessed.toString()
+              });
+
+              return {
+                  order,
+                  pair,
+                  amountToProcess,
+                  newAmountProcessed,
+                  newAmountReserved,
+                  newPercentage,
+                  newStatus,
+                  currentVersion
+              };
           },
-          data: {
-            amountProcessed: DecimalUtil.roundForStorage(newAmountProcessed, order.type === 'BUY' ? pair?.quoteCurrency?.ISO as string : pair?.baseCurrency?.ISO as string),    // Prisma accepts Decimal
-            percentageProcessed: newPercentage.toNumber(), // Convert to number for float field
-            status: newStatus,
-            version: currentVersion + 1
+          {
+              maxWait: 15000,
+              timeout: 20000,  // ← much shorter — only DB operations now
+              isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
           }
-        });
+      );
 
-        if (updateResult.count === 0) {
-          logger.warn('Version conflict during update', { 
-            orderId, 
-            expectedVersion: currentVersion 
-          });
-          throw new Error('VERSION_CONFLICT: Order was modified by another transaction');
-        }
+      // ── Step 5: Execute transfers OUTSIDE transaction ────────────
+      // These open their own transactions internally — can't be nested
+      const amountDecimal = new Decimal(amount);
 
-        logger.info('Order updated successfully', { 
-          orderId, 
-          newVersion: currentVersion + 1,
-          newAmountProcessed: newAmountProcessed.toString(),
-          newAmountReserved: newAmountReserved.toString()
-        });
+      logger.info('Executing transfers', { orderId, orderType: order.type });
 
-        // ============================================
-        // STEP 5: EXECUTE TRANSFERS
-        // ============================================
-        if (order.type === 'BUY') {
+      if (order.type === 'BUY') {
           await Promise.all([
-            walletService.unblock_Transfer(
-              String(amountToProcess), // Convert for wallet service
-              order?.blockId as string, 
-              userQuoteWallet.id
-            ),
-            walletService.direct_offchain_Transfer({
-              userId,
-              receipientId: order.userId as string,
-              currencyId: pair?.baseCurrency?.id as string,
-              amount: amountDecimal.toString() // Original amount (base currency)
-            })
+              walletService.unblock_Transfer(
+                  String(amountToProcess),
+                  order.blockId as string,
+                  userQuoteWallet.id
+              ),
+              walletService.direct_offchain_Transfer({
+                  userId,
+                  receipientId: order.userId as string,
+                  currencyId:   pair.baseCurrency?.id as string,
+                  amount:       amountDecimal.toString()
+              })
           ]);
-        } else {
+      } else {
           await Promise.all([
-            walletService.unblock_Transfer(
-              String(amountToProcess), // Convert for wallet service
-              order.blockId as string, 
-              userBaseWallet.id
-            ),
-            walletService.direct_offchain_Transfer({
-              userId,
-              receipientId: order.userId as string,
-              currencyId: pair?.quoteCurrency?.id as string,
-              amount: amountDecimal.toString() // Original amount (quote currency)
-            })
+              walletService.unblock_Transfer(
+                  String(amountToProcess),
+                  order.blockId as string,
+                  userBaseWallet.id
+              ),
+              walletService.direct_offchain_Transfer({
+                  userId,
+                  receipientId: order.userId as string,
+                  currencyId:   pair.quoteCurrency?.id as string,
+                  amount:       amountDecimal.toString()
+              })
           ]);
-        }
+      }
 
-        logger.info('Transfers completed', { orderId });
+      logger.info('Transfers completed', { orderId });
 
-        // ============================================
-        // STEP 6: LOG TRANSACTION
-        // ============================================
-        const logResult = await tx.orderLog.create({
+      // ── Step 6: Log transaction ───────────────────────────────────
+      const logResult = await prisma.orderLog.create({
           data: {
-            userId,
-            orderId,
-            baseAmount: order.type === 'BUY' 
-              ? amount 
-              : amountToProcess.toNumber(),
-            quoteAmount: order.type === 'BUY' 
-              ? amountToProcess.toNumber() 
-              : amount,
-            baseCurrency: pair?.baseCurrency?.ISO as string,
-            quoteCurrency: pair?.quoteCurrency?.ISO as string,
-            rate: order.price, // Prisma accepts Decimal
-            orderType: order.type
+              userId,
+              orderId,
+              baseAmount:    order.type === 'BUY' ? amount : amountToProcess.toNumber(),
+              quoteAmount:   order.type === 'BUY' ? amountToProcess.toNumber() : amount,
+              baseCurrency:  pair.baseCurrency?.ISO as string,
+              quoteCurrency: pair.quoteCurrency?.ISO as string,
+              rate:          order.price,
+              orderType:     order.type
           }
-        });
+      });
 
-        // ============================================
-        // STEP 7: NOTIFICATION
-        // ============================================
-        this.sendOrderSuccessNotification({
+      // ── Step 7: Notification ──────────────────────────────────────
+      this.sendOrderSuccessNotification({
           userId,
           orderId,
           amount,
-          baseCurrency: pair?.baseCurrency?.ISO,
-          quoteCurrency: pair?.quoteCurrency?.ISO
-        }).catch(err => logger.error('Notification failed', err));
+          baseCurrency:  pair.baseCurrency?.ISO,
+          quoteCurrency: pair.quoteCurrency?.ISO
+      }).catch(err => logger.error('Notification failed', err));
 
-        return {
-          id: order.id,
-          log: logResult,
-          amountProcessed: newAmountProcessed.toNumber(), // Convert for response
+      return {
+          id:                  order.id,
+          log:                 logResult,
+          amountProcessed:     newAmountProcessed.toNumber(),
           percentageProcessed: newPercentage.toNumber(),
-          status: newStatus,
-          version: currentVersion + 1
-        };
-      },
-      {
-        maxWait: 15000,
-        timeout: 120000,
-        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-      }
-    );
-  }
+          status:              newStatus,
+          version:             currentVersion + 1
+      };
+    }
 
     // ============================================
     // HELPER METHODS
