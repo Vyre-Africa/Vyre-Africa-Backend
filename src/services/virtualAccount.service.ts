@@ -263,7 +263,11 @@ class VirtualAccountService {
 
             return { transaction, amount: decimalAmount, fee, netAmount, reference };
 
-        }, { isolationLevel: 'Serializable' });
+        }, { 
+            isolationLevel: 'Serializable',
+            timeout:        30000,  // ← 30 seconds
+            maxWait:        15000   // ← 15 seconds to acquire lock
+         });
     }
 
 
