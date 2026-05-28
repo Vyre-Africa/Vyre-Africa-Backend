@@ -76,8 +76,8 @@ process.on('beforeExit', async () => { await prisma.$disconnect(); });
 
 process.on('uncaughtException', async (error) => {
     console.error('❌ Uncaught Exception:', error);
-    await prisma.$disconnect();
-    process.exit(1);
+    // await prisma.$disconnect();
+    // process.exit(1);
 });
 
 process.on('unhandledRejection', async (reason, promise) => {
