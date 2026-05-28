@@ -165,6 +165,7 @@ class AnonService {
                 // If email already exists on real account use internal email
                 // Otherwise use their real email
                 email: await this.resolveAnonymousEmail(email),
+                realEmail: email,
                 firstName,
                 lastName,
                 phoneNumber,
@@ -179,7 +180,8 @@ class AnonService {
                 email:       true,
                 firstName:   true,
                 lastName:    true,
-                phoneNumber: true
+                phoneNumber: true,
+                realEmail:   true
             }
         });
 
@@ -344,7 +346,8 @@ class AnonService {
           method: paymentMethod 
         });
 
-        
+        // Use realEmail if available, fallback to userDetails.email
+        const paymentEmail = user.realEmail || userDetails.email;
 
         try {
           // Wait for payment initialization with timeout
@@ -354,7 +357,7 @@ class AnonService {
                 return await walletService.getPaymentMethod({
                   currency: currency.ISO,
                   amount: parseFloat(amount),
-                  email: user.email,
+                  email: paymentEmail,
                   userId: user.id,
                   walletId: quoteWallet.id,
                   method: paymentMethod,
