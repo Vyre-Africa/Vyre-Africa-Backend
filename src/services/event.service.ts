@@ -232,6 +232,15 @@ class eventService {
 
   }
 
+//   data {
+// 0|vyre-backend  |   payment_intent_id: 'f801a6fb-c62a-4673-8599-08904b159282',
+// 0|vyre-backend  |   reference: 'QP-9FX9X4ZZ',
+// 0|vyre-backend  |   paid_amount: 150000,
+// 0|vyre-backend  |   fees: 13169,
+// 0|vyre-backend  |   currency: 'NGN',
+// 0|vyre-backend  |   provider: 'UNISWITCH',
+// 0|vyre-backend  |   channel: 'TRANSFER'
+// 0|vyre-backend  | }
 
   public async handleQorepayEvent(payload: {
     // event: 'purchase' | 'payout';
@@ -932,6 +941,12 @@ class eventService {
         console.log(`Duplicate webhook for reference: ${reference}`);
         logger.warn(`Duplicate webhook for reference: ${reference}`);
         return { status: 'success', reason: 'already_processed', transactionId: existingTransaction.id };
+      }
+
+      if (!dva || !dva.id) {
+        console.log(`DVA not found for reference: ${reference}`);
+        logger.warn(`DVA not found for reference: ${reference}`);
+        return { status: 'success', reason: 'dva_not_found', reference };
       }
 
       // 3. Find bank details
