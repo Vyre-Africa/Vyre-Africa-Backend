@@ -366,6 +366,7 @@ model User {
   isDeactivated                 Boolean                       @default(false)
   deactivationReason            String?
   isAnonymous                   Boolean                      @default(false)
+  realEmail                     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
