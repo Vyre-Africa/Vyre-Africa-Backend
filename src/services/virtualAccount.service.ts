@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import { Decimal } from 'decimal.js';
@@ -264,7 +265,7 @@ class VirtualAccountService {
             return { transaction, amount: decimalAmount, fee, netAmount, reference };
 
         }, { 
-            isolationLevel: 'Serializable',
+            isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
             timeout:        30000,  // ← 30 seconds
             maxWait:        15000   // ← 15 seconds to acquire lock
          });

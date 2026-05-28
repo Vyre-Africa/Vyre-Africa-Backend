@@ -522,33 +522,35 @@ class OrderService {
       logger.info('Executing transfers', { orderId, orderType: order.type });
 
       if (order.type === 'BUY') {
-          await Promise.all([
-              walletService.unblock_Transfer(
-                  String(amountToProcess),
-                  order.blockId as string,
-                  userQuoteWallet.id
-              ),
-              walletService.direct_offchain_Transfer({
-                  userId,
-                  receipientId: order.userId as string,
-                  currencyId:   pair.baseCurrency?.id as string,
-                  amount:       amountDecimal.toString()
-              })
-          ]);
+
+          await walletService.unblock_Transfer(
+            String(amountToProcess),
+            order.blockId as string,
+            userQuoteWallet.id
+          );
+
+          await walletService.direct_offchain_Transfer({
+            userId,
+            receipientId: order.userId as string,
+            currencyId:   pair.baseCurrency?.id as string,
+            amount:       amountDecimal.toString()
+          })
+
       } else {
-          await Promise.all([
-              walletService.unblock_Transfer(
-                  String(amountToProcess),
-                  order.blockId as string,
-                  userBaseWallet.id
-              ),
-              walletService.direct_offchain_Transfer({
-                  userId,
-                  receipientId: order.userId as string,
-                  currencyId:   pair.quoteCurrency?.id as string,
-                  amount:       amountDecimal.toString()
-              })
-          ]);
+
+          await walletService.unblock_Transfer(
+            String(amountToProcess),
+            order.blockId as string,
+            userBaseWallet.id
+          )
+
+          await walletService.direct_offchain_Transfer({
+            userId,
+            receipientId: order.userId as string,
+            currencyId:   pair.quoteCurrency?.id as string,
+            amount:       amountDecimal.toString()
+          })
+
       }
 
       logger.info('Transfers completed', { orderId });

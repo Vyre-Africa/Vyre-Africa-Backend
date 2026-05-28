@@ -82,8 +82,8 @@ process.on('uncaughtException', async (error) => {
 
 process.on('unhandledRejection', async (reason, promise) => {
     console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-    await prisma.$disconnect();
-    process.exit(1);
+    // await prisma.$disconnect();
+    // process.exit(1);
 });
 
 export default prisma;
