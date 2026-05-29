@@ -50,80 +50,65 @@ export function startSweepWorkers() {
   })
 }
 
-const worker = new Worker('general-process',
-  async (job) => {
-    try {
-      console.info(`Processing job ${job.id} of type ${job.name}`);
-      let transferRequest;
-      
-      switch (job.name) {
+export function startGeneralWorker() {
+    const worker = new Worker('general-process',
+        async (job) => {
+            try {
+                console.info(`Processing job ${job.id} of type ${job.name}`);
 
-        // GENERAL CASES
+                switch (job.name) {
+                    case 'user-notification':
+                        return await notificationService.UserNotify(job.data);
+                    case 'blockchain-transfer':
+                        return await walletService.handle_Blockchain_Transfer(job.data.transferId);
+                    case 'offchain-transfer':
+                        return await walletService.handle_Vyre_Transfer(job.data.transferId);
+                    case 'bank-transfer':
+                        return await walletService.handle_Bank_Transfer(job.data.transferId);
+                    case 'create-order':
+                        return await orderService.createOrder(job.data);
+                    case 'process-order':
+                        return await orderService.processOrderJob(job.data);
+                    case 'process-post-action':
+                        return await eventService.process_Post_Action_Job(job.data);
+                    case 'initiate-refund':
+                        return await eventService.processRefundJob(job.data);
+                    case 'expire-awaiting':
+                        return await anonService.cancelAwaitingJob(job.data);
+                    case 'Qorepay_Event':
+                        return await eventService.handleQorepayEvent(job.data);
+                    case 'Tatum_Event':
+                        return await eventService.handleTatumEvent(job.data);
+                    default:
+                        throw new Error(`Unknown job type: ${job.name}`);
+                }
+            } catch (error) {
+                console.error(`Job ${job.id} failed:`, error);
+                throw error;
+            }
+        },
+        {
+            connection,
+            concurrency:      5,
+            removeOnComplete: { count: 100 },
+            removeOnFail:     { count: 100 }
+        }
+    );
 
-        case 'user-notification':
-          return await notificationService.UserNotify(job.data)
+    worker.on('completed', (job) => {
+        console.info(`Job ${job.id} completed successfully`);
+    });
 
-        case 'blockchain-transfer':
-          return await walletService.handle_Blockchain_Transfer(job.data.transferId);
+    worker.on('failed', (job, err) => {
+        console.error(`Job ${job?.id} failed with error:`, err);
+    });
 
-        case 'offchain-transfer':
-            return await walletService.handle_Vyre_Transfer(job.data.transferId)
+    process.on('SIGTERM', async () => {
+        await worker.close();
+    });
 
-        case 'bank-transfer':
-          return await walletService.handle_Bank_Transfer(job.data.transferId);
+    console.log('[GeneralWorker] Started');
+    return worker;
+}
 
-
-        // ORDER CASES
-
-        case 'create-order':
-          return await orderService.createOrder(job.data);
-        case 'process-order':
-          return await orderService.processOrderJob(job.data);
-        case 'process-post-action':
-          return await eventService.process_Post_Action_Job(job.data);
-        case 'initiate-refund':
-          return await eventService.processRefundJob(job.data);
-        case 'expire-awaiting':
-          return await anonService.cancelAwaitingJob(job.data);
-
-
-
-        // EVENT CASES
-
-        case 'Qorepay_Event':
-          return await eventService.handleQorepayEvent(job.data);
-        case 'Tatum_Event':
-          return await eventService.handleTatumEvent(job.data);
-        
-        
-
-        default:
-          throw new Error(`Unknown job type: ${job.name}`);
-      }
-    } catch (error) {
-      console.error(`Job ${job.id} failed:`, error);
-      throw error; // Will trigger BullMQ's retry mechanism
-    }
-  },
-  {
-    connection,
-    concurrency: 5, // Process 5 jobs concurrently
-    removeOnComplete: { count: 100 }, // Keep last 100 completed jobs
-    removeOnFail: { count: 100 } // Keep last 100 failed jobs
-  }
-);
-
-worker.on('completed', (job) => {
-  console.info(`Job ${job.id} completed successfully`);
-});
-
-worker.on('failed', (job, err) => {
-  console.error(`Job ${job?.id} failed with error:`, err);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  await worker.close();
-});
-
-export default worker;
+// export default worker;

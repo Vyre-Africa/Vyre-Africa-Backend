@@ -598,10 +598,10 @@ class eventService {
       ).toString()
 
 
-      return await prisma.$transaction(async (tx) => {
+      // return await prisma.$transaction(async (tx) => {
         if (transferType === 'CREDIT') {
           return await this.handleCreditTransaction({
-            tx, wallet, amount: roundedAmount,
+            wallet, amount: roundedAmount,
             sender: actualSender,
             awaiting, txId, chain, contractAddress
           })
@@ -609,7 +609,7 @@ class eventService {
 
         if (transferType === 'DEBIT') {
           return await this.handleDebitTransaction({
-            tx, wallet,
+            wallet,
             amount: roundedAmount,
             txId
           })
@@ -617,11 +617,11 @@ class eventService {
 
         throw new Error(`Unable to determine transfer type`)
 
-      }, {
-        maxWait:        10000,
-        timeout:        30000,
-        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted
-      })
+      // }, {
+      //   maxWait:        10000,
+      //   timeout:        30000,
+      //   isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted
+      // })
 
 
     } catch (error) {
@@ -1117,106 +1117,95 @@ class eventService {
 
 
   private async handleCreditTransaction(params: {
-    tx: any;
-    wallet: any;
-    // syncedWallet: any;
-    amount: string;
-    sender: string;
-    awaiting: any;
-    txId: string;
-
-    chain: string
-    contractAddress: string
+      wallet: any;
+      amount: string;
+      sender: string;
+      awaiting: any;
+      txId: string;
+      chain: string;
+      contractAddress: string;
   }) {
-    const { tx, wallet, sender, awaiting, txId, amount, chain, contractAddress } = params;
+      const { wallet, sender, awaiting, txId, amount, chain, contractAddress } = params;
 
-    logger.info('Processing credit transaction', { walletId: wallet.id, amount, txId });
+      logger.info('Processing credit transaction', { walletId: wallet.id, amount, txId });
 
-    console.log('in credit transaction handling')
+      // ── 1. Credit virtual account (has its own transaction) ───
+      await virtualAccountService.cryptoDeposit({
+          userId:          wallet.userId,
+          currency:        wallet.currency.ISO,
+          amount,
+          txHash:          txId,
+          accountId:       wallet.id,
+          walletAddress:   wallet.depositAddress,
+          contractAddress,
+          metadata: {
+              sender,
+              contractAddress,
+              subscriptionId: wallet.subscriptionId
+          }
+      });
 
-    await virtualAccountService.cryptoDeposit({
-        userId: wallet.userId,
-        currency: wallet.currency.ISO,        // currency e.g 'USDT', 'USDC'
-        amount,
-        txHash: txId,       
-        accountId: wallet.id,                // txHash — used for idempotency
-        // blockchain: chain,                      // blockchain e.g 'ETHEREUM', 'TRON'
-        walletAddress: wallet.depositAddress, // the wallet address that received the deposit
-        contractAddress,      
-        metadata:{
-          sender,                 // who sent the funds
-          contractAddress,        // token contract if applicable
-          subscriptionId: wallet.subscriptionId
-        }
-    });
+      logger.info('Virtual account credited', { walletId: wallet.id, amount, txId });
 
-    logger.info('Virtual account credited', { walletId: wallet.id, amount, txId });
+      // ── 2. Sync wallet balance ────────────────────────────────
+      const syncedWallet = await walletService.getAccount(wallet.id);
+      if (!syncedWallet) throw new Error(`Failed to sync wallet ${wallet.id}`);
 
-    const syncedWallet = await walletService.getAccount(wallet.id);
+      // ── 3. Record transaction — no tx needed ─────────────────
+      const transaction = await prisma.transaction.create({
+          data: {
+              userId:      wallet.userId,
+              currency:    wallet.currency.ISO,
+              amount:      DecimalUtil.roundForStorage(amount, wallet.currency?.ISO as string),
+              status:      'SUCCESSFUL',
+              reference:   txId,
+              walletId:    wallet.id,
+              type:        'CRYPTO_DEPOSIT',
+              description: `Wallet credited with ${amount}`,
+              metadata: {
+                  sender,
+                  blockchainBalance: syncedWallet.accountBalance,
+                  previousBalance:   wallet.accountBalance
+              }
+          }
+      });
 
-    if (!syncedWallet) {
-      throw new Error(`Failed to sync wallet ${wallet.id}`);
-    }
+      logger.info('Transaction recorded', { transactionId: transaction.id, txId });
 
+      // ── 4. Queue sweep ────────────────────────────────────────
+      this.queueSweep({ wallet, txId, amount, chain, contractAddress });
 
-    // 1. Record the credit
-    const transaction = await tx.transaction.create({
-        data: {
-            userId:      wallet.userId,
-            currency:    wallet.currency.ISO,
-            amount:      DecimalUtil.roundForStorage(amount, wallet.currency?.ISO as string),
-            status:      'SUCCESSFUL',
-            reference:   txId,
-            walletId:    wallet.id,
-            type:        'CRYPTO_DEPOSIT',
-            description: `Wallet credited with ${amount}`,
-            metadata: {
-                sender,
-                blockchainBalance: syncedWallet.accountBalance,
-                previousBalance:   wallet.accountBalance
-            }
-        }
-    })
+      // ── 5. Route — awaiting order or plain deposit ────────────
+      if (awaiting) {
+          return await this.handleAwaitingOrder({
+              awaiting,
+              syncedWallet,
+              amount,
+              sender,
+              transaction
+          });
+      }
 
-    console.log('created transaction',transaction)
+      await notificationService.queue({
+          userId:  wallet.userId,
+          title:   'Transaction Notification',
+          type:    'GENERAL',
+          content: `<strong>${DecimalUtil.formatWithCurrency(amount, wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
+      });
 
-
-    // 2. Queue sweep — deferred until after prisma tx commits
-    // ── Queue sweep for ALL credit transactions ───────────────────────────
-    // Always sweep to master regardless of awaiting order
-    // VA handles accounting, master holds actual tokens
-    this.queueSweep({ wallet, txId, amount, chain, contractAddress })
-    
-    // 3. Route — awaiting order or plain deposit
-    if (awaiting) {
-      return await this.handleAwaitingOrder({ tx, awaiting, syncedWallet, amount, sender, transaction })
-    }
-
-    // Plain deposit — notify user
-    console.log('finally queuing notification ')
-
-    await notificationService.queue({
-      userId: wallet.userId,
-      title: 'Transaction Notification',
-      type: 'GENERAL',
-      content: `<strong>${DecimalUtil.formatWithCurrency(amount,wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
-    });
-
-    return { 
-      status: 'success', 
-      action: 'credit-completed',
-      transactionId: transaction.id
-    };
+      return {
+          status:        'success',
+          action:        'credit-completed',
+          transactionId: transaction.id
+      };
   }
 
   private async handleDebitTransaction(params: {
-    tx: any;
     wallet: any;
-    // syncedWallet: any;
     amount: string;
     txId: string;
   }) {
-    const { tx, wallet, amount, txId } = params;
+    const { wallet, amount, txId } = params;
 
     // Sync VA balance  ───────────────────────────
       logger.info('Syncing wallet balance', { walletId: wallet.id });
@@ -1230,7 +1219,7 @@ class eventService {
       });
 
     // 1. Create transaction record
-    const transaction = await tx.transaction.create({
+    const transaction = await prisma.transaction.create({
       data: {
         userId: wallet.userId,
         currency: wallet.currency.ISO,
@@ -1916,14 +1905,13 @@ class eventService {
 
   // ── Awaiting order handler — extracted from handleCreditTransaction ────────
   private async handleAwaitingOrder(params: {
-      tx:           any
       awaiting:     any
       syncedWallet: any
       amount:       string
       sender:       string
       transaction:  any
   }) {
-      const { tx, awaiting, syncedWallet, amount, sender, transaction } = params
+      const { awaiting, syncedWallet, amount, sender, transaction } = params
 
       const expectedAmount   = new Decimal(awaiting.amount.toString())
       const availableBalance = new Decimal(syncedWallet.availableBalance)
@@ -1948,7 +1936,7 @@ class eventService {
               transactionId:  transaction.id
           })
 
-          await tx.awaiting.update({
+          await prisma.awaiting.update({
               where: { id: awaiting.id },
               data:  { metadata: { receivedAmount: amount, expectedAmount: expectedAmount.toString() } }
           })
