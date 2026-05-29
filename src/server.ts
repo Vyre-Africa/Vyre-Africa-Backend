@@ -9,33 +9,8 @@ import orderController from "./controllers/order.controller";
 import paystackService from "./services/paystack.service";
 import flutterwaveService from "./services/flutterwave.service";
 import pairService from "./services/pair.service";
-import { startSweepWorkers } from './workers/general.worker'
 
 const server = http.createServer(app);
-
-// Schedule cron job to send notification
-// cron.schedule('* * * * *', () => {
-//     console.log('Checking for scheduled notifications...');
-    
-//     flutterwaveService.getBanks().catch((error) => {
-//         console.error('Failed to process banks', error);
-//     });
-// });
-// paystackService.getAllBanks()
-//   .then(() => {
-//     console.log('Banks fetched and saved successfully.');
-//   })
-//   .catch((error) => {
-//     console.error('Failed to process banks:', error);
-// });
-
-// cron.schedule('* * * * *', () => {
-//     console.log('starting pair sync...');
-    
-//     pairService.syncStablecoinPairs().catch((error) => {
-//         console.error('Failed to process sync', error);
-//     });
-// });
 
 
 server.listen(env.port, async() => {
@@ -48,8 +23,10 @@ server.listen(env.port, async() => {
 	if (START_WORKERS) {
 		try {
 			console.log('🔧 Starting background workers...');
-			await import('./workers/general.worker');
-			startSweepWorkers()
+			const { startGeneralWorker, startSweepWorkers } = await import('./workers/general.worker');
+
+			startGeneralWorker();
+            startSweepWorkers();
 			console.log('✅ All workers started successfully');
 		} catch (err) {
 			console.error('❌ Failed to start workers:', err);
