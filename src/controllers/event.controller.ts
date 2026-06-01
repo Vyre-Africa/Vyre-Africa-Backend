@@ -13,6 +13,7 @@ import eventService from '../services/event.service';
 import { verifyWebhook } from '@clerk/express/webhooks'
 import clerkService from '../services/clerk.service';
 import logger from '../config/logger';
+import chaingatewayService from '../services/chaingateway.service';
 
 
 
@@ -500,6 +501,84 @@ class EventController {
         message: (error as Error).message 
       });
     }
+  }
+
+  async chaingateway_WebHook(req: Request, res: Response) {
+      try {
+          const payload   = req.body;
+          const signature = req.headers['x-signature'] as string;
+
+          // ── Verify signature ──────────────────────────────────
+          if (!signature) {
+              logger.warn('Chaingateway — missing x-signature header');
+              return res.status(401).json({ error: 'Missing signature' });
+          }
+
+          const { txid } = payload;
+
+          if (!txid) {
+              logger.warn('Chaingateway — missing txid in payload');
+              return res.status(400).json({ error: 'Missing txid' });
+          }
+
+          const expectedSignature = createHmac('sha256', process.env.CHAINGATEWAY_PERSONAL_SECRET!)
+              .update(txid)
+              .digest('base64');
+
+          const isValid = crypto.timingSafeEqual(
+              Buffer.from(expectedSignature),
+              Buffer.from(signature)
+          );
+
+          if (!isValid) {
+              logger.warn('Chaingateway — invalid signature', { txid });
+              return res.status(401).json({ error: 'Invalid signature' });
+          }
+
+          // ── Respond immediately after verification ────────────
+          res.status(200).json({ status: 'received' });
+
+          const { from, to, amount, contractaddress, chain } = payload;
+
+          console.log('Chaingateway webhook received:', payload);
+
+          if (!to || !amount) return;
+
+          // Only process incoming — to must be our wallet
+          const wallet = await prisma.wallet.findFirst({
+              where: {
+                  depositAddress: { equals: to, mode: 'insensitive' }
+              },
+              select: { id: true, subscriptionId: true }
+          });
+
+          if (!wallet) {
+              logger.info('Chaingateway — address not our wallet, skipping', { to, txid });
+              return;
+          }
+
+          logger.info('Chaingateway incoming transfer', { from, to, amount, txid, chain });
+
+          // Queue using same Tatum flow — idempotency handles duplicates
+          await eventService.queue({
+              type:                  'TATUM',
+              Tatum_Address:         to,
+              Tatum_CounterAddress:  from,
+              Tatum_Chain:           chaingatewayService.tatumChain(chain),
+              Tatum_Type:            undefined,
+              Tatum_Amount:          amount.toString(),
+              Tatum_SubscriptionId:  wallet.subscriptionId ?? '',
+              Tatum_EventType:       'INCOMING_FUNGIBLE_TX',
+              Tatum_TxId:            txid,
+              Tatum_ContractAddress: contractaddress ?? '',
+              Tatum_Asset:           undefined,
+              Tatum_currency:        payload.symbol ?? ''
+          });
+
+      } catch (error: any) {
+          logger.error('Chaingateway webhook error:', error.message);
+          return res.status(500).json({ error: 'Internal Server Error' });
+      }
   }
 
  

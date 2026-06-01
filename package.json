@@ -19,7 +19,9 @@
         "prisma:push": "npx prisma db push",
         "prisma:seed": "ts-node prisma/seed.ts",
         "create-admin-wallets": "ts-node -r dotenv/config src/scripts/createAdminWallets.ts",
-        "test:sweep": "ts-node --transpile-only -r dotenv/config src/scripts/testNonceChainSweep.ts"
+        "test:sweep": "ts-node --transpile-only -r dotenv/config src/scripts/testNonceChainSweep.ts",
+        "retry-webhook": "ts-node --transpile-only -r dotenv/config src/scripts/retryWebhookEvent.ts"
+
 
 
     },

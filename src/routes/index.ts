@@ -70,6 +70,11 @@ router.post(
 );
 
 router.post(
+  '/webhook/chaingateway', 
+  eventController.chaingateway_WebHook
+);
+
+router.post(
   '/user/upload_kyc',
    requireAuthWithCORS(),
   authMiddleware,

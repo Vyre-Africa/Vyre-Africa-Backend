@@ -18,6 +18,7 @@ import { DecimalUtil } from './decimal.util';
 import gaspumpService from './gaspump.service';
 import virtualAccountService from './virtualAccount.service';
 import { CHAIN_CONFIG, getChainConfigByCurrency, getChainKey} from '../config/blockchain.config';
+import chaingatewayService from './chaingateway.service';
 
 
 
@@ -109,52 +110,138 @@ class stableCoinService
         }
     }
 
-    private async subscribeAddress(payload: { 
-        address: string; 
-        chain: string; 
-        contractAddress?: string 
-    }) {
-        try {
-            const attr: any = {
-                address: payload.address,
-                chain:   payload.chain,
-                url:     `https://api-dev.vyre.africa/api/v1/webhook/tatum`
-            };
+    // private async subscribeAddress(payload: { 
+    //     address: string; 
+    //     chain: string; 
+    //     contractAddress?: string 
+    // }) {
+    //     try {
+    //         const attr: any = {
+    //             address: payload.address,
+    //             chain:   payload.chain,
+    //             url:     `https://api-dev.vyre.africa/api/v1/webhook/tatum`
+    //         };
 
-            // Only add conditions for token transfers with a known contract
-            if (payload.contractAddress) {
-                attr.conditions = [
-                    {
-                        field:    'contractAddress',
-                        operator: '==',
-                        value:    payload.contractAddress  // e.g. USDC contract on Base
-                    },
-                    {
-                        field:    'value',
-                        operator: '>=',
-                        value:    '1000000'  // minimum 1 USDC (6 decimals)
-                    }
-                ];
-            }
+    //         // Only add conditions for token transfers with a known contract
+    //         if (payload.contractAddress) {
+    //             attr.conditions = [
+    //                 {
+    //                     field:    'contractAddress',
+    //                     operator: '==',
+    //                     value:    payload.contractAddress  // e.g. USDC contract on Base
+    //                 },
+    //                 {
+    //                     field:    'value',
+    //                     operator: '>=',
+    //                     value:    '1000000'  // minimum 1 USDC (6 decimals)
+    //                 }
+    //             ];
+    //         }
 
-            const data = {
-                type: 'INCOMING_FUNGIBLE_TX',
-                attr
-            };
+    //         const data = {
+    //             type: 'INCOMING_FUNGIBLE_TX',
+    //             attr
+    //         };
 
-            const response = await this.tatumAxiosV4.post('/subscription', data);
-            return response.data;
+    //         const response = await this.tatumAxiosV4.post('/subscription', data);
+    //         return response.data;
 
-        } catch (error) {
-            logger.error('Failed to subscribe address:', error);
-            throw new Error('Failed to subscribe to address events');
-        }
-    }
+    //     } catch (error) {
+    //         logger.error('Failed to subscribe address:', error);
+    //         throw new Error('Failed to subscribe to address events');
+    //     }
+    // }
 
 
     // ============================================
     // UNIFIED WALLET CREATION
     // ============================================
+
+
+    private async subscribeAddress(payload: { 
+        address: string; 
+        chain: string;
+        blockchain: string;  // ← add internal blockchain key e.g 'ETH', 'BASE'
+        contractAddress?: string 
+    }) {
+        const { address, chain, blockchain, contractAddress } = payload;
+
+        // ── Subscribe to both providers in parallel ───────────────
+        const [tatumResult, chainggatewayResult] = await Promise.allSettled([
+
+            // ── Tatum (primary) ───────────────────────────────────
+            (async () => {
+                const attr: any = {
+                    address,
+                    chain,
+                    url: `https://api-dev.vyre.africa/api/v1/webhook/tatum`
+                };
+
+                if (contractAddress) {
+                    attr.conditions = [
+                        {
+                            field:    'contractAddress',
+                            operator: '==',
+                            value:    contractAddress
+                        },
+                        {
+                            field:    'value',
+                            operator: '>=',
+                            value:    '1000000'  // minimum 1 USDC (6 decimals)
+                        }
+                    ];
+                }
+
+                const response = await this.tatumAxiosV4.post('/subscription', {
+                    type: 'INCOMING_FUNGIBLE_TX',
+                    attr
+                });
+
+                return response.data;
+            })(),
+
+            // ── Chaingateway (backup) ─────────────────────────────
+            chaingatewayService.subscribeAddress({
+                address,
+                blockchain,
+                contractAddress
+            })
+
+        ]);
+
+        // ── Log results ───────────────────────────────────────────
+        if (tatumResult.status === 'fulfilled') {
+            logger.info('Tatum subscription created', {
+                address,
+                subscriptionId: tatumResult.value?.id
+            });
+        } else {
+            logger.warn('Tatum subscription failed', {
+                address,
+                error: tatumResult.reason?.message
+            });
+        }
+
+        if (chainggatewayResult.status === 'fulfilled') {
+            logger.info('Chaingateway subscription created', {
+                address,
+                result: chainggatewayResult.value
+            });
+        } else {
+            logger.warn('Chaingateway subscription failed (non-fatal)', {
+                address,
+                error: chainggatewayResult.reason?.message
+            });
+        }
+
+        // ── Return Tatum result — it's the primary subscription ID ─
+        if (tatumResult.status === 'rejected') {
+            throw new Error(`Failed to subscribe address: ${tatumResult.reason?.message}`);
+        }
+
+        return tatumResult.value;
+    }
+
 
     async createWallet(
         stablecoin: StablecoinType,
@@ -221,6 +308,7 @@ class stableCoinService
             const subscription = await this.subscribeAddress({
                 address: depositAddress,
                 chain:   chainConfig.webhookChain!,
+                blockchain:      chainConfig.blockchain,  
                 contractAddress: chainConfig.tokenMint  // Only add contract condition for ERC20 tokens
             });
 
