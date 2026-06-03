@@ -23,8 +23,6 @@
         "retry-webhook": "ts-node --transpile-only -r dotenv/config src/scripts/retryWebhookEvent.ts",
         "setup:moralis": "ts-node --transpile-only -r dotenv/config src/scripts/setupMoralisStreams.ts",
         "moralis:add-address": "ts-node --transpile-only -r dotenv/config src/scripts/addMoralisAddress.ts"
-
-
     },
     "author": "harvey ana",
     "license": "ISC",
@@ -80,6 +78,7 @@
         "typescript": "^6.0.3",
         "ulid": "^3.0.2",
         "uuid": "^11.1.0",
+        "web3": "^4.16.0",
         "winston": "^3.17.0",
         "zeptomail": "^6.0.0"
     },
