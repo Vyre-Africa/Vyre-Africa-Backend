@@ -506,44 +506,49 @@ class EventController {
 
   async moralis_WebHook(req: Request, res: Response) {
       try {
-          // ── Verify Moralis signature ──────────────────────────
+
+          console.log('Moralis webhook received', req.body);
+          
           const signature = req.headers['x-signature'] as string;
 
-          // if (!signature) {
-          //     logger.warn('Moralis — missing x-signature');
-          //     return res.status(401).json({ error: 'Missing signature' });
-          // }
+          if (!signature) {
+              logger.warn('Moralis — missing x-signature');
+              return res.status(401).json({ error: 'Missing signature' });
+          }
+
+          // ── Remove 0x prefix if present ───────────────────────
+          const cleanSignature = signature?.startsWith('0x')
+              ? signature.slice(2)
+              : signature;
 
           const body     = JSON.stringify(req.body);
           const expected = createHmac('sha256', process.env.MORALIS_API_KEY!)
               .update(body)
               .digest('hex');
-              
-          console.log('Moralis webhook signature:', signature);
-          console.log('Expected signature:', expected);
 
-          // if (signature !== expected) {
-          //     logger.warn('Moralis — invalid signature');
-          //     return res.status(401).json({ error: 'Invalid signature' });
-          // }
+
+          if (cleanSignature !== expected) {
+              logger.warn('Moralis — invalid signature', {
+                  received: cleanSignature,
+                  expected
+              });
+              return res.status(401).json({ error: 'Invalid signature' });
+          }
 
           // ── Respond immediately ───────────────────────────────
           res.status(200).json({ status: 'received' });
 
-          // ── Process asynchronously ────────────────────────────
           setImmediate(async () => {
               try {
                   const { erc20Transfers, chainId, confirmed } = req.body;
 
-                  // Only process confirmed transactions
-                  if (!confirmed) {
-                      logger.info('Moralis — skipping unconfirmed tx');
-                      return;
-                  }
+                  logger.info('Moralis webhook received', {
+                      confirmed,
+                      chainId,
+                      transferCount: erc20Transfers?.length
+                  });
 
                   if (!erc20Transfers?.length) return;
-
-                  logger.info(`Moralis webhook — ${erc20Transfers.length} transfers on chain ${chainId}`);
 
                   for (const transfer of erc20Transfers) {
                       const {
@@ -556,7 +561,6 @@ class EventController {
                           transactionHash: txHash
                       } = transfer;
 
-                      // ── Only process incoming to our wallets ──
                       const wallet = await prisma.wallet.findFirst({
                           where: {
                               depositAddress: { equals: to, mode: 'insensitive' }
@@ -569,24 +573,20 @@ class EventController {
                           continue;
                       }
 
-                      // ── Decode amount ─────────────────────────
                       const decimals = parseInt(tokenDecimals || '6');
                       const amount   = (parseInt(value, 16) / Math.pow(10, decimals)).toString();
 
                       if (parseFloat(amount) <= 0) continue;
 
                       logger.info('Moralis incoming transfer', {
-                          from,
-                          to,
-                          amount,
+                          from, to, amount,
                           symbol:   tokenSymbol,
                           contract: contractAddress,
                           txHash,
-                          chainId
+                          chainId,
+                          confirmed
                       });
 
-                      // ── Queue using same Tatum flow ───────────
-                      // Idempotency via txHash handles duplicates
                       await eventService.queue({
                           type:                  'TATUM',
                           Tatum_Address:         to,
