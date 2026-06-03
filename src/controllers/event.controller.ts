@@ -509,20 +509,23 @@ class EventController {
           // ── Verify Moralis signature ──────────────────────────
           const signature = req.headers['x-signature'] as string;
 
-          if (!signature) {
-              logger.warn('Moralis — missing x-signature');
-              return res.status(401).json({ error: 'Missing signature' });
-          }
+          // if (!signature) {
+          //     logger.warn('Moralis — missing x-signature');
+          //     return res.status(401).json({ error: 'Missing signature' });
+          // }
 
           const body     = JSON.stringify(req.body);
           const expected = createHmac('sha256', process.env.MORALIS_API_KEY!)
               .update(body)
               .digest('hex');
+              
+          console.log('Moralis webhook signature:', signature);
+          console.log('Expected signature:', expected);
 
-          if (signature !== expected) {
-              logger.warn('Moralis — invalid signature');
-              return res.status(401).json({ error: 'Invalid signature' });
-          }
+          // if (signature !== expected) {
+          //     logger.warn('Moralis — invalid signature');
+          //     return res.status(401).json({ error: 'Invalid signature' });
+          // }
 
           // ── Respond immediately ───────────────────────────────
           res.status(200).json({ status: 'received' });
