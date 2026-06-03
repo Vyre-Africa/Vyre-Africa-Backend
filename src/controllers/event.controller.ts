@@ -15,6 +15,7 @@ import clerkService from '../services/clerk.service';
 import logger from '../config/logger';
 import chaingatewayService from '../services/chaingateway.service';
 import moralisService from '../services/moralis.service';
+import { Web3 } from 'web3';
 
 
 
@@ -504,11 +505,123 @@ class EventController {
     }
   }
 
+  // async moralis_WebHook(req: Request, res: Response) {
+  //     try {
+
+  //         console.log('Moralis webhook received', req.body);
+
+  //         const signature = req.headers['x-signature'] as string;
+
+  //         if (!signature) {
+  //             logger.warn('Moralis — missing x-signature');
+  //             return res.status(401).json({ error: 'Missing signature' });
+  //         }
+
+  //         // ── Remove 0x prefix if present ───────────────────────
+  //         const cleanSignature = signature?.startsWith('0x')
+  //             ? signature.slice(2)
+  //             : signature;
+
+  //         const body     = JSON.stringify(req.body);
+  //         const expected = createHmac('sha256', process.env.MORALIS_API_KEY!)
+  //             .update(body)
+  //             .digest('hex');
+
+
+  //         if (cleanSignature !== expected) {
+  //             logger.warn('Moralis — invalid signature', {
+  //                 received: cleanSignature,
+  //                 expected
+  //             });
+  //             return res.status(401).json({ error: 'Invalid signature' });
+  //         }
+
+  //         // ── Respond immediately ───────────────────────────────
+  //         res.status(200).json({ status: 'received' });
+
+  //         setImmediate(async () => {
+  //             try {
+  //                 const { erc20Transfers, chainId, confirmed } = req.body;
+
+  //                 logger.info('Moralis webhook received', {
+  //                     confirmed,
+  //                     chainId,
+  //                     transferCount: erc20Transfers?.length
+  //                 });
+
+  //                 if (!erc20Transfers?.length) return;
+
+  //                 for (const transfer of erc20Transfers) {
+  //                     const {
+  //                         from,
+  //                         to,
+  //                         value,
+  //                         tokenDecimals,
+  //                         tokenSymbol,
+  //                         contract:        contractAddress,
+  //                         transactionHash: txHash
+  //                     } = transfer;
+
+  //                     const wallet = await prisma.wallet.findFirst({
+  //                         where: {
+  //                             depositAddress: { equals: to, mode: 'insensitive' }
+  //                         },
+  //                         select: { id: true, subscriptionId: true }
+  //                     });
+
+  //                     if (!wallet) {
+  //                         logger.info('Moralis — not our wallet, skipping', { to, txHash });
+  //                         continue;
+  //                     }
+
+  //                     const decimals = parseInt(tokenDecimals || '6');
+  //                     const amount   = (parseInt(value, 16) / Math.pow(10, decimals)).toString();
+
+  //                     if (parseFloat(amount) <= 0) continue;
+
+  //                     logger.info('Moralis incoming transfer', {
+  //                         from, to, amount,
+  //                         symbol:   tokenSymbol,
+  //                         contract: contractAddress,
+  //                         txHash,
+  //                         chainId,
+  //                         confirmed
+  //                     });
+
+  //                     await eventService.queue({
+  //                         type:                  'TATUM',
+  //                         Tatum_Address:         to,
+  //                         Tatum_CounterAddress:  from,
+  //                         Tatum_Chain:           moralisService.tatumChain(chainId),
+  //                         Tatum_Type:            undefined,
+  //                         Tatum_Amount:          amount,
+  //                         Tatum_SubscriptionId:  wallet.subscriptionId ?? '',
+  //                         Tatum_EventType:       'INCOMING_FUNGIBLE_TX',
+  //                         Tatum_TxId:            txHash,
+  //                         Tatum_ContractAddress: contractAddress,
+  //                         Tatum_Asset:           undefined,
+  //                         Tatum_currency:        tokenSymbol
+  //                     });
+  //                 }
+
+  //             } catch (processError: any) {
+  //                 logger.error('Moralis processing error:', processError.message);
+  //             }
+  //         });
+
+  //     } catch (error: any) {
+  //         logger.error('Moralis webhook error:', error.message);
+  //         if (!res.headersSent) {
+  //             res.status(500).json({ error: 'Internal Server Error' });
+  //         }
+  //     }
+  // }
+
   async moralis_WebHook(req: Request, res: Response) {
       try {
 
-          console.log('Moralis webhook received', req.body);
-          
+         console.log('Moralis webhook received', req.body);
+
           const signature = req.headers['x-signature'] as string;
 
           if (!signature) {
@@ -516,20 +629,16 @@ class EventController {
               return res.status(401).json({ error: 'Missing signature' });
           }
 
-          // ── Remove 0x prefix if present ───────────────────────
-          const cleanSignature = signature?.startsWith('0x')
-              ? signature.slice(2)
-              : signature;
+          // ── Verify using Keccak-256 not HMAC ──────────────────
+          // Secret is MORALIS_WEBHOOK_SECRET not API key
+          const web3 = new Web3();
+          const expected = web3.utils.sha3(
+              JSON.stringify(req.body) + process.env.MORALIS_WEBHOOK_SECRET!
+          );
 
-          const body     = JSON.stringify(req.body);
-          const expected = createHmac('sha256', process.env.MORALIS_API_KEY!)
-              .update(body)
-              .digest('hex');
-
-
-          if (cleanSignature !== expected) {
+          if (expected !== signature) {
               logger.warn('Moralis — invalid signature', {
-                  received: cleanSignature,
+                  received: signature,
                   expected
               });
               return res.status(401).json({ error: 'Invalid signature' });
@@ -554,13 +663,13 @@ class EventController {
                       const {
                           from,
                           to,
-                          value,
-                          tokenDecimals,
+                          valueWithDecimals,
                           tokenSymbol,
                           contract:        contractAddress,
                           transactionHash: txHash
                       } = transfer;
 
+                      // Only process incoming to our wallets
                       const wallet = await prisma.wallet.findFirst({
                           where: {
                               depositAddress: { equals: to, mode: 'insensitive' }
@@ -573,15 +682,14 @@ class EventController {
                           continue;
                       }
 
-                      const decimals = parseInt(tokenDecimals || '6');
-                      const amount   = (parseInt(value, 16) / Math.pow(10, decimals)).toString();
+                      const amount = valueWithDecimals?.toString();
 
-                      if (parseFloat(amount) <= 0) continue;
+                      if (!amount || parseFloat(amount) <= 0) continue;
 
                       logger.info('Moralis incoming transfer', {
                           from, to, amount,
-                          symbol:   tokenSymbol,
-                          contract: contractAddress,
+                          symbol:    tokenSymbol,
+                          contract:  contractAddress,
                           txHash,
                           chainId,
                           confirmed
