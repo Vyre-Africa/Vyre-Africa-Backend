@@ -256,6 +256,13 @@ enum bankDetailStatus {
   ACTIVE
 }
 
+enum WalletStatus {
+  ACTIVE
+  IDLE
+  DORMANT
+  ARCHIVED
+}
+
 model OtcRequest {
   id          String      @id @default(uuid())
   fullName    String
@@ -295,6 +302,8 @@ model OtcRequest {
   @@index([status, createdAt(sort: Desc)])
   @@map("otc_requests")
 }
+
+
 
 model Rating {
   id        Int      @id @default(autoincrement())
@@ -695,6 +704,12 @@ model Wallet {
 
   accountBalance   Decimal @default(0.00) @db.Decimal(20, 8)
   availableBalance Decimal @default(0.00) @db.Decimal(20, 8)
+
+  status           WalletStatus @default(ACTIVE)
+  lastUsedAt       DateTime?
+  pooled           Boolean      @default(false)
+
+  
 
   Transaction Transaction[]
   Block       Block[]

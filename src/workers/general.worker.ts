@@ -11,6 +11,7 @@ import connection from '../config/redis.config';
 import anonService from '../services/anon.service';
 import prisma from '../config/prisma.client';
 import sweepService from '../services/sweep.service';
+import walletpoolService from '../services/walletpool.service';
 
 // const SWEEP_CHAINS = ['ETH', 'MATIC', 'BSC', 'BASE', 'ARB', 'OPTIMISM', 'TRON']
 const SWEEP_CHAINS = [
@@ -79,6 +80,10 @@ export function startGeneralWorker() {
                         return await eventService.handleQorepayEvent(job.data);
                     case 'Tatum_Event':
                         return await eventService.handleTatumEvent(job.data);
+
+                    case 'cleanup-trade-wallets':
+                        return await walletpoolService.cleanupTradeWallets(job.data.awaitingId);
+
                     default:
                         throw new Error(`Unknown job type: ${job.name}`);
                 }
