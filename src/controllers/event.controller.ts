@@ -14,6 +14,7 @@ import { verifyWebhook } from '@clerk/express/webhooks'
 import clerkService from '../services/clerk.service';
 import logger from '../config/logger';
 import chaingatewayService from '../services/chaingateway.service';
+import moralisService from '../services/moralis.service';
 
 
 
@@ -503,168 +504,109 @@ class EventController {
     }
   }
 
-  // async chaingateway_WebHook(req: Request, res: Response) {
-  //     try {
-  //         const payload   = req.body;
-  //         const signature = req.headers['x-signature'] as string;
-
-  //         // ── Verify signature ──────────────────────────────────
-  //         if (!signature) {
-  //             logger.warn('Chaingateway — missing x-signature header');
-  //             return res.status(401).json({ error: 'Missing signature' });
-  //         }
-
-  //         const { txid } = payload;
-
-  //         if (!txid) {
-  //             logger.warn('Chaingateway — missing txid in payload');
-  //             return res.status(400).json({ error: 'Missing txid' });
-  //         }
-
-  //         const expectedSignature = createHmac('sha256', process.env.CHAINGATEWAY_PERSONAL_SECRET!)
-  //             .update(txid)
-  //             .digest('base64');
-
-  //         const isValid = crypto.timingSafeEqual(
-  //             Buffer.from(expectedSignature),
-  //             Buffer.from(signature)
-  //         );
-
-  //         if (!isValid) {
-  //             logger.warn('Chaingateway — invalid signature', { txid });
-  //             return res.status(401).json({ error: 'Invalid signature' });
-  //         }
-
-  //         // ── Respond immediately after verification ────────────
-  //         res.status(200).json({ status: 'received' });
-
-  //         const { from, to, amount, contractaddress, chain } = payload;
-
-  //         console.log('Chaingateway webhook received:', payload);
-
-  //         if (!to || !amount) return;
-
-  //         // Only process incoming — to must be our wallet
-  //         const wallet = await prisma.wallet.findFirst({
-  //             where: {
-  //                 depositAddress: { equals: to, mode: 'insensitive' }
-  //             },
-  //             select: { id: true, subscriptionId: true }
-  //         });
-
-  //         if (!wallet) {
-  //             logger.info('Chaingateway — address not our wallet, skipping', { to, txid });
-  //             return;
-  //         }
-
-  //         logger.info('Chaingateway incoming transfer', { from, to, amount, txid, chain });
-
-  //         // Queue using same Tatum flow — idempotency handles duplicates
-  //         await eventService.queue({
-  //             type:                  'TATUM',
-  //             Tatum_Address:         to,
-  //             Tatum_CounterAddress:  from,
-  //             Tatum_Chain:           chaingatewayService.tatumChain(chain),
-  //             Tatum_Type:            undefined,
-  //             Tatum_Amount:          amount.toString(),
-  //             Tatum_SubscriptionId:  wallet.subscriptionId ?? '',
-  //             Tatum_EventType:       'INCOMING_FUNGIBLE_TX',
-  //             Tatum_TxId:            txid,
-  //             Tatum_ContractAddress: contractaddress ?? '',
-  //             Tatum_Asset:           undefined,
-  //             Tatum_currency:        payload.symbol ?? ''
-  //         });
-
-  //     } catch (error: any) {
-  //         logger.error('Chaingateway webhook error:', error.message);
-  //         return res.status(500).json({ error: 'Internal Server Error' });
-  //     }
-  // }
-
-  async chaingateway_WebHook(req: Request, res: Response) {
+  async moralis_WebHook(req: Request, res: Response) {
       try {
-          const payload   = req.body;
+          // ── Verify Moralis signature ──────────────────────────
           const signature = req.headers['x-signature'] as string;
 
-          // ── Verify signature ──────────────────────────────────
           if (!signature) {
-              logger.warn('Chaingateway — missing x-signature header');
+              logger.warn('Moralis — missing x-signature');
               return res.status(401).json({ error: 'Missing signature' });
           }
 
-          const { txid } = payload;
+          const body     = JSON.stringify(req.body);
+          const expected = createHmac('sha256', process.env.MORALIS_API_KEY!)
+              .update(body)
+              .digest('hex');
 
-          if (!txid) {
-              logger.warn('Chaingateway — missing txid in payload');
-              return res.status(400).json({ error: 'Missing txid' });
-          }
-
-          const expectedSignature = createHmac('sha256', process.env.CHAINGATEWAY_PERSONAL_SECRET!)
-              .update(txid)
-              .digest('base64');
-
-          const isValid = crypto.timingSafeEqual(
-              Buffer.from(expectedSignature),
-              Buffer.from(signature)
-          );
-
-          console.log(`Expected signature: ${expectedSignature}, Received signature: ${signature}, Valid: ${isValid}`);
-
-          if (!isValid) {
-              logger.warn('Chaingateway — invalid signature', { txid });
+          if (signature !== expected) {
+              logger.warn('Moralis — invalid signature');
               return res.status(401).json({ error: 'Invalid signature' });
           }
 
-          // ── Respond immediately — before any async work ───────
+          // ── Respond immediately ───────────────────────────────
           res.status(200).json({ status: 'received' });
 
-          // ── Process asynchronously after response sent ────────
+          // ── Process asynchronously ────────────────────────────
           setImmediate(async () => {
               try {
-                  const { from, to, amount, contractaddress, chain } = payload;
+                  const { erc20Transfers, chainId, confirmed } = req.body;
 
-                  console.log('Chaingateway webhook received:', payload);
-
-                  if (!to || !amount) return;
-
-                  const wallet = await prisma.wallet.findFirst({
-                      where: {
-                          depositAddress: { equals: to, mode: 'insensitive' }
-                      },
-                      select: { id: true, subscriptionId: true }
-                  });
-
-                  if (!wallet) {
-                      logger.info('Chaingateway — address not our wallet, skipping', { to, txid });
+                  // Only process confirmed transactions
+                  if (!confirmed) {
+                      logger.info('Moralis — skipping unconfirmed tx');
                       return;
                   }
 
-                  logger.info('Chaingateway incoming transfer', { from, to, amount, txid, chain });
+                  if (!erc20Transfers?.length) return;
 
-                  await eventService.queue({
-                      type:                  'TATUM',
-                      Tatum_Address:         to,
-                      Tatum_CounterAddress:  from,
-                      Tatum_Chain:           chaingatewayService.tatumChain(chain),
-                      Tatum_Type:            undefined,
-                      Tatum_Amount:          amount.toString(),
-                      Tatum_SubscriptionId:  wallet.subscriptionId ?? '',
-                      Tatum_EventType:       'INCOMING_FUNGIBLE_TX',
-                      Tatum_TxId:            txid,
-                      Tatum_ContractAddress: contractaddress ?? '',
-                      Tatum_Asset:           undefined,
-                      Tatum_currency:        payload.symbol ?? ''
-                  });
+                  logger.info(`Moralis webhook — ${erc20Transfers.length} transfers on chain ${chainId}`);
+
+                  for (const transfer of erc20Transfers) {
+                      const {
+                          from,
+                          to,
+                          value,
+                          tokenDecimals,
+                          tokenSymbol,
+                          contract:        contractAddress,
+                          transactionHash: txHash
+                      } = transfer;
+
+                      // ── Only process incoming to our wallets ──
+                      const wallet = await prisma.wallet.findFirst({
+                          where: {
+                              depositAddress: { equals: to, mode: 'insensitive' }
+                          },
+                          select: { id: true, subscriptionId: true }
+                      });
+
+                      if (!wallet) {
+                          logger.info('Moralis — not our wallet, skipping', { to, txHash });
+                          continue;
+                      }
+
+                      // ── Decode amount ─────────────────────────
+                      const decimals = parseInt(tokenDecimals || '6');
+                      const amount   = (parseInt(value, 16) / Math.pow(10, decimals)).toString();
+
+                      if (parseFloat(amount) <= 0) continue;
+
+                      logger.info('Moralis incoming transfer', {
+                          from,
+                          to,
+                          amount,
+                          symbol:   tokenSymbol,
+                          contract: contractAddress,
+                          txHash,
+                          chainId
+                      });
+
+                      // ── Queue using same Tatum flow ───────────
+                      // Idempotency via txHash handles duplicates
+                      await eventService.queue({
+                          type:                  'TATUM',
+                          Tatum_Address:         to,
+                          Tatum_CounterAddress:  from,
+                          Tatum_Chain:           moralisService.tatumChain(chainId),
+                          Tatum_Type:            undefined,
+                          Tatum_Amount:          amount,
+                          Tatum_SubscriptionId:  wallet.subscriptionId ?? '',
+                          Tatum_EventType:       'INCOMING_FUNGIBLE_TX',
+                          Tatum_TxId:            txHash,
+                          Tatum_ContractAddress: contractAddress,
+                          Tatum_Asset:           undefined,
+                          Tatum_currency:        tokenSymbol
+                      });
+                  }
 
               } catch (processError: any) {
-                  // ← log only — response already sent
-                  logger.error('Chaingateway processing error:', processError.message);
+                  logger.error('Moralis processing error:', processError.message);
               }
           });
 
       } catch (error: any) {
-          // ← only fires before res.json() is called (signature check etc.)
-          logger.error('Chaingateway webhook error:', error.message);
+          logger.error('Moralis webhook error:', error.message);
           if (!res.headersSent) {
               res.status(500).json({ error: 'Internal Server Error' });
           }
