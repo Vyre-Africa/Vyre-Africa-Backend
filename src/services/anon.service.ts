@@ -12,6 +12,7 @@ import notificationService from './notification.service';
 import logger from '../config/logger';
 import orderslotService from './orderslot.service';
 import { verifyPin } from '../utils';
+import walletpoolService from './walletpool.service';
 
 interface PreAction {
   orderId: string;
@@ -196,23 +197,66 @@ class AnonService {
         if (!order.pair.quoteCurrency) throw new Error('Quote currency not found');
 
         // ── Step 5: Create wallets ────────────────────────────────
-        const baseWallet = await this.retryOperation(
-            () => walletService.createWallet({
-                userId:     user.id,
-                currencyId: order.pair!.baseCurrency!.id
-            }),
-            'Create base wallet', 3, 2000
-        );
+
+        // ── Try pool first — fallback to fresh creation ───────────
+        const [baseWallet, quoteWallet] = await Promise.all([
+
+            // Base wallet
+            (async () => {
+                const pooled = await walletpoolService.getOrCreateWallet({
+                    userId:     user.id,
+                    currencyId: order.pair!.baseCurrency!.id
+                });
+
+                if (pooled) return pooled;
+
+                // No pool wallet — create fresh
+                return await this.retryOperation(
+                    () => walletService.createWallet({
+                        userId:     user.id,
+                        currencyId: order.pair!.baseCurrency!.id
+                    }),
+                    'Create base wallet', 3, 2000
+                );
+            })(),
+
+            // Quote wallet
+            (async () => {
+                const pooled = await walletpoolService.getOrCreateWallet({
+                    userId:     user.id,
+                    currencyId: order.pair!.quoteCurrency!.id
+                });
+
+                if (pooled) return pooled;
+
+                return await this.retryOperation(
+                    () => walletService.createWallet({
+                        userId:     user.id,
+                        currencyId: order.pair!.quoteCurrency!.id
+                    }),
+                    'Create quote wallet', 3, 2000
+                );
+            })()
+        ]);
+
+
+        // const baseWallet = await this.retryOperation(
+        //     () => walletService.createWallet({
+        //         userId:     user.id,
+        //         currencyId: order.pair!.baseCurrency!.id
+        //     }),
+        //     'Create base wallet', 3, 2000
+        // );
 
         if (!baseWallet) throw new Error('Base wallet creation failed');
 
-        const quoteWallet = await this.retryOperation(
-            () => walletService.createWallet({
-                userId:     user.id,
-                currencyId: order.pair!.quoteCurrency!.id
-            }),
-            'Create quote wallet', 3, 2000
-        );
+        // const quoteWallet = await this.retryOperation(
+        //     () => walletService.createWallet({
+        //         userId:     user.id,
+        //         currencyId: order.pair!.quoteCurrency!.id
+        //     }),
+        //     'Create quote wallet', 3, 2000
+        // );
 
         if (!quoteWallet) throw new Error('Quote wallet creation failed');
 
