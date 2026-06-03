@@ -19,6 +19,7 @@ import gaspumpService from './gaspump.service';
 import virtualAccountService from './virtualAccount.service';
 import { CHAIN_CONFIG, getChainConfigByCurrency, getChainKey} from '../config/blockchain.config';
 import chaingatewayService from './chaingateway.service';
+import moralisService from './moralis.service';
 
 
 
@@ -158,23 +159,23 @@ class stableCoinService
     // ============================================
 
 
-    private async subscribeAddress(payload: { 
-        address: string; 
-        chain: string;
-        blockchain: string;  // ← add internal blockchain key e.g 'ETH', 'BASE'
-        contractAddress?: string 
+    private async subscribeAddress(payload: {
+        address:          string;
+        chain:            string;
+        blockchain:       string;  // ← internal chain key e.g 'ETH', 'BASE'
+        contractAddress?: string
     }) {
         const { address, chain, blockchain, contractAddress } = payload;
 
-        // ── Subscribe to both providers in parallel ───────────────
-        const [tatumResult, chainggatewayResult] = await Promise.allSettled([
+        const [tatumResult, moralisResult] = await Promise.allSettled([
 
             // ── Tatum (primary) ───────────────────────────────────
             (async () => {
                 const attr: any = {
                     address,
                     chain,
-                    url: `https://api-dev.vyre.africa/api/v1/webhook/tatum`
+                    url: process.env.TATUM_WEBHOOK_URL ?? 
+                        'https://api-dev.vyre.africa/api/v1/webhook/tatum'
                 };
 
                 if (contractAddress) {
@@ -187,7 +188,7 @@ class stableCoinService
                         {
                             field:    'value',
                             operator: '>=',
-                            value:    '1000000'  // minimum 1 USDC (6 decimals)
+                            value:    '1000000'
                         }
                     ];
                 }
@@ -200,16 +201,10 @@ class stableCoinService
                 return response.data;
             })(),
 
-            // ── Chaingateway (backup) ─────────────────────────────
-            chaingatewayService.subscribeAddress({
-                address,
-                blockchain,
-                contractAddress
-            })
-
+            // ── Moralis (backup) ──────────────────────────────────
+            moralisService.addAddress(address, blockchain)
         ]);
 
-        // ── Log results ───────────────────────────────────────────
         if (tatumResult.status === 'fulfilled') {
             logger.info('Tatum subscription created', {
                 address,
@@ -222,19 +217,16 @@ class stableCoinService
             });
         }
 
-        if (chainggatewayResult.status === 'fulfilled') {
-            logger.info('Chaingateway subscription created', {
-                address,
-                result: chainggatewayResult.value
-            });
+        if (moralisResult.status === 'fulfilled') {
+            logger.info('Moralis subscription created', { address });
         } else {
-            logger.warn('Chaingateway subscription failed (non-fatal)', {
+            logger.warn('Moralis subscription failed (non-fatal)', {
                 address,
-                error: chainggatewayResult.reason?.message
+                error: moralisResult.reason?.message
             });
         }
 
-        // ── Return Tatum result — it's the primary subscription ID ─
+        // Tatum failure is fatal — it's the primary subscription
         if (tatumResult.status === 'rejected') {
             throw new Error(`Failed to subscribe address: ${tatumResult.reason?.message}`);
         }

@@ -70,8 +70,8 @@ router.post(
 );
 
 router.post(
-  '/webhook/chaingateway', 
-  eventController.chaingateway_WebHook
+  '/webhook/moralis', 
+  eventController.moralis_WebHook
 );
 
 router.post(
