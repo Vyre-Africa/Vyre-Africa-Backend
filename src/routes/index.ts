@@ -30,6 +30,7 @@ import { requireTransactionPin } from '../middleware/transactionPin';
 import { requireAuthWithCORS } from '../middleware/cors-helper';
 import otcValidator from '../validators/otc.validator';
 import otcController from '../controllers/otc.controller';
+import vendorController from '../controllers/vendor.controller';
 
 const router = Router();
 
@@ -727,6 +728,22 @@ router.post(
   middleware.handleValidationError,
   otcController.submitOtcRequest
 )
+
+router.post(
+  '/vendor/apply',                     
+  requireAuthWithCORS(),
+  authMiddleware, 
+  userValidator.vendorApply(),
+  middleware.handleValidationError,
+  vendorController.apply
+);
+
+router.get(
+  '/vendor/status',                     
+  requireAuthWithCORS(),
+  authMiddleware,
+  vendorController.getStatus
+);
 
 // router.get(
 //   '/user/two-factor-authentication',

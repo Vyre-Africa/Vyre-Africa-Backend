@@ -232,15 +232,7 @@ class eventService {
 
   }
 
-//   data {
-// 0|vyre-backend  |   payment_intent_id: 'f801a6fb-c62a-4673-8599-08904b159282',
-// 0|vyre-backend  |   reference: 'QP-9FX9X4ZZ',
-// 0|vyre-backend  |   paid_amount: 150000,
-// 0|vyre-backend  |   fees: 13169,
-// 0|vyre-backend  |   currency: 'NGN',
-// 0|vyre-backend  |   provider: 'UNISWITCH',
-// 0|vyre-backend  |   channel: 'TRANSFER'
-// 0|vyre-backend  | }
+
 
   public async handleQorepayEvent(payload: {
     // event: 'purchase' | 'payout';
