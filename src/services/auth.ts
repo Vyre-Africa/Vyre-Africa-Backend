@@ -34,7 +34,9 @@ export const authMiddleware = async (
         lastName: true,
         email: true,
         bvnSubmitted: true,
-        bvnVerified: true
+        bvnVerified: true,
+        isVendor: true, 
+        isAnonymous: true
       }
     });
 
@@ -55,7 +57,9 @@ export const authMiddleware = async (
           lastName: true,
           email: true,
           bvnSubmitted: true,
-          bvnVerified: true
+          bvnVerified: true,
+          isVendor: true, 
+          isAnonymous: true
         }
       });
 

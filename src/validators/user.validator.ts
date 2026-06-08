@@ -208,6 +208,16 @@ class UserValidator {
         ];
     }
 
+    vendorApply() {
+        return [
+            body('businessName').notEmpty().withMessage('businessName is required'),
+            body('businessType').notEmpty().withMessage('businessType is required'),
+            body('country').notEmpty().withMessage('country is required'),
+            body('monthlyVolume').notEmpty().withMessage('monthlyVolume is required'),
+            body('description').notEmpty().withMessage('description is required')
+        ];
+    }
+
     setPassword() {
         return [
             body('userId').notEmpty().withMessage('userId is required'),

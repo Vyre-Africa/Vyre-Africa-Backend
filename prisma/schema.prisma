@@ -263,6 +263,13 @@ enum WalletStatus {
   ARCHIVED
 }
 
+enum VendorStatus {
+  PENDING      // applied, awaiting review
+  APPROVED     // can create orders
+  REJECTED     // denied
+  SUSPENDED    // was approved, now blocked
+}
+
 model OtcRequest {
   id          String      @id @default(uuid())
   fullName    String
@@ -301,6 +308,31 @@ model OtcRequest {
   @@index([createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
   @@map("otc_requests")
+}
+
+model VendorApplication {
+  id          String       @id @default(cuid())
+  userId      String       @unique
+  user        User         @relation(fields: [userId], references: [id])
+  status      VendorStatus @default(PENDING)
+    
+  // Application details
+  businessName    String?
+  businessType    String?   // individual, business, institution
+  country         String
+  monthlyVolume   String?   // estimated volume
+  description     String?   // why they want to be a vendor
+    
+  // Review
+  reviewedBy      String?   // admin userId
+  reviewedAt      DateTime?
+  rejectionReason String?
+  suspensionReason String?
+    
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt @default(now())
+
+  @@index([status])
 }
 
 
@@ -376,6 +408,9 @@ model User {
   deactivationReason            String?
   isAnonymous                   Boolean                      @default(false)
   realEmail                     String?
+
+  isVendor        Boolean @default(false)
+  vendorApplication VendorApplication?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt

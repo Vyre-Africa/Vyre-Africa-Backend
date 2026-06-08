@@ -39,6 +39,34 @@ class OrderController {
         // block the amount for the order
         // create the order using a prisma transaction
 
+        // Anonymous users can trade (counterparty) but not create orders
+      if (user?.isAnonymous) {
+          throw new Error('Anonymous users cannot create orders. Please create a Vyre account.');
+      }
+
+      // Must be an approved vendor to create orders
+      if (!user?.isVendor) {
+          const application = await prisma.vendorApplication.findUnique({
+              where:  { userId: user.id },
+              select: { status: true }
+          });
+
+          if (!application) {
+              throw new Error('VENDOR_REQUIRED: You need to apply to become a vendor to create orders.');
+          }
+          if (application.status === 'PENDING') {
+              throw new Error('VENDOR_PENDING: Your vendor application is under review. You will be notified once approved.');
+          }
+          if (application.status === 'REJECTED') {
+              throw new Error('VENDOR_REJECTED: Your vendor application was not approved. Please reapply.');
+          }
+          if (application.status === 'SUSPENDED') {
+              throw new Error('VENDOR_SUSPENDED: Your vendor account has been suspended. Please contact support.');
+          }
+
+          throw new Error('VENDOR_REQUIRED: You are not approved to create orders.');
+      }
+
         const pair = await prisma.pair.findUnique({
           where:{id: pairId},
           include:{
@@ -160,7 +188,7 @@ class OrderController {
     } catch (error) {
       console.log(error);
       return res.status(500).json({
-        msg:'Order creation unsuccessful',
+        msg:`Order creation failed : ${error instanceof Error ? error.message : 'Unknown error'}`,
         success: false
       });
     }

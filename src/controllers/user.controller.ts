@@ -1164,7 +1164,8 @@ class UserController {
                     accountVerified: true,
                     transactionPin: true,
                     bvnSubmitted: true,
-                    bvnVerified: true
+                    bvnVerified: true,
+                    isVendor: true
                 }
             });
 

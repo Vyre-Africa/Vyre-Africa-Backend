@@ -15,6 +15,7 @@ import adminAdvertController from '../controllers/admin/admin.advert.controller'
 import adminNotificationController from '../controllers/admin/admin.notification.controller';
 import adminDashboardController from '../controllers/admin/admin.dashboard.controller';
 import roleValidator from '../validators/role.validator';
+import vendorController from '../controllers/vendor.controller';
 // import rolesController from '../controllers/roles.controller';
 // import adminRoleController from '../controllers/admin/admin.role.controller';
 
@@ -107,6 +108,30 @@ adminRouter.get(
   '/admin/profile',
   adminAuthMiddleware,
   userController.getProfile,
+);
+
+adminRouter.get(
+  '/admin/vendors/pending',             
+  adminAuthMiddleware, 
+  vendorController.getPending
+);
+// adminRouter.get('/admin/vendors',                     adminAuthMiddleware, vendorController.getAll);
+adminRouter.post(
+  '/admin/vendors/:userId/approve',    
+  adminAuthMiddleware, 
+  vendorController.approve
+);
+
+adminRouter.post(
+  '/admin/vendors/:userId/reject',     
+  adminAuthMiddleware, 
+  vendorController.reject
+);
+
+adminRouter.post(
+  '/admin/vendors/:userId/suspend',    
+  adminAuthMiddleware, 
+  vendorController.suspend
 );
 
 // adminRouter.post(
