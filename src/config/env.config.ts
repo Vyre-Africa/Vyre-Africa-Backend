@@ -14,6 +14,8 @@ const config = {
     queueConcurrency: process.env.ORDER_QUEUE_CONCURRENCY || '5',
     queueRetryAttempts: process.env.ORDER_QUEUE_RETRY_ATTEMPTS || '5',
 
+    ABLY_API_KEY: process.env.ABLY_API_KEY || '',
+
 
 
 

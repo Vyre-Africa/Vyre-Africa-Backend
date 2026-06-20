@@ -328,7 +328,7 @@ class OrderController {
 
   async initiateAnonymous(req: Request & Record<string, any>, res: Response) {
     // const { user } = req;
-    const { orderId, currencyId, amount, user, bank, crypto, paymentMethod } = req.body;
+    const { orderId, currencyId, amount, user, bank, crypto, paymentMethod, mobileDetails } = req.body;
 
     try {
 
@@ -386,6 +386,7 @@ class OrderController {
         amount,
         userDetails: user,
         paymentMethod,
+        mobileDetails,
 
         bank:{
           accountNumber: bank.accountNumber,
@@ -395,7 +396,7 @@ class OrderController {
         crypto:{
           address: crypto.address
           // chain: crypto.chain
-        },
+        }
         
       })
 

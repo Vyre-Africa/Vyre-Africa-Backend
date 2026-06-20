@@ -54,7 +54,11 @@ class OrderValidator {
           
       // user crypto wallet details
       body('crypto').isObject().optional(),
-          body('crypto.address').optional()
+          body('crypto.address').optional(),
+
+      body('mobileDetails').isObject().optional(),
+          body('mobileDetails.phoneNumber').optional(),
+          body('mobileDetails.networkProvider').optional(),
 
     ];
   }

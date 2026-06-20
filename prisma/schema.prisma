@@ -180,13 +180,14 @@ enum TransactionType {
 }
 
 enum AwaitingStatus {
-  PENDING
-  CONFIRMED
-  PROCESSING
-  SUCCESS
-  REFUNDED
-  FAILED
-  EXPIRED
+    PENDING
+    CONFIRMED
+    PROCESSING
+    CONFIRMING
+    SUCCESS
+    REFUNDED
+    FAILED
+    EXPIRED
 }
 
 enum PostDetailStatus {
@@ -853,6 +854,12 @@ model Order {
   status              OrderStatus @default(OPEN)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
+
+  isSynthetic         Boolean     @default(false)
+  liquiditySource     String? // 'QUIDAX' — data value only, provider-agnostic naming elsewhere
+  liquidityKey        String?     @unique // prevents duplicate synthetic orders on upsert
+  metadata            Json?
+
   Awaiting            Awaiting[]
   OrderLog            OrderLog[]
 
@@ -934,9 +941,10 @@ model Awaiting {
   orderId        String?
   amount         Decimal @db.Decimal(20, 8)
 
-  orderType  OrderType
-  status     AwaitingStatus @default(PENDING)
-  currencyId String?
+  orderType      OrderType
+  status         AwaitingStatus @default(PENDING)
+  currencyId     String?
+  isSynthetic    Boolean @default(false)
 
   method String?
 

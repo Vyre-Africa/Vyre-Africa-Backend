@@ -9,13 +9,14 @@ import * as crypto from 'crypto';
 import {createHmac} from 'node:crypto';
 import { generateRefCode, generateSignature, isValidSignature } from '../utils';
 import fernService from '../services/fern.service';
-import eventService from '../services/event.service';
 import { verifyWebhook } from '@clerk/express/webhooks'
 import clerkService from '../services/clerk.service';
 import logger from '../config/logger';
 import chaingatewayService from '../services/chaingateway.service';
 import moralisService from '../services/moralis.service';
 import { Web3 } from 'web3';
+import liquidityRampService from '../services/liquidityRamp.service';
+import eventService from '../services/event.service';
 
 
 
@@ -723,6 +724,40 @@ class EventController {
           }
       }
   }
+
+  async ramp_WebHook(req: Request, res: Response) {
+      try {
+          // ── Verify signature first ──────────────────────────
+          const signature = req.headers['x-signature'] as string
+          const rawBody    = JSON.stringify(req.body)
+
+          const isValid = liquidityRampService.verifyWebhookSignature(rawBody, signature)
+
+          if (!isValid) {
+              logger.warn('Ramp webhook — invalid signature')
+              return res.status(401).json({ error: 'Invalid signature' })
+          }
+
+          // ── Respond immediately — process async ─────────────
+          res.status(200).json({ status: 'received' })
+
+          setImmediate(async () => {
+              try {
+                  await eventService.processRampWebhook(req.body)
+              } catch (err: any) {
+                  logger.error('Ramp webhook processing error:', err.message)
+              }
+          })
+
+      } catch (error: any) {
+          logger.error('Ramp webhook error:', error.message)
+          if (!res.headersSent) {
+              res.status(500).json({ error: 'Internal Server Error' })
+          }
+      }
+  }
+
+
 
  
 }

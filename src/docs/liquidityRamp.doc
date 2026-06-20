@@ -1,0 +1,79 @@
+RATES
+getRate()                    → Live rate from Quidax for any pair
+
+ONRAMP
+initiateRamp()               → Routes to bank or mobile money
+initiateRampBankTransfer()   → NGN — POST /initiate
+initiateRampMobileMoney()    → GHS — POST /initiate + /initiate_mobile_money
+confirmRamp()                → NGN only — POST /confirm → bank details
+verifyMobileMoneyOtp()       → GHS OTP flow — POST /verify_mobile_money_otp
+shapeAsPayments()            → Maps response to existing payments object
+
+OFFRAMP
+initiateOfframp()            → POST /initiate
+confirmOfframp()             → POST /confirm → Quidax deposit address
+addOfframpPayoutAccount()    → POST /bank_account → attach NGN/GHS account
+shapeOfframpAsPayments()     → Maps response to existing crypto object
+
+HELPERS
+getUser()                    → Fetch user from DB
+getNetwork()                 → bep20 for USDT, base for USDC
+getPair()                    → usdtngn, usdcghs etc
+getFiatConfig()              → Channel + currency code per fiat
+verifyWebhookSignature()     → Validate incoming Quidax webhooks
+
+
+
+
+ initOnramp()              initOfframp()
+────────────────────────────────────────────────────────────
+Order type          SELL                      BUY
+Wallet needed?       Yes — from pool           No
+Quidax calls         initiate + confirm        initiate + confirm + bank_account
+Returns to user      Bank account / momo       Crypto deposit address
+triggerAddress       deposit wallet address    null
+Webhook detects via  Tatum/Moralis             Quidax merchant_reference
+
+
+preActions()                          ← entry point, reserves slot, fetches order
+    ↓
+    ├── order.isSynthetic === true
+    │       ↓
+    │   handleSyntheticPreActions()
+    │       ↓
+    │   setUpSyntheticUser()          ← no wallets
+    │       ↓
+    │       ├── type === SELL → initOnramp()   ← gets wallet from pool
+    │       └── type === BUY  → initOfframp()  ← no wallet at all
+    │       ↓
+    │   awaiting.update() + postDetails.create()
+    │
+    └── order.isSynthetic === false
+            ↓
+        handleNormalPreActions()      ← your exact existing code, untouched
+            ↓
+        setUpUser()                   ← creates base + quote wallets
+            ↓
+        awaiting.update() + postDetails.create()
+
+
+EVENT                    HANDLER                      RESULT
+─────────────────────────────────────────────────────────────────
+on_ramp.processing       handleOnrampProcessing()     status → PROCESSING
+on_ramp.completed        handleOnrampCompleted()      status → CONFIRMING
+                                                       (Tatum finishes it)
+off_ramp.processing       handleOfframpProcessing()    status → PROCESSING
+off_ramp.completed       handleOfframpCompleted()     status → COMPLETED
+                                                       (we finish it here)
+on/off_ramp.failed       handleRampFailed()           status → FAILED
+
+The key difference — onramp hands off to Tatum/Moralis for the final credit, while offramp completes itself right here in the webhook since there's no on-chain deposit to wait for on our side (Quidax already converted and paid out).
+
+
+1. ramp.worker.ts              ✅ creates synthetic orders
+2. liquidityRamp.service.ts    ✅ talks to Quidax
+3. setUpSyntheticUser()        ✅ minimal user setup
+4. initOnramp()                ✅ onramp-specific logic
+5. initOfframp()               ✅ offramp-specific logic
+6. preActions() rewired        ✅ routes synthetic vs normal
+7. webhook handler             ✅ processes Quidax events
