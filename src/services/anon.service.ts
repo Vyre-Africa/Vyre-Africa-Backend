@@ -13,6 +13,7 @@ import logger from '../config/logger';
 import orderslotService from './orderslot.service';
 import { verifyPin } from '../utils';
 import walletpoolService from './walletpool.service';
+import liquidityRampService from './liquidityRamp.service';
 
 interface PreAction {
   orderId: string;
@@ -34,6 +35,7 @@ interface PreAction {
     address: string;
   };
   paymentMethod?: string;
+  mobileDetails?: { phoneNumber: string; networkProvider: string };
 }
 
 interface InstantAction {
@@ -89,6 +91,241 @@ class AnonService {
     }
     
     throw lastError;
+  }
+
+  private async setUpSyntheticUser(payload: {
+      firstName:   string
+      lastName:    string
+      phoneNumber: string
+      email:       string
+      orderId:     string
+      accessPin:   string
+  }) {
+      const { firstName, lastName, phoneNumber, email, orderId, accessPin } = payload
+
+      logger.info('Starting synthetic user setup', { email, orderId })
+
+      if (!accessPin || !/^\d{6}$/.test(accessPin)) {
+          throw new Error('INVALID_PIN_FORMAT: PIN must be 6 digits')
+      }
+
+      // ── Fetch order + tempUser in parallel ─────────────────
+      const [order, tempUser] = await this.retryOperation(
+          async () => Promise.all([
+              prisma.order.findUnique({
+                  where:  { id: orderId },
+                  select: {
+                      id:              true,
+                      type:            true,
+                      isSynthetic:     true,
+                      liquiditySource: true,
+                      metadata:        true,
+                      pair: {
+                          select: {
+                              id:              true,
+                              baseId:          true,
+                              quoteId:        true,
+                              baseCurrency:  { select: { id: true, ISO: true, chain: true } },
+                              quoteCurrency: { select: { id: true, ISO: true, chain: true } }
+                          }
+                      }
+                  }
+              }),
+              prisma.tempUser.findFirst({
+                  where:  { email, phoneNumber },
+                  select: { id: true, email: true, phoneNumber: true, accessPin: true, pinExpiresAt: true }
+              })
+          ]),
+          'Fetch order and tempUser', 3, 1500
+      )
+
+      if (!order)      throw new Error('Order not found')
+      if (!order.pair) throw new Error('Order pair not found')
+      if (!tempUser)   throw new Error('No PIN found. Please generate a PIN first.')
+
+      // ── PIN expiry check ────────────────────────────────────
+      if (tempUser.pinExpiresAt && new Date() > tempUser.pinExpiresAt) {
+          await prisma.tempUser.delete({ where: { id: tempUser.id } }).catch(() => {})
+          throw new Error('PIN_EXPIRED: Your PIN has expired. Please request a new one.')
+      }
+
+      // ── PIN verification ────────────────────────────────────
+      const pinValid = await verifyPin(accessPin, tempUser.accessPin)
+      if (!pinValid) throw new Error('INVALID_PIN: Incorrect PIN. Please check your email and try again.')
+
+      logger.info('PIN verified for synthetic user', { email })
+
+      // ── Create anonymous user — NO wallets ──────────────────
+      const user = await prisma.user.create({
+          data: {
+              email:         await this.resolveAnonymousEmail(email),
+              realEmail:     email,
+              firstName,
+              lastName,
+              phoneNumber,
+              accessPin:     tempUser.accessPin,
+              pinExpiresAt:  null,
+              pinAttempts:   0,
+              isDeactivated: false,
+              isAnonymous:   true
+          },
+          select: {
+              id:          true,
+              email:       true,
+              firstName:   true,
+              lastName:    true,
+              phoneNumber: true,
+              realEmail:   true
+          }
+      })
+
+      await prisma.tempUser.delete({ where: { id: tempUser.id } }).catch(
+          (err: any) => logger.warn('Failed to delete temp user', err)
+      )
+
+      logger.info('Synthetic user created', { userId: user.id })
+
+      return { user, order, pair: order.pair }
+  }
+
+  private async initOnramp(payload: {
+      userId:      string
+      order:       any
+      amount:      string
+      awaitingId:  string
+      mobileDetails?: { phoneNumber: string; networkProvider: string }
+  }) {
+      const { userId, order, amount, awaitingId, mobileDetails } = payload
+
+      const reference   = `RAMP_${awaitingId}`
+      const toCurrency  = order.pair?.baseCurrency?.ISO ?? 'USDT'
+      const fromFiat    = order.pair?.quoteCurrency?.ISO ?? 'NGN'
+      const fiatAmount  = order.metadata?.fiatAmount ?? amount
+
+      // ── Get unique deposit wallet from pool ─────────────────
+      // Each onramp gets its own address — no traffic collision
+      const depositWallet = await walletpoolService.getOrCreateWallet({
+          userId,
+          currencyId: order.pair?.baseCurrencyId
+      }) ?? await this.retryOperation(
+          () => walletService.createWallet({
+              userId,
+              currencyId: order.pair?.baseCurrencyId
+          }),
+          'Create onramp deposit wallet', 3, 2000
+      )
+
+      if (!depositWallet?.depositAddress) {
+          throw new Error('Failed to get deposit address for onramp')
+      }
+
+      logger.info('Deposit wallet acquired for onramp', {
+          userId, awaitingId, depositAddress: depositWallet.depositAddress
+      })
+
+      // ── Step 1: Initiate with Quidax ────────────────────────
+      const initiated = await liquidityRampService.initiateRamp({
+          userId,
+          fromAmount:     fiatAmount,
+          fromFiat,
+          toCurrency,
+          reference,
+          depositAddress: depositWallet.depositAddress,
+          mobileDetails
+      })
+
+      // ── Step 2: Confirm (skipped for mobile money) ──────────
+      const fiatConfig  = liquidityRampService.getFiatConfig(fromFiat)
+      const bankDetails = await liquidityRampService.confirmRamp(
+          reference,
+          fiatConfig.channel
+      )
+
+      // ── Shape to match existing payments object ─────────────
+      const payments = liquidityRampService.shapeAsPayments(
+          initiated,
+          bankDetails,
+          reference
+      )
+
+      logger.info('Onramp initialized', {
+          awaitingId,
+          toAmount: initiated.to_amount,
+          channel:  fiatConfig.channel
+      })
+
+      return {
+          payments,
+          triggerAddress: depositWallet.depositAddress,  // Tatum/Moralis watches this
+          walletId:       depositWallet.id
+      }
+  }
+
+  private async initOfframp(payload: {
+      userId:     string
+      order:      any
+      amount:     string
+      awaitingId: string
+      bank: {
+          bank_code:     string
+          accountNumber: string
+          recipient:     string   // bank-resolved name — source of truth
+      }
+      userEmail: string
+  }) {
+      const { userId, order, amount, awaitingId, bank, userEmail } = payload
+
+      const reference     = `OFFRAMP_${awaitingId}`
+      const fromCurrency  = order.pair?.baseCurrency?.ISO ?? 'USDT'
+      const toFiat        = order.pair?.quoteCurrency?.ISO ?? 'NGN'
+      const network       = liquidityRampService.getNetwork(fromCurrency)
+
+      // ── Always use bank-resolved name ───────────────────────
+      // Guarantees match when payout account is added in step 3
+      const nameParts = bank.recipient.trim().split(' ')
+      const firstName = nameParts[0]
+      const lastName  = nameParts.slice(1).join(' ') || nameParts[0]
+
+      // ── Step 1: Initiate ─────────────────────────────────────
+      const initiated = await liquidityRampService.initiateOfframp({
+          fromAmount:   amount,
+          fromCurrency,
+          toFiat,
+          network,
+          reference,
+          customerName: { firstName, lastName, email: userEmail }
+      })
+
+      // ── Step 2: Confirm → get Quidax deposit address ─────────
+      const depositInfo = await liquidityRampService.confirmOfframp(reference)
+
+      // ── Step 3: Attach payout account ─────────────────────────
+      // Quidax validates name matches what was used in step 1
+      await liquidityRampService.addOfframpPayoutAccount({
+          merchantReference: reference,
+          bankCode:          bank.bank_code,
+          accountNumber:     bank.accountNumber,
+          fiatISO:           toFiat
+      })
+
+      // ── Shape to match existing crypto payments object ───────
+      const payments = liquidityRampService.shapeOfframpAsPayments(
+          initiated,
+          depositInfo,
+          reference
+      )
+
+      logger.info('Offramp initialized', {
+          awaitingId,
+          toAmount:       initiated.to_amount,
+          depositAddress: depositInfo.address
+      })
+
+      return {
+          payments,
+          triggerAddress: null,   // Quidax webhook handles this — not Tatum
+          walletId:       null
+      }
   }
 
   // ============================================
@@ -279,343 +516,730 @@ class AnonService {
     }
   }
 
+  private async handleSyntheticPreActions(payload: {
+      order: any, currency: any, userDetails: any, bank: any, mobileDetails: any,
+      amount: string, paymentMethod: string | undefined, reservation: any, expiryDuration: Date,
+      orderId: string, currencyId: string
+  }) {
+      const { order, currency, userDetails, bank, mobileDetails,
+              amount, paymentMethod, reservation, expiryDuration,
+              orderId, currencyId } = payload
+
+      let reservationId = reservation.awaitingId
+
+      try {
+          // ── Minimal user setup — no wallets ─────────────────
+          const syntheticSetup = await this.setUpSyntheticUser({
+              firstName:   userDetails.firstName,
+              lastName:    userDetails.lastName,
+              phoneNumber: userDetails.phoneNumber,
+              email:       userDetails.email,
+              orderId,
+              accessPin:   userDetails.pin
+          })
+
+          if (!syntheticSetup) throw new Error('Failed to set up synthetic user')
+
+          const { user } = syntheticSetup
+
+          let payments:       any            = null
+          let triggerAddress: string | null  = null
+          let walletId:       string | null  = null
+
+          // ── Route to onramp or offramp ───────────────────────
+          if (order.type === 'SELL') {
+              // User pays fiat → gets crypto
+              const onramp = await this.initOnramp({
+                  userId:    user.id,
+                  order,
+                  amount,
+                  awaitingId: reservation.awaitingId,
+                  mobileDetails
+              })
+              payments       = onramp.payments
+              triggerAddress = onramp.triggerAddress
+              walletId       = onramp.walletId
+
+          } else if (order.type === 'BUY') {
+              // User sends crypto → gets fiat
+              if (!bank) throw new Error('Bank details required for offramp')
+
+              const offramp = await this.initOfframp({
+                  userId:    user.id,
+                  order,
+                  amount,
+                  awaitingId: reservation.awaitingId,
+                  bank,
+                  userEmail: user.realEmail ?? userDetails.email
+              })
+              payments       = offramp.payments
+              triggerAddress = offramp.triggerAddress  // null
+              walletId       = offramp.walletId        // null
+          }
+
+          // ── Update awaiting — reuses existing columns ────────
+          const result = await this.retryOperation(
+              async () => prisma.$transaction(
+                  async (tx) => {
+                      const awaiting = await tx.awaiting.update({
+                          where: { id: reservation.awaitingId },
+                          data: {
+                              userId:      user.id,
+                              isSynthetic: true,
+                              currencyId,
+                              method:      paymentMethod,
+                              duration:    expiryDuration,
+                              triggerAddress,
+                              walletId,
+
+                              reference:           payments?.id,
+                              bank_Name:           payments?.bank,
+                              bank_Account_Number: payments?.account_number,
+                              bank_Account_Name:   payments?.account_name,
+                              bank_expires_At:     payments?.expires_at
+                                  ? new Date(payments.expires_at.replace(' ', 'T')).toISOString()
+                                  : null,
+
+                              paymentDetails: payments,
+
+                              ...(order.type === 'SELL' && payments && {
+                                  bank: {
+                                      amount,
+                                      ...payments,
+                                      currency: order.pair.quoteCurrency?.ISO
+                                  }
+                              }),
+
+                              ...(order.type === 'BUY' && payments && {
+                                  crypto: {
+                                      amount,
+                                      address:  payments.address,
+                                      currency: order.pair.baseCurrency?.ISO,
+                                      chain:    payments.network
+                                  }
+                              })
+                          }
+                      })
+
+                      const postDetails = await tx.postDetails.create({
+                          data: {
+                              awaitingId:     awaiting.id,
+                              walletId:       walletId ?? undefined,
+                              userId:         user.id,
+                              orderId,
+                              amount:         reservation.amountReserved as string,
+                              currencyId,
+                              bankCode:       bank?.bank_code     || null,
+                              accountNumber:  bank?.accountNumber  || null,
+                              recipient_Name: bank?.recipient      || null,
+                              chain:          currency?.chain      || null,
+                              address:        payments?.address    || null
+                          }
+                      })
+
+                      return { awaiting, postDetails }
+                  },
+                  { maxWait: 10000, timeout: 30000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }
+              ),
+              'Update synthetic awaiting', 2, 3000
+          )
+
+          await this.scheduleExpiryJob(result.awaiting.id)
+
+          logger.info('Synthetic preActions completed', {
+              awaitingId:      result.awaiting.id,
+              orderType:       order.type,
+              liquiditySource: order.liquiditySource,
+          })
+
+          return result.awaiting
+
+      } catch (error: any) {
+          // Bubble up — outer catch in preActions() handles reservation cleanup
+          throw error
+      }
+  }
+
+  private async handleNormalPreActions(payload: {
+      order: any, currency: any, userDetails: any, bank: any, crypto: any,
+      amount: string, paymentMethod: string | undefined, reservation: any, expiryDuration: Date,
+      orderId: string, currencyId: string
+  }) {
+      const { order, currency, userDetails, bank, crypto, amount,
+              paymentMethod, reservation, expiryDuration,
+              orderId, currencyId } = payload
+
+      // Setup user (includes wallet creation) — existing setUpUser()
+      const userSetup = await this.setUpUser({
+          firstName:   userDetails.firstName,
+          lastName:    userDetails.lastName,
+          phoneNumber: userDetails.phoneNumber,
+          email:       userDetails.email,
+          orderId,
+          accessPin:   userDetails.pin
+      })
+
+      if (!userSetup) throw new Error('Failed to set up user')
+
+      const { user, baseWallet, quoteWallet } = userSetup
+
+      let payments: any = null
+
+      if (order.type === 'SELL') {
+          if (!quoteWallet) throw new Error('Quote wallet not created')
+
+          const paymentEmail = user.realEmail || userDetails.email
+
+          try {
+              payments = await Promise.race([
+                  this.retryOperation(
+                      async () => walletService.getPaymentMethod({
+                          currency:   currency.ISO,
+                          amount:     parseFloat(amount),
+                          email:      paymentEmail,
+                          userId:     user.id,
+                          walletId:   quoteWallet.id,
+                          method:     paymentMethod,
+                          awaitingId: reservation?.awaitingId
+                      }),
+                      'Initialize payment method', 3, 2000
+                  ),
+                  this.timeoutPromise(45000, 'Payment initialization timeout')
+              ])
+
+              if (!payments) throw new Error('Payment initialization returned null')
+
+          } catch (paymentError: any) {
+              try {
+                  await orderslotService.cancelAwaiting(
+                      reservation.awaitingId!,
+                      `Payment initialization failed: ${paymentError.message}`
+                  )
+              } catch (releaseError: any) {
+                  logger.error('Failed to release reservation', {
+                      awaitingId: reservation.awaitingId,
+                      error:      releaseError.message
+                  })
+              }
+
+              let errorMessage = 'Failed to initialize payment. Please try again.'
+              if (paymentError.message.includes('timeout')) errorMessage = 'Payment initialization timed out.'
+              if (paymentError.message.includes('network')) errorMessage = 'Network error. Please try again.'
+              if (paymentError.message.includes('Bank') || paymentError.message.includes('account'))
+                  errorMessage = 'Unable to generate bank account details.'
+
+              throw new Error(errorMessage)
+          }
+      }
+
+      const result = await this.retryOperation(
+          async () => prisma.$transaction(
+              async (tx) => {
+                  const awaiting = await tx.awaiting.update({
+                      where: { id: reservation.awaitingId },
+                      data: {
+                          userId:         user.id,
+                          triggerAddress: order.type === 'BUY'
+                              ? baseWallet.depositAddress
+                              : quoteWallet.depositAddress,
+                          walletId:   order.type === 'BUY' ? baseWallet.id : quoteWallet.id,
+                          currencyId,
+                          method:     paymentMethod,
+                          duration:   expiryDuration,
+                          reference:           payments?.id,
+                          bank_Name:           payments?.bank,
+                          bank_Account_Number: payments?.account_number,
+                          bank_Account_Name:   payments?.account_name,
+                          bank_expires_At:     payments?.expires_at
+                              ? new Date(payments.expires_at.replace(' ', 'T')).toISOString()
+                              : null,
+                          paymentDetails: payments,
+                          ...(order.type === 'BUY' && crypto && {
+                              crypto: {
+                                  amount,
+                                  address:  baseWallet.depositAddress,
+                                  currency: order.pair.baseCurrency?.ISO as string,
+                                  chain:    order.pair.baseCurrency?.chain
+                              }
+                          }),
+                          ...(order.type === 'SELL' && payments && {
+                              bank: {
+                                  amount,
+                                  ...payments,
+                                  currency: order.pair.quoteCurrency?.ISO
+                              }
+                          })
+                      }
+                  })
+
+                  const postDetails = await tx.postDetails.create({
+                      data: {
+                          awaitingId:     awaiting.id,
+                          walletId:       order.type === 'BUY' ? quoteWallet.id : baseWallet.id,
+                          userId:         user.id,
+                          orderId,
+                          amount:         reservation.amountReserved as string,
+                          currencyId,
+                          bankCode:       bank?.bank_code     || null,
+                          accountNumber:  bank?.accountNumber  || null,
+                          recipient_Name: bank?.recipient      || null,
+                          chain:          currency?.chain      || null,
+                          address:        crypto?.address      || null
+                      }
+                  })
+
+                  return { awaiting, postDetails }
+              },
+              { maxWait: 10000, timeout: 30000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }
+          ),
+          'Update awaiting with complete details', 2, 3000
+      )
+
+      await this.scheduleExpiryJob(result.awaiting.id)
+
+      logger.info('PreActions completed successfully', {
+          awaitingId:        result.awaiting.id,
+          orderType:         order.type,
+          hasPaymentDetails: !!payments,
+      })
+
+      return result.awaiting
+  }
+
+  async preActions(payload: PreAction) {
+    const { orderId, currencyId, amount, userDetails, bank, crypto, paymentMethod, mobileDetails } = payload
+
+    const startTime = Date.now()
+    let reservationId: string | undefined
+
+    try {
+        // ── Step 1: Reserve order slot — same for both paths ──
+        const reservation = await orderslotService.reserveOrderSlot(orderId, amount)
+
+        if (!reservation.success) {
+            throw new Error(
+                reservation.reason ||
+                `Insufficient order capacity. Available: ${reservation.availableAmount}, Requested: ${amount}`
+            )
+        }
+
+        reservationId = reservation.awaitingId
+        const expiryDuration = moment().add(30, 'minutes').toDate()
+
+        // ── Step 2: Fetch order + currency — same for both ────
+        const [order, currency] = await this.retryOperation(
+            async () => Promise.all([
+                prisma.order.findUnique({
+                    where:  { id: orderId },
+                    select: {
+                        id:              true,
+                        type:            true,
+                        isSynthetic:     true,
+                        liquiditySource: true,
+                        metadata:        true,
+                        pair: {
+                            select: {
+                                id:              true,
+                                baseId:  true,
+                                quoteId: true,
+                                baseCurrency:  { select: { id: true, ISO: true, chain: true } },
+                                quoteCurrency: { select: { id: true, ISO: true, chain: true } }
+                            }
+                        }
+                    }
+                }),
+                prisma.currency.findUnique({
+                    where:  { id: currencyId },
+                    select: { id: true, ISO: true, chain: true }
+                })
+            ]),
+            'Fetch order and currency', 3, 1500
+        )
+
+        if (!order)      throw new Error('Order not found')
+        if (!order.pair) throw new Error('Order pair not found')
+        if (!currency)   throw new Error('Currency not found')
+
+        // ══════════════════════════════════════════════════
+        // FORK POINT — synthetic vs normal
+        // ══════════════════════════════════════════════════
+
+        if (order.isSynthetic) {
+            return await this.handleSyntheticPreActions({
+                order, currency, userDetails, bank, mobileDetails,
+                amount, paymentMethod, reservation, expiryDuration,
+                orderId, currencyId
+            })
+        }
+
+        return await this.handleNormalPreActions({
+            order, currency, userDetails, bank, crypto, amount,
+            paymentMethod, reservation, expiryDuration,
+            orderId, currencyId
+        })
+
+    } catch (error: any) {
+        if (reservationId) {
+            try {
+                await orderslotService.cancelAwaiting(
+                    reservationId,
+                    `PreActions failed: ${error.message}`
+                )
+            } catch (cleanupError: any) {
+                logger.error('Failed to cleanup reservation', {
+                    awaitingId:   reservationId,
+                    cleanupError: cleanupError.message
+                })
+            }
+        }
+
+        logger.error('PreActions failed', {
+            error:    error.message,
+            stack:    error.stack,
+            duration: `${Date.now() - startTime}ms`
+        })
+        throw error
+    }
+}
+
+
   // ============================================
   // OPTIMIZED PRE-ACTIONS (3x Faster!)
   // ============================================
-  async preActions(payload: PreAction) {
-    const { orderId, currencyId, amount, userDetails, bank, crypto, paymentMethod } = payload;
+  // async preActions(payload: PreAction) {
+  //   const { orderId, currencyId, amount, userDetails, bank, crypto, paymentMethod } = payload;
 
-    const startTime = Date.now();
-    let reservationId: string | undefined;
+  //   const startTime = Date.now();
+  //   let reservationId: string | undefined;
 
-    try {
+  //   try {
 
-      // ============================================
-      // STEP 1: ATOMICALLY RESERVE ORDER SLOT (BEFORE ANYTHING ELSE)
-      // ============================================
-      logger.info('Attempting to reserve order slot', { orderId, amount });
+  //     // ============================================
+  //     // STEP 1: ATOMICALLY RESERVE ORDER SLOT (BEFORE ANYTHING ELSE)
+  //     // ============================================
+  //     logger.info('Attempting to reserve order slot', { orderId, amount });
 
-      const reservation = await orderslotService.reserveOrderSlot(
-        orderId,
-        amount
-      );
+  //     const reservation = await orderslotService.reserveOrderSlot(
+  //       orderId,
+  //       amount
+  //     );
 
-      if (!reservation.success) {
-        logger.warn('Order slot reservation failed', {
-          orderId,
-          requestedAmount: amount,
-          availableAmount: reservation.availableAmount,
-          reason: reservation.reason
-        });
+  //     if (!reservation.success) {
+  //       logger.warn('Order slot reservation failed', {
+  //         orderId,
+  //         requestedAmount: amount,
+  //         availableAmount: reservation.availableAmount,
+  //         reason: reservation.reason
+  //       });
 
-        throw new Error(
-          reservation.reason || 
-          `Insufficient order capacity. Available: ${reservation.availableAmount}, Requested: ${amount}`
-        );
-      }
+  //       throw new Error(
+  //         reservation.reason || 
+  //         `Insufficient order capacity. Available: ${reservation.availableAmount}, Requested: ${amount}`
+  //       );
+  //     }
 
-      // ✅ Track reservation for cleanup
-      reservationId = reservation.awaitingId;
+  //     // ✅ Track reservation for cleanup
+  //     reservationId = reservation.awaitingId;
 
-      logger.info('Order slot reserved successfully', {
-        orderId,
-        awaitingId: reservation.awaitingId,
-        availableAmount: reservation.availableAmount,
-        requestedAmount: amount
-      });
+  //     logger.info('Order slot reserved successfully', {
+  //       orderId,
+  //       awaitingId: reservation.awaitingId,
+  //       availableAmount: reservation.availableAmount,
+  //       requestedAmount: amount
+  //     });
 
-      // Calculate expiry upfront
-      const expiryDuration = moment().add(30, 'minutes').toDate();
+  //     // Calculate expiry upfront
+  //     const expiryDuration = moment().add(30, 'minutes').toDate();
 
-      // Fetch order and currency in parallel
-      const [order, currency] = await this.retryOperation(
-        async () => {
-          return await Promise.all([
-            prisma.order.findUnique({ 
-              where: { id: orderId },
-              select: { 
-                id: true, 
-                type: true, 
-                pair: { 
-                  select: { 
-                    id: true, 
-                    baseCurrency: { select: { id: true, ISO: true, chain: true } }, 
-                    quoteCurrency: { select: { id: true, ISO: true, chain: true } } 
-                  } 
-                } 
-              }
-            }),
-            prisma.currency.findUnique({ 
-              where: { id: currencyId },
-              select: { id: true, ISO: true, chain: true }
-            })
-          ]);
-        },
-        'Fetch order and currency',
-        3,
-        1500
-      );
+  //     // Fetch order and currency in parallel
+  //     const [order, currency] = await this.retryOperation(
+  //       async () => {
+  //         return await Promise.all([
+  //           prisma.order.findUnique({ 
+  //             where: { id: orderId },
+  //             select: { 
+  //               id: true, 
+  //               type: true, 
+  //               pair: { 
+  //                 select: { 
+  //                   id: true, 
+  //                   baseCurrency: { select: { id: true, ISO: true, chain: true } }, 
+  //                   quoteCurrency: { select: { id: true, ISO: true, chain: true } } 
+  //                 } 
+  //               } 
+  //             }
+  //           }),
+  //           prisma.currency.findUnique({ 
+  //             where: { id: currencyId },
+  //             select: { id: true, ISO: true, chain: true }
+  //           })
+  //         ]);
+  //       },
+  //       'Fetch order and currency',
+  //       3,
+  //       1500
+  //     );
 
-      if (!order) throw new Error('Order not found');
-      if (!order.pair) throw new Error('Order pair not found'); // ✅ Added null check
-      if (!currency) throw new Error('Currency not found');
+  //     if (!order) throw new Error('Order not found');
+  //     if (!order.pair) throw new Error('Order pair not found'); // ✅ Added null check
+  //     if (!currency) throw new Error('Currency not found');
 
-      // Setup user (includes parallel wallet creation)
-      const userSetup = await this.setUpUser({
-        firstName: userDetails.firstName,
-        lastName: userDetails.lastName,
-        phoneNumber: userDetails.phoneNumber,
-        email: userDetails.email,
-        orderId,
-        accessPin: userDetails.pin
-      });
+  //     // Setup user (includes parallel wallet creation)
+  //     const userSetup = await this.setUpUser({
+  //       firstName: userDetails.firstName,
+  //       lastName: userDetails.lastName,
+  //       phoneNumber: userDetails.phoneNumber,
+  //       email: userDetails.email,
+  //       orderId,
+  //       accessPin: userDetails.pin
+  //     });
 
-      if (!userSetup) throw new Error('Failed to set up user');
+  //     if (!userSetup) throw new Error('Failed to set up user');
 
-      const { user, baseWallet, quoteWallet } = userSetup;
+  //     const { user, baseWallet, quoteWallet } = userSetup;
 
-      // ============================================
-      // CRITICAL: PAYMENT INITIALIZATION FOR SELL ORDERS
-      // ============================================
+  //     // ============================================
+  //     // CRITICAL: PAYMENT INITIALIZATION FOR SELL ORDERS
+  //     // ============================================
       
-      let payments: any = null;
+  //     let payments: any = null;
 
-      // For SELL orders (user pays fiat), initialize payment FIRST
-      if (order.type === 'SELL') {
-        if (!quoteWallet) throw new Error('Quote wallet not created');
+  //     // For SELL orders (user pays fiat), initialize payment FIRST
+  //     if (order.type === 'SELL') {
+  //       if (!quoteWallet) throw new Error('Quote wallet not created');
 
-        logger.info('Initializing payment for SELL order', { 
-          orderId, 
-          currency: currency.ISO,
-          method: paymentMethod 
-        });
+  //       logger.info('Initializing payment for SELL order', { 
+  //         orderId, 
+  //         currency: currency.ISO,
+  //         method: paymentMethod 
+  //       });
 
-        // Use realEmail if available, fallback to userDetails.email
-        const paymentEmail = user.realEmail || userDetails.email;
+  //       // Use realEmail if available, fallback to userDetails.email
+  //       const paymentEmail = user.realEmail || userDetails.email;
 
-        try {
-          // Wait for payment initialization with timeout
-          payments = await Promise.race([
-            this.retryOperation(
-              async () => {
-                return await walletService.getPaymentMethod({
-                  currency: currency.ISO,
-                  amount: parseFloat(amount),
-                  email: paymentEmail,
-                  userId: user.id,
-                  walletId: quoteWallet.id,
-                  method: paymentMethod,
-                  awaitingId: reservation?.awaitingId
-                });
-              },
-              'Initialize payment method',
-              3, // 3 retries
-              2000 // 2 second delay between retries
-            ),
-            this.timeoutPromise(45000, 'Payment initialization timeout')
-          ]);
+  //       try {
+  //         // Wait for payment initialization with timeout
+  //         payments = await Promise.race([
+  //           this.retryOperation(
+  //             async () => {
+  //               return await walletService.getPaymentMethod({
+  //                 currency: currency.ISO,
+  //                 amount: parseFloat(amount),
+  //                 email: paymentEmail,
+  //                 userId: user.id,
+  //                 walletId: quoteWallet.id,
+  //                 method: paymentMethod,
+  //                 awaitingId: reservation?.awaitingId
+  //               });
+  //             },
+  //             'Initialize payment method',
+  //             3, // 3 retries
+  //             2000 // 2 second delay between retries
+  //           ),
+  //           this.timeoutPromise(45000, 'Payment initialization timeout')
+  //         ]);
 
-          console.log('payment info', payments )
+  //         console.log('payment info', payments )
 
-          if (!payments) {
-            throw new Error('Payment initialization returned null');
-          }
+  //         if (!payments) {
+  //           throw new Error('Payment initialization returned null');
+  //         }
 
-          logger.info('Payment initialized successfully', {
-            reference: payments.id,
-            bank: payments.bank,
-            accountNumber: payments.account_number
-          });
+  //         logger.info('Payment initialized successfully', {
+  //           reference: payments.id,
+  //           bank: payments.bank,
+  //           accountNumber: payments.account_number
+  //         });
 
-        } catch (paymentError: any) {
-          logger.error('Payment initialization failed completely', {
-            orderId,
-            currency: currency.ISO,
-            error: paymentError.message,
-            stack: paymentError.stack
-          });
+  //       } catch (paymentError: any) {
+  //         logger.error('Payment initialization failed completely', {
+  //           orderId,
+  //           currency: currency.ISO,
+  //           error: paymentError.message,
+  //           stack: paymentError.stack
+  //         });
 
-          // ❌ Release the reservation
-          try {
-            await orderslotService.cancelAwaiting(
-              reservation.awaitingId!,
-              `Payment initialization failed: ${paymentError.message}`
-            );
-            logger.info('Reservation released after payment failure', {
-              awaitingId: reservation.awaitingId
-            });
+  //         // ❌ Release the reservation
+  //         try {
+  //           await orderslotService.cancelAwaiting(
+  //             reservation.awaitingId!,
+  //             `Payment initialization failed: ${paymentError.message}`
+  //           );
+  //           logger.info('Reservation released after payment failure', {
+  //             awaitingId: reservation.awaitingId
+  //           });
             
-            // ✅ Clear reservationId to prevent double cleanup in catch block
-            reservationId = undefined;
+  //           // ✅ Clear reservationId to prevent double cleanup in catch block
+  //           reservationId = undefined;
             
-          } catch (releaseError: any) {
-            logger.error('Failed to release reservation', {
-              awaitingId: reservation.awaitingId,
-              error: releaseError.message
-            });
-          }
+  //         } catch (releaseError: any) {
+  //           logger.error('Failed to release reservation', {
+  //             awaitingId: reservation.awaitingId,
+  //             error: releaseError.message
+  //           });
+  //         }
 
-          // Determine error message based on error type
-          let errorMessage = 'Failed to initialize payment. Please try again.';
+  //         // Determine error message based on error type
+  //         let errorMessage = 'Failed to initialize payment. Please try again.';
           
-          if (paymentError.message.includes('timeout')) {
-            errorMessage = 'Payment initialization timed out. Please check your network connection and try again.';
-          } else if (paymentError.message.includes('network') || paymentError.code === 'ECONNREFUSED') {
-            errorMessage = 'Network error. Please check your internet connection and try again.';
-          } else if (paymentError.message.includes('Bank') || paymentError.message.includes('account')) {
-            errorMessage = 'Unable to generate bank account details. Please contact support.';
-          }
+  //         if (paymentError.message.includes('timeout')) {
+  //           errorMessage = 'Payment initialization timed out. Please check your network connection and try again.';
+  //         } else if (paymentError.message.includes('network') || paymentError.code === 'ECONNREFUSED') {
+  //           errorMessage = 'Network error. Please check your internet connection and try again.';
+  //         } else if (paymentError.message.includes('Bank') || paymentError.message.includes('account')) {
+  //           errorMessage = 'Unable to generate bank account details. Please contact support.';
+  //         }
 
-          // Throw error to stop the flow
-          throw new Error(errorMessage);
-        }
-      }
+  //         // Throw error to stop the flow
+  //         throw new Error(errorMessage);
+  //       }
+  //     }
 
-      // ============================================
-      // STEP 5: UPDATE AWAITING WITH COMPLETE DETAILS
-      // ============================================
+  //     // ============================================
+  //     // STEP 5: UPDATE AWAITING WITH COMPLETE DETAILS
+  //     // ============================================
 
-      const result = await this.retryOperation(
-        async () => {
-          return await prisma.$transaction(
-            async (tx) => {
-              const awaiting = await tx.awaiting.update({
-                where: { id: reservation.awaitingId },
-                data: {
-                  userId: user.id,
-                  triggerAddress: order.type === 'BUY' 
-                    ? baseWallet.depositAddress 
-                    : quoteWallet.depositAddress,
-                  walletId: order.type === 'BUY' ? baseWallet.id : quoteWallet.id,
-                  currencyId,
-                  method: paymentMethod,
-                  duration: expiryDuration,
-                  reference: payments?.id,
-                  bank_Name: payments?.bank,
-                  bank_Account_Number: payments?.account_number,
-                  bank_Account_Name: payments?.account_name,
-                  bank_expires_At: payments?.expires_at 
-                    ? new Date(payments.expires_at.replace(' ', 'T')).toISOString() 
-                    : null,
-                  paymentDetails: payments,
-                  // ✅ Conditional spread - only add crypto for BUY orders
-                  ...(order.type === 'BUY' && crypto && {
-                    crypto: {
-                      amount,
-                      address: baseWallet.depositAddress,
-                      currency: order?.pair?.baseCurrency?.ISO as string, // ✅ No optional chaining (already checked)
-                      chain: order.pair.baseCurrency?.chain
-                    }
-                  }),
-                  // ✅ Conditional spread - only add bank for SELL orders
-                  ...(order.type === 'SELL' && payments && {
-                    bank: {
-                      amount,
-                      ...payments,
-                      currency: order.pair.quoteCurrency?.ISO // ✅ No optional chaining (already checked)
-                    }
-                  })
-                }
-              });
+  //     const result = await this.retryOperation(
+  //       async () => {
+  //         return await prisma.$transaction(
+  //           async (tx) => {
+  //             const awaiting = await tx.awaiting.update({
+  //               where: { id: reservation.awaitingId },
+  //               data: {
+  //                 userId: user.id,
+  //                 triggerAddress: order.type === 'BUY' 
+  //                   ? baseWallet.depositAddress 
+  //                   : quoteWallet.depositAddress,
+  //                 walletId: order.type === 'BUY' ? baseWallet.id : quoteWallet.id,
+  //                 currencyId,
+  //                 method: paymentMethod,
+  //                 duration: expiryDuration,
+  //                 reference: payments?.id,
+  //                 bank_Name: payments?.bank,
+  //                 bank_Account_Number: payments?.account_number,
+  //                 bank_Account_Name: payments?.account_name,
+  //                 bank_expires_At: payments?.expires_at 
+  //                   ? new Date(payments.expires_at.replace(' ', 'T')).toISOString() 
+  //                   : null,
+  //                 paymentDetails: payments,
+  //                 // ✅ Conditional spread - only add crypto for BUY orders
+  //                 ...(order.type === 'BUY' && crypto && {
+  //                   crypto: {
+  //                     amount,
+  //                     address: baseWallet.depositAddress,
+  //                     currency: order?.pair?.baseCurrency?.ISO as string, // ✅ No optional chaining (already checked)
+  //                     chain: order.pair.baseCurrency?.chain
+  //                   }
+  //                 }),
+  //                 // ✅ Conditional spread - only add bank for SELL orders
+  //                 ...(order.type === 'SELL' && payments && {
+  //                   bank: {
+  //                     amount,
+  //                     ...payments,
+  //                     currency: order.pair.quoteCurrency?.ISO // ✅ No optional chaining (already checked)
+  //                   }
+  //                 })
+  //               }
+  //             });
 
-              const postDetails = await tx.postDetails.create({
-                data: {
-                  awaitingId: awaiting.id,
-                  walletId: order.type === 'BUY' ? quoteWallet.id : baseWallet.id,
-                  userId: user.id,
-                  orderId,
-                  amount: reservation.amountReserved as string,
-                  currencyId,
-                  // ✅ Safe handling for optional bank data
-                  bankCode: bank?.bank_code || null,
-                  accountNumber: bank?.accountNumber || null,
-                  recipient_Name: bank?.recipient || null,
-                  // ✅ Safe handling for optional crypto data
-                  chain: currency?.chain || null,
-                  address: crypto?.address || null
-                }
-              });
+  //             const postDetails = await tx.postDetails.create({
+  //               data: {
+  //                 awaitingId: awaiting.id,
+  //                 walletId: order.type === 'BUY' ? quoteWallet.id : baseWallet.id,
+  //                 userId: user.id,
+  //                 orderId,
+  //                 amount: reservation.amountReserved as string,
+  //                 currencyId,
+  //                 // ✅ Safe handling for optional bank data
+  //                 bankCode: bank?.bank_code || null,
+  //                 accountNumber: bank?.accountNumber || null,
+  //                 recipient_Name: bank?.recipient || null,
+  //                 // ✅ Safe handling for optional crypto data
+  //                 chain: currency?.chain || null,
+  //                 address: crypto?.address || null
+  //               }
+  //             });
 
-              return { awaiting, postDetails };
-            },
-            {
-              maxWait: 10000,
-              timeout: 30000,
-              isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-            }
-          );
-        },
-        'Update awaiting with complete details',
-        2,
-        3000
-      );
+  //             return { awaiting, postDetails };
+  //           },
+  //           {
+  //             maxWait: 10000,
+  //             timeout: 30000,
+  //             isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+  //           }
+  //         );
+  //       },
+  //       'Update awaiting with complete details',
+  //       2,
+  //       3000
+  //     );
 
-      // Schedule expiry job
-      try {
-        await this.retryOperation(
-          async () => {
-            return await this.awaitingQueue.add(
-              'expire-awaiting',
-              { awaitingId: result.awaiting.id },
-              {
-                delay: 30 * 60 * 1000,
-                jobId: `awaiting-expiry-${result.awaiting.id}`
-              }
-            );
-          },
-          'Schedule expiry job',
-          3,
-          2000
-        );
-      } catch (jobError: any) {
-        logger.error('Failed to schedule expiry job', {
-          awaitingId: result.awaiting.id,
-          error: jobError.message
-        });
-        // Don't fail the whole operation if job scheduling fails
-      }
+  //     // Schedule expiry job
+  //     try {
+  //       await this.retryOperation(
+  //         async () => {
+  //           return await this.awaitingQueue.add(
+  //             'expire-awaiting',
+  //             { awaitingId: result.awaiting.id },
+  //             {
+  //               delay: 30 * 60 * 1000,
+  //               jobId: `awaiting-expiry-${result.awaiting.id}`
+  //             }
+  //           );
+  //         },
+  //         'Schedule expiry job',
+  //         3,
+  //         2000
+  //       );
+  //     } catch (jobError: any) {
+  //       logger.error('Failed to schedule expiry job', {
+  //         awaitingId: result.awaiting.id,
+  //         error: jobError.message
+  //       });
+  //       // Don't fail the whole operation if job scheduling fails
+  //     }
 
-      const duration = Date.now() - startTime;
-      logger.info('PreActions completed successfully', { 
-        awaitingId: result.awaiting.id,
-        orderType: order.type,
-        hasPaymentDetails: !!payments,
-        duration: `${duration}ms` 
-      });
+  //     const duration = Date.now() - startTime;
+  //     logger.info('PreActions completed successfully', { 
+  //       awaitingId: result.awaiting.id,
+  //       orderType: order.type,
+  //       hasPaymentDetails: !!payments,
+  //       duration: `${duration}ms` 
+  //     });
 
-      return result.awaiting;
+  //     return result.awaiting;
 
-    } catch (error: any) {
-      const duration = Date.now() - startTime;
+  //   } catch (error: any) {
+  //     const duration = Date.now() - startTime;
 
-      // ❌ Cleanup reservation if something failed (and not already cleaned up)
-      if (reservationId) {
-        logger.warn('Releasing reservation due to error', {
-          awaitingId: reservationId,
-          error: error.message
-        });
+  //     // ❌ Cleanup reservation if something failed (and not already cleaned up)
+  //     if (reservationId) {
+  //       logger.warn('Releasing reservation due to error', {
+  //         awaitingId: reservationId,
+  //         error: error.message
+  //       });
 
-        try {
-          await orderslotService.cancelAwaiting(
-            reservationId,
-            `PreActions failed: ${error.message}`
-          );
-        } catch (cleanupError: any) {
-          logger.error('Failed to cleanup reservation', {
-            awaitingId: reservationId,
-            cleanupError: cleanupError.message
-          });
-        }
-      }
+  //       try {
+  //         await orderslotService.cancelAwaiting(
+  //           reservationId,
+  //           `PreActions failed: ${error.message}`
+  //         );
+  //       } catch (cleanupError: any) {
+  //         logger.error('Failed to cleanup reservation', {
+  //           awaitingId: reservationId,
+  //           cleanupError: cleanupError.message
+  //         });
+  //       }
+  //     }
 
-      logger.error('PreActions failed', { 
-        error: error.message,
-        stack: error.stack,
-        duration: `${duration}ms` 
-      });
-      throw error;
-    }
-  }
+  //     logger.error('PreActions failed', { 
+  //       error: error.message,
+  //       stack: error.stack,
+  //       duration: `${duration}ms` 
+  //     });
+  //     throw error;
+  //   }
+  // }
 
   // ── Resolve email for anonymous user ─────────────────────────
   // If email belongs to real Vyre account — use internal email
@@ -873,6 +1497,22 @@ class AnonService {
       throw error;
     }
   }
+
+  private async scheduleExpiryJob(awaitingId: string) {
+      try {
+          await this.retryOperation(
+              async () => this.awaitingQueue.add(
+                  'expire-awaiting',
+                  { awaitingId },
+                  { delay: 30 * 60 * 1000, jobId: `awaiting-expiry-${awaitingId}` }
+              ),
+              'Schedule expiry job', 3, 2000
+          )
+      } catch (jobError: any) {
+          logger.error('Failed to schedule expiry job', { awaitingId, error: jobError.message })
+      }
+  }
+
 }
 
 

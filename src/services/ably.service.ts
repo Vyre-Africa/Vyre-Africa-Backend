@@ -1,103 +1,60 @@
-import { Request, Response } from 'express';
+// src/services/ably.service.ts
 import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import Ably from 'ably';
+import logger from '../config/logger';
 
+class AblyService {
 
-class AblyService
-{
+    private ably: Ably.Realtime;
+    private userChannel: any;
+    private orderChannel: any;
+    private storeChannel: any;
+    private GeneralChannel: any;
 
-    private ably:any;
-    private userChannel:any;
-    private orderChannel:any;
-    private storeChannel:any;
-    private GeneralChannel:any;
+    constructor() {
+        this.ably = new Ably.Realtime(config.ABLY_API_KEY);
 
-    // constructor() {
-    //   this.ably = new Ably.Realtime("nECyrQ.Y6Twcg:Ao47kxy-2RK2df35GalolYCLEUwlYuhbASnKwUeFUiE")
-    //   this.ably.connection.once("connected", () => {
-    //     console.log("Connected to Ably!")
-    //   })
+        this.ably.connection.once('connected', () => {
+            logger.info('Connected to Ably!');
+        });
 
-    //   this.userChannel = this.ably.channels.get("USERS")
-    //   this.storeChannel = this.ably.channels.get("STORES")
-    //   this.GeneralChannel = this.ably.channels.get("GENERAL")
+        this.ably.connection.on('failed', (err: any) => {
+            logger.error('Ably connection failed', err);
+        });
 
-    //   return
-    // }
-
-
-    async awaiting_Order_Update(awaitingId:string)
-    {
-      const awaitingOrder = await prisma.awaiting.findUnique({
-        where:{id: awaitingId}
-      })
-
-      this.ably = new Ably.Realtime("nECyrQ.Y6Twcg:Ao47kxy-2RK2df35GalolYCLEUwlYuhbASnKwUeFUiE")
-      this.ably.connection.once("connected", () => {
-        console.log("Connected to Ably!")
-      })
-
-      this.orderChannel = this.ably.channels.get("ORDER")
-
-      await this.orderChannel.publish(awaitingId,awaitingOrder)
-      // return 'done'
-      return this.ably.connection.close();
-
-    }
-    
-
-    async notifyUser(userId:string,title:string,body:string)
-    {
-      this.ably = new Ably.Realtime("nECyrQ.Y6Twcg:Ao47kxy-2RK2df35GalolYCLEUwlYuhbASnKwUeFUiE")
-      this.ably.connection.once("connected", () => {
-        console.log("Connected to Ably!")
-      })
-
-      this.userChannel = this.ably.channels.get("USERS")
-
-      await this.userChannel.publish(userId,{title,body})
-      // return 'done'
-      return this.ably.connection.close();
-
+        // ── Persistent channels — opened once, reused forever ──
+        this.userChannel    = this.ably.channels.get('USERS');
+        this.orderChannel   = this.ably.channels.get('ORDER');
+        this.storeChannel   = this.ably.channels.get('STORES');
+        this.GeneralChannel = this.ably.channels.get('GENERAL');
     }
 
-    // async notifyStore(storeId:string,title:string,body:string)
-    // {
-    //   this.ably = new Ably.Realtime("nECyrQ.Y6Twcg:Ao47kxy-2RK2df35GalolYCLEUwlYuhbASnKwUeFUiE")
-    //   this.ably.connection.once("connected", () => {
-    //     console.log("Connected to Ably!")
-    //   })
-    //   this.storeChannel = this.ably.channels.get("STORES")
+    // ── Push full awaiting/order record to ORDER channel ────
+    async awaiting_Order_Update(awaitingId: string) {
+        const awaitingOrder = await prisma.awaiting.findUnique({
+            where: { id: awaitingId }
+        });
 
-    //   await this.storeChannel.publish(storeId,{title,body})
-
-    //   return this.ably.connection.close();
-    // }
-
-
-    async notifyGeneral(type:string,title:string,body:string)
-    {
-      this.ably = new Ably.Realtime("nECyrQ.Y6Twcg:Ao47kxy-2RK2df35GalolYCLEUwlYuhbASnKwUeFUiE")
-      this.ably.connection.once("connected", () => {
-        console.log("Connected to Ably!")
-      })
-      this.GeneralChannel = this.ably.channels.get("GENERAL")
-
-      // ALL
-      // SHOPPERS
-      // MALLS
-
-      await this.GeneralChannel.publish(type,{title,body})
-      
-      return this.ably.connection.close();
+        await this.orderChannel.publish(awaitingId, awaitingOrder);
+        return awaitingOrder;
     }
 
+    // ── Push notification to a specific user ─────────────────
+    async notifyUser(userId: string, title: string, body: string) {
+        await this.userChannel.publish(userId, { title, body });
+    }
 
-    
+    // ── Push notification to a specific store/vendor ──────────
+    async notifyStore(storeId: string, title: string, body: string) {
+        await this.storeChannel.publish(storeId, { title, body });
+    }
 
-    
-  
+    // ── Broadcast general notification ───────────────────────
+    async notifyGeneral(type: string, title: string, body: string) {
+        // type e.g. ALL, SHOPPERS, MALLS, VENDORS
+        await this.GeneralChannel.publish(type, { title, body });
+    }
 }
 
-export default new AblyService()
+export default new AblyService();

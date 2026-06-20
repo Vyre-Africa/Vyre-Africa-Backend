@@ -2081,6 +2081,166 @@ class eventService {
 
 
 
+  //  _____________________________________________ //
+  // ----------------------------------------------//
+  // ______________________________________________//
+
+  async processRampWebhook(body: any) {
+        const { event, data } = body
+  
+        logger.info('Ramp webhook received', { event, merchantReference: data.merchant_reference })
+  
+        // ── Find the awaiting by merchant reference ────────────
+        const awaiting = await prisma.awaiting.findFirst({
+            where:   { reference: data.merchant_reference },
+            include: { order: true }
+        })
+  
+        if (!awaiting) {
+            logger.warn('Ramp webhook — awaiting not found', {
+                reference: data.merchant_reference
+            })
+            return
+        }
+  
+        if (!awaiting.isSynthetic) {
+            logger.warn('Ramp webhook — awaiting is not synthetic', {
+                awaitingId: awaiting.id
+            })
+            return
+        }
+  
+        // ── Route to correct handler ────────────────────────────
+        switch (event) {
+            case 'on_ramp.processing':
+                await this.handleOnrampProcessing(awaiting)
+                break
+  
+            case 'on_ramp.completed':
+                await this.handleOnrampCompleted(awaiting)
+                break
+  
+            case 'on_ramp.failed':
+                await this.handleRampFailed(awaiting, 'onramp')
+                break
+  
+            case 'off_ramp.processing':
+                await this.handleOfframpProcessing(awaiting)
+                break
+  
+            case 'off_ramp.completed':
+                await this.handleOfframpCompleted(awaiting, data)
+                break
+  
+            case 'off_ramp.failed':
+                await this.handleRampFailed(awaiting, 'offramp')
+                break
+  
+            default:
+                logger.warn('Ramp webhook — unhandled event', { event })
+        }
+  }
+
+  // ── ONRAMP: Quidax received the fiat, processing now ───────
+  private async handleOnrampProcessing(awaiting: any) {
+      await prisma.awaiting.update({
+          where: { id: awaiting.id },
+          data:  { status: 'PROCESSING' }
+      })
+
+      await ablyService.awaiting_Order_Update(awaiting.id)
+
+      logger.info('Onramp processing', { awaitingId: awaiting.id })
+  }
+
+  // ── ONRAMP: Quidax has sent crypto to our deposit address ──
+  // Tatum/Moralis will independently detect this same deposit
+  // and run handleCreditTransaction() — we just update status
+  // and notify frontend here, nothing more
+  private async handleOnrampCompleted(awaiting: any) {
+      await prisma.awaiting.update({
+          where: { id: awaiting.id },
+          data:  { status: 'CONFIRMED' }
+      })
+
+      await ablyService.awaiting_Order_Update(awaiting.id)
+
+      logger.info('Onramp completed — awaiting on-chain confirmation', {
+          awaitingId: awaiting.id
+      })
+
+      // Tatum/Moralis picks up from here automatically
+  }
+
+
+
+  // ── OFFRAMP: Quidax received the crypto, processing now ────
+  private async handleOfframpProcessing(awaiting: any) {
+      await prisma.awaiting.update({
+          where: { id: awaiting.id },
+          data:  { status: 'PROCESSING' }
+      })
+
+      await ablyService.awaiting_Order_Update(awaiting.id)
+
+      logger.info('Offramp processing', { awaitingId: awaiting.id })
+  }
+
+  // ── OFFRAMP: Quidax has sent fiat to user's bank/momo ──────
+  // This is the FINAL step for offramp — no Tatum involved
+  // We trigger postActions ourselves here
+  // ── OFFRAMP: Quidax has sent fiat to user's bank/momo ──────
+  private async handleOfframpCompleted(awaiting: any, data: any) {
+      await prisma.awaiting.update({
+          where: { id: awaiting.id },
+          data:  { status: 'SUCCESS' }   // ← final state, matches your enum
+      });
+
+      if (awaiting.userId) {
+          await ablyService.notifyUser(
+              awaiting.userId,
+              'Withdrawal Successful',
+              `${awaiting.paymentDetails?.toAmount ?? ''} has been sent to your account.`
+          );
+      }
+
+      await ablyService.awaiting_Order_Update(awaiting.id);
+
+      if (awaiting.order?.isSynthetic) {
+          await prisma.order.update({
+              where: { id: awaiting.order.id },
+              data:  { status: 'OPEN', amount: awaiting.order.amount }
+          });
+      }
+
+      logger.info('Offramp completed — user paid out', { awaitingId: awaiting.id });
+  }
+
+  
+  // ── Shared failure handler ──────────────────────────────────
+  private async handleRampFailed(awaiting: any, type: 'onramp' | 'offramp') {
+    await prisma.awaiting.update({
+        where: { id: awaiting.id },
+        data:  { status: 'FAILED' }   // ← already exists
+    });
+
+    if (awaiting.userId) {
+        await ablyService.notifyUser(
+            awaiting.userId,
+            `${type === 'onramp' ? 'Purchase' : 'Withdrawal'} Failed`,
+            type === 'onramp'
+                ? 'Your purchase could not be processed. If you made payment, please contact support.'
+                : 'Your withdrawal could not be processed. If funds were sent, please contact support immediately.'
+        );
+    }
+
+    await ablyService.awaiting_Order_Update(awaiting.id);
+    logger.error(`${type} failed`, { awaitingId: awaiting.id });
+  }
+
+
+
+
    
 }
 
