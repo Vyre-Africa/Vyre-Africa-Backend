@@ -11,8 +11,6 @@ export const KYC_TIERS = {
 
 export type KycTier = keyof typeof KYC_TIERS;
 
-// Trades above this threshold trigger a compliance review flag
-// regardless of tier — per Vyre AML/CFT Policy Section 5.3
 const MANUAL_REVIEW_THRESHOLD_USD = 50_000;
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -26,6 +24,16 @@ export interface LimitCheckResult {
   usedUsd?: number;
 }
 
+// ─── Safe tier resolver ────────────────────────────────────────────────────────
+// Coerces any incoming value (string "0", number 0, undefined, null) to a valid
+// KycTier key. Defaults to 0 (Anonymous) if the value is unrecognised.
+
+function resolveTier(raw: any): KycTier {
+  const n = Number(raw);
+  if (n === 0 || n === 1 || n === 2 || n === 3) return n as KycTier;
+  return 0;
+}
+
 // ─── Check limit before creating an order ──────────────────────────────────────
 
 export async function checkKycLimit({
@@ -34,10 +42,11 @@ export async function checkKycLimit({
   tradeAmountUsd,
 }: {
   userId: string | null;
-  kycTier: KycTier;
+  kycTier: KycTier | number | string;
   tradeAmountUsd: number;
 }): Promise<LimitCheckResult> {
-  const limits = KYC_TIERS[kycTier];
+  const tier = resolveTier(kycTier);
+  const limits = KYC_TIERS[tier];
 
   // 1. Per-trade cap — Tier 0 only
   if (limits.perTradeUsd !== null && tradeAmountUsd > limits.perTradeUsd) {
@@ -74,7 +83,6 @@ export async function checkKycLimit({
     };
   }
 
-  // Tier 0 within per-trade cap, or Tier 3 (unlimited)
   return {
     allowed: true,
     flagForReview: tradeAmountUsd >= MANUAL_REVIEW_THRESHOLD_USD,
@@ -82,8 +90,6 @@ export async function checkKycLimit({
 }
 
 // ─── Record usage after a trade settles ───────────────────────────────────────
-// Call this when the order status moves to COMPLETED, not when it's created.
-// This ensures only settled volume counts against limits.
 
 export async function recordUsage({
   userId,
@@ -101,7 +107,7 @@ export async function recordUsage({
   });
 }
 
-// ─── Get current month usage for a user ───────────────────────────────────────
+// ─── Get current month usage ───────────────────────────────────────────────────
 
 export async function getMonthlyUsage(userId: string): Promise<number> {
   const { periodStart } = getCurrentPeriod();
@@ -113,15 +119,16 @@ export async function getMonthlyUsage(userId: string): Promise<number> {
   return record?.volumeUsd ?? 0;
 }
 
-// ─── Get full usage summary (for /kyc/usage endpoint) ─────────────────────────
+// ─── Get full usage summary ────────────────────────────────────────────────────
 
-export async function getUsageSummary(userId: string, kycTier: KycTier) {
-  const limits = KYC_TIERS[kycTier];
+export async function getUsageSummary(userId: string, kycTier: KycTier | number | string) {
+  const tier = resolveTier(kycTier);
+  const limits = KYC_TIERS[tier];
   const usedUsd = await getMonthlyUsage(userId);
   const { periodStart, periodEnd } = getCurrentPeriod();
 
   return {
-    kycTier,
+    kycTier: tier,
     tierName: limits.name,
     usedUsd,
     monthlyLimitUsd: limits.monthlyUsd,
@@ -135,8 +142,6 @@ export async function getUsageSummary(userId: string, kycTier: KycTier) {
 }
 
 // ─── Convert local currency amount to USD ─────────────────────────────────────
-// Pass the live rate from your pair data.
-// ratePerUsd = local currency units per 1 USD (e.g. 1600 for NGN/USD)
 
 export function toUsd({
   amount,
