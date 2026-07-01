@@ -31,6 +31,7 @@ import { requireAuthWithCORS } from '../middleware/cors-helper';
 import otcValidator from '../validators/otc.validator';
 import otcController from '../controllers/otc.controller';
 import vendorController from '../controllers/vendor.controller';
+import kycController from '../controllers/kyc.controller';
 
 const router = Router();
 
@@ -743,6 +744,37 @@ router.get(
   requireAuthWithCORS(),
   authMiddleware,
   vendorController.getStatus
+);
+
+
+// KYC
+////////////////////////////////////////////////////
+
+
+router.get(
+  '/kyc/id-types',
+  kycController.getIdTypes
+);
+ 
+router.get(
+  '/kyc/usage',
+  requireAuthWithCORS(),
+  authMiddleware,
+  kycController.getUsage
+);
+ 
+router.post(
+  '/kyc/upgrade/tier1',
+  requireAuthWithCORS(),
+  authMiddleware,
+  kycController.upgradeTier1
+);
+ 
+router.post(
+  '/kyc/upgrade/tier2',
+  requireAuthWithCORS(),
+  authMiddleware,
+  kycController.upgradeTier2
 );
 
 // router.get(

@@ -14,6 +14,7 @@ import orderslotService from './orderslot.service';
 import { verifyPin } from '../utils';
 import walletpoolService from './walletpool.service';
 import liquidityRampService from './liquidityRamp.service';
+import ablyService from './ably.service';
 
 interface PreAction {
   orderId: string;
@@ -1475,6 +1476,9 @@ class AnonService {
       });
 
       logger.info('Awaiting marked as expired', { awaitingId });
+
+      // ✅ Push live update so the frontend swaps to the expired/failed component
+      await ablyService.awaiting_Order_Update(awaitingId);
 
       // Send notification
       if (awaiting.userId) {

@@ -486,6 +486,7 @@ class OrderController {
         select:{
           id: true,
           type: true,
+          isSynthetic: true,
           user:{
             select:{
               id: true,
