@@ -413,6 +413,19 @@ model User {
   isVendor        Boolean @default(false)
   vendorApplication VendorApplication?
 
+  kycTier          Int       @default(0)
+  kycTier1At       DateTime?
+  kycTier2At       DateTime?
+  kycTier3At       DateTime?
+ 
+  dojahBvnRef      String?
+  dojahNinRef      String?
+  dojahIdRef       String?
+  dojahLivenessRef String?
+ 
+  kycUsages        KycUsage[]
+  kycVerifications KycVerification[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
@@ -1387,3 +1400,38 @@ model LedgerReconciliation {
   @@index([status])
   @@index([createdAt])
 }
+
+model KycUsage {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  periodStart DateTime
+  periodEnd   DateTime
+  volumeUsd   Float    @default(0)
+  updatedAt   DateTime @updatedAt
+ 
+  @@unique([userId, periodStart])
+  @@index([userId])
+}
+ 
+model KycVerification {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id])
+  type             String
+  country          String
+  status           String
+  dojahRef         String?
+  dojahData        Json?
+  amlHits          Json?
+  flaggedForReview Boolean   @default(false)
+  reviewNote       String?
+  createdAt        DateTime  @default(now())
+  resolvedAt       DateTime?
+ 
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+}
+
+

@@ -45,7 +45,8 @@ class NotificationService
                     select:{
                         firstName:true,
                         lastName: true,
-                        email:true
+                        email:true,
+                        realEmail: true // ✅ added — actual deliverable address for anonymous users
                     }
                 }),
             
@@ -79,9 +80,14 @@ class NotificationService
                 });
             }
 
+            // ✅ Prefer realEmail (anonymous users) → falls back to email
+            // (regular users, or tempUser which has no realEmail field at all)
+            const deliveryEmail = (userRecord as any)?.realEmail || userRecord?.email;
+
+            console.log('delivering notification email to', deliveryEmail)
 
             await mailService.general(
-                userRecord?.email as string,
+                deliveryEmail as string,
                 user?.firstName as string || 'there',
                 payload.title,
                 payload.content
