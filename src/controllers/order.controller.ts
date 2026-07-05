@@ -19,6 +19,104 @@ import logger from '../config/logger';
 import { checkKycLimit, toUsd } from '../services/kycLimits.service';
 
 
+async function assertAnonKycLimit({
+  email,
+  order,
+  amount,
+}: {
+  email:  string;
+  order:  { type: string; price: any; pair?: { baseCurrency?: { ISO: string } | null; quoteCurrency?: { ISO: string } | null } | null };
+  amount: string;
+}): Promise<void> {
+ 
+  const registeredUser = await prisma.user.findFirst({
+    where: {
+      realEmail:     email,
+      isAnonymous:   false,
+      isDeactivated: false,
+    },
+    select: { id: true, kycTier: true },
+  });
+ 
+  const kycTier = (() => {
+    const t = Number(registeredUser?.kycTier ?? 0);
+    return (t === 1 || t === 2 || t === 3 ? t : 0) as 0 | 1 | 2 | 3;
+  })();
+ 
+  const kycUserId = registeredUser?.id ?? null;
+ 
+  const currencyIso = order.type === 'SELL'
+    ? (order.pair?.quoteCurrency?.ISO ?? 'NGN')
+    : (order.pair?.baseCurrency?.ISO  ?? 'USDC');
+ 
+  const tradeAmountUsd = toUsd({
+    amount:     parseFloat(amount),
+    currencyIso,
+    ratePerUsd: Number(order.price ?? 1),
+  });
+ 
+  const limitCheck = await checkKycLimit({
+    userId:         kycUserId,
+    kycTier,
+    tradeAmountUsd,
+  });
+ 
+  if (!limitCheck.allowed) {
+    throw Object.assign(new Error(limitCheck.reason ?? 'Trading limit exceeded'), {
+      code: 'KYC_LIMIT_EXCEEDED',
+      data: {
+        code:            'KYC_LIMIT_EXCEEDED',
+        kycTier,
+        remainingUsd:    limitCheck.remainingUsd ?? null,
+        limitUsd:        limitCheck.limitUsd     ?? null,
+        usedUsd:         limitCheck.usedUsd      ?? null,
+        upgradeRequired: kycTier < 3,
+      }
+    });
+  }
+}
+ 
+async function assertRegisteredKycLimit({
+  user,
+  order,
+  amount,
+}: {
+  user:   any;
+  order:  any;
+  amount: string;
+}): Promise<void> {
+ 
+  const currencyIso = order.type === 'SELL'
+    ? (order.pair?.quoteCurrency?.ISO ?? 'NGN')
+    : (order.pair?.baseCurrency?.ISO  ?? 'USDC');
+ 
+  const tradeAmountUsd = toUsd({
+    amount:     parseFloat(amount),
+    currencyIso,
+    ratePerUsd: Number(order.price ?? 1),
+  });
+ 
+  const limitCheck = await checkKycLimit({
+    userId:         user.id,
+    kycTier:        user.kycTier ?? 0,
+    tradeAmountUsd,
+  });
+ 
+  if (!limitCheck.allowed) {
+    throw Object.assign(new Error(limitCheck.reason ?? 'Trading limit exceeded'), {
+      code: 'KYC_LIMIT_EXCEEDED',
+      data: {
+        code:            'KYC_LIMIT_EXCEEDED',
+        kycTier:         user.kycTier ?? 0,
+        remainingUsd:    limitCheck.remainingUsd ?? null,
+        limitUsd:        limitCheck.limitUsd     ?? null,
+        usedUsd:         limitCheck.usedUsd      ?? null,
+        upgradeRequired: (user.kycTier ?? 0) < 3,
+      }
+    });
+  }
+}
+
 
 class OrderController {
 
@@ -244,7 +342,7 @@ class OrderController {
       }
   
       // ── STEP 4: KYC limit check ──────────────────────────────────────────────
-      await this.assertRegisteredKycLimit({ user, order, amount });
+      await assertRegisteredKycLimit({ user, order, amount });
   
       // ── STEP 5: Fetch user wallets ───────────────────────────────────────────
       const [userBaseWallet, userQuoteWallet] = await Promise.all([
@@ -295,7 +393,7 @@ class OrderController {
   }
 
   async initiateAnonymous(req: Request & Record<string, any>, res: Response) {
-    
+
     const { orderId, currencyId, amount, user, bank, crypto, paymentMethod, mobileDetails } = req.body;
   
     try {
@@ -340,7 +438,8 @@ class OrderController {
       // ── KYC limit check ───────────────────────────────────────────────────────
       // Reuses the order already fetched above — no extra DB query.
       // Looks up the email's registered KYC tier silently; defaults to Tier 0.
-      await this.assertAnonKycLimit({ email: user.email, order, amount });
+      
+      // await assertAnonKycLimit({ email: user.email, order, amount });
   
       // ── Proceed to preActions ─────────────────────────────────────────────────
       const transferDetails = await anonService.preActions({
@@ -910,108 +1009,108 @@ class OrderController {
     }
   }
 
-  async assertRegisteredKycLimit({
-    user,
-    order,
-    amount,
-  }: {
-    user:   any;
-    order:  any;   // already fetched with pair.baseCurrency + pair.quoteCurrency
-    amount: string;
-  }): Promise<void> {
-    // Registered users: kycTier comes directly from req.user (set by JWT middleware)
-    // No extra DB lookup needed — order already fetched with pair currencies
+  // async assertRegisteredKycLimit({
+  //   user,
+  //   order,
+  //   amount,
+  // }: {
+  //   user:   any;
+  //   order:  any;   // already fetched with pair.baseCurrency + pair.quoteCurrency
+  //   amount: string;
+  // }): Promise<void> {
+  //   // Registered users: kycTier comes directly from req.user (set by JWT middleware)
+  //   // No extra DB lookup needed — order already fetched with pair currencies
   
-    const currencyIso = order.type === 'SELL'
-      ? (order.pair?.quoteCurrency?.ISO ?? 'NGN')   // user sends fiat
-      : (order.pair?.baseCurrency?.ISO  ?? 'USDC'); // user sends crypto
+  //   const currencyIso = order.type === 'SELL'
+  //     ? (order.pair?.quoteCurrency?.ISO ?? 'NGN')   // user sends fiat
+  //     : (order.pair?.baseCurrency?.ISO  ?? 'USDC'); // user sends crypto
   
-    const tradeAmountUsd = toUsd({
-      amount:     parseFloat(amount),
-      currencyIso,
-      ratePerUsd: Number(order.price ?? 1),
-    });
+  //   const tradeAmountUsd = toUsd({
+  //     amount:     parseFloat(amount),
+  //     currencyIso,
+  //     ratePerUsd: Number(order.price ?? 1),
+  //   });
   
-    const limitCheck = await checkKycLimit({
-      userId:         user.id,
-      kycTier:        user.kycTier ?? 0,
-      tradeAmountUsd,
-    });
+  //   const limitCheck = await checkKycLimit({
+  //     userId:         user.id,
+  //     kycTier:        user.kycTier ?? 0,
+  //     tradeAmountUsd,
+  //   });
   
-    if (!limitCheck.allowed) {
-      throw Object.assign(new Error(limitCheck.reason ?? 'Trading limit exceeded'), {
-        code: 'KYC_LIMIT_EXCEEDED',
-        data: {
-          code:            'KYC_LIMIT_EXCEEDED',
-          kycTier:         user.kycTier ?? 0,
-          remainingUsd:    limitCheck.remainingUsd ?? null,
-          limitUsd:        limitCheck.limitUsd     ?? null,
-          usedUsd:         limitCheck.usedUsd      ?? null,
-          upgradeRequired: (user.kycTier ?? 0) < 3,
-        }
-      });
-    }
-  }
+  //   if (!limitCheck.allowed) {
+  //     throw Object.assign(new Error(limitCheck.reason ?? 'Trading limit exceeded'), {
+  //       code: 'KYC_LIMIT_EXCEEDED',
+  //       data: {
+  //         code:            'KYC_LIMIT_EXCEEDED',
+  //         kycTier:         user.kycTier ?? 0,
+  //         remainingUsd:    limitCheck.remainingUsd ?? null,
+  //         limitUsd:        limitCheck.limitUsd     ?? null,
+  //         usedUsd:         limitCheck.usedUsd      ?? null,
+  //         upgradeRequired: (user.kycTier ?? 0) < 3,
+  //       }
+  //     });
+  //   }
+  // }
 
-  private async assertAnonKycLimit({
-    email,
-    order,
-    amount,
-  }: {
-    email:  string;
-    order:  { type: string; price: any; pair?: { baseCurrency?: { ISO: string } | null; quoteCurrency?: { ISO: string } | null } | null };
-    amount: string;
-  }): Promise<void> {
+  // private async assertAnonKycLimit({
+  //   email,
+  //   order,
+  //   amount,
+  // }: {
+  //   email:  string;
+  //   order:  { type: string; price: any; pair?: { baseCurrency?: { ISO: string } | null; quoteCurrency?: { ISO: string } | null } | null };
+  //   amount: string;
+  // }): Promise<void> {
   
-    // Silent lookup — default Tier 0 if no registered account found
-    const registeredUser = await prisma.user.findFirst({
-      where: {
-        realEmail:     email,
-        isAnonymous:   false,
-        isDeactivated: false,
-      },
-      select: { id: true, kycTier: true },
-    });
+  //   // Silent lookup — default Tier 0 if no registered account found
+  //   const registeredUser = await prisma.user.findFirst({
+  //     where: {
+  //       realEmail:     email,
+  //       isAnonymous:   false,
+  //       isDeactivated: false,
+  //     },
+  //     select: { id: true, kycTier: true },
+  //   });
   
-    const kycTier = (() => {
-      const t = Number(registeredUser?.kycTier ?? 0);
-      return (t === 1 || t === 2 || t === 3 ? t : 0) as 0 | 1 | 2 | 3;
-    })();
+  //   const kycTier = (() => {
+  //     const t = Number(registeredUser?.kycTier ?? 0);
+  //     return (t === 1 || t === 2 || t === 3 ? t : 0) as 0 | 1 | 2 | 3;
+  //   })();
   
-    const kycUserId = registeredUser?.id ?? null;
+  //   const kycUserId = registeredUser?.id ?? null;
   
-    // SELL: user sends fiat (quoteCurrency) → convert to USD
-    // BUY:  user sends crypto (baseCurrency) → already USD
-    const currencyIso = order.type === 'SELL'
-      ? (order.pair?.quoteCurrency?.ISO ?? 'NGN')
-      : (order.pair?.baseCurrency?.ISO  ?? 'USDC');
+  //   // SELL: user sends fiat (quoteCurrency) → convert to USD
+  //   // BUY:  user sends crypto (baseCurrency) → already USD
+  //   const currencyIso = order.type === 'SELL'
+  //     ? (order.pair?.quoteCurrency?.ISO ?? 'NGN')
+  //     : (order.pair?.baseCurrency?.ISO  ?? 'USDC');
   
-    const tradeAmountUsd = toUsd({
-      amount:     parseFloat(amount),
-      currencyIso,
-      ratePerUsd: Number(order.price ?? 1),
-    });
+  //   const tradeAmountUsd = toUsd({
+  //     amount:     parseFloat(amount),
+  //     currencyIso,
+  //     ratePerUsd: Number(order.price ?? 1),
+  //   });
   
-    const limitCheck = await checkKycLimit({
-      userId:         kycUserId,
-      kycTier,
-      tradeAmountUsd,
-    });
+  //   const limitCheck = await checkKycLimit({
+  //     userId:         kycUserId,
+  //     kycTier,
+  //     tradeAmountUsd,
+  //   });
   
-    if (!limitCheck.allowed) {
-      throw Object.assign(new Error(limitCheck.reason ?? 'Trading limit exceeded'), {
-        code: 'KYC_LIMIT_EXCEEDED',
-        data: {
-          code:            'KYC_LIMIT_EXCEEDED',
-          kycTier,
-          remainingUsd:    limitCheck.remainingUsd ?? null,
-          limitUsd:        limitCheck.limitUsd     ?? null,
-          usedUsd:         limitCheck.usedUsd      ?? null,
-          upgradeRequired: kycTier < 3,
-        }
-      });
-    }
-  }
+  //   if (!limitCheck.allowed) {
+  //     throw Object.assign(new Error(limitCheck.reason ?? 'Trading limit exceeded'), {
+  //       code: 'KYC_LIMIT_EXCEEDED',
+  //       data: {
+  //         code:            'KYC_LIMIT_EXCEEDED',
+  //         kycTier,
+  //         remainingUsd:    limitCheck.remainingUsd ?? null,
+  //         limitUsd:        limitCheck.limitUsd     ?? null,
+  //         usedUsd:         limitCheck.usedUsd      ?? null,
+  //         upgradeRequired: kycTier < 3,
+  //       }
+  //     });
+  //   }
+  // }
  
 
   // async updateOrder(req: Request & Record<string, any>, res: Response) {
