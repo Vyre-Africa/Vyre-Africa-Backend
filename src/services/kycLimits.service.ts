@@ -182,3 +182,31 @@ function getCurrentPeriod(): { periodStart: Date; periodEnd: Date } {
   const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
   return { periodStart, periodEnd };
 }
+
+// ─── Fire-and-forget KYC usage recorder ──────────────────────────────────────
+// Non-blocking — safe to call inside any completion handler without await.
+// Converts local currency to USD and records against the user's monthly usage.
+// Never throws — logs errors silently so trade completion is never affected.
+ 
+export function trackKycUsage({
+  userId,
+  amount,
+  currencyIso,
+  ratePerUsd,
+  context,
+}: {
+  userId: string;
+  amount: number;
+  currencyIso: string;
+  ratePerUsd: number;
+  context?: string;
+}): void {
+  const tradeAmountUsd = toUsd({ amount, currencyIso, ratePerUsd });
+ 
+  recordUsage({ userId, amountUsd: tradeAmountUsd }).catch((err) =>
+    console.error(
+      `[trackKycUsage] failed to record usage${context ? ` — ${context}` : ''}`,
+      { userId, tradeAmountUsd, error: err?.message }
+    )
+  );
+}

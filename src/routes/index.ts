@@ -77,6 +77,11 @@ router.post(
 );
 
 router.post(
+  '/webhook/ramp', 
+  eventController.ramp_WebHook
+);
+
+router.post(
   '/user/upload_kyc',
    requireAuthWithCORS(),
   authMiddleware,
@@ -754,6 +759,12 @@ router.get(
 router.get(
   '/kyc/id-types',
   kycController.getIdTypes
+);
+
+// Public — no auth. Returns tier + usage only, no PII.
+router.get(
+  '/kyc/lookup',
+  kycController.lookupByEmail
 );
  
 router.get(

@@ -725,22 +725,21 @@ class EventController {
       }
   }
 
-  async ramp_WebHook(req: Request, res: Response) {
+  async ramp_WebHook(req: Request & Record<string, any>, res: Response) {
       try {
-          // ── Verify signature first ──────────────────────────
-          const signature = req.headers['x-signature'] as string
-          const rawBody    = JSON.stringify(req.body)
-
-          const isValid = liquidityRampService.verifyWebhookSignature(rawBody, signature)
-
+          const signature = req.headers['x-ramp-signature'] as string
+          const body      = JSON.stringify(req.body)
+  
+          const isValid = liquidityRampService.verifyWebhookSignature(body, signature)
+  
           if (!isValid) {
               logger.warn('Ramp webhook — invalid signature')
               return res.status(401).json({ error: 'Invalid signature' })
           }
-
-          // ── Respond immediately — process async ─────────────
+  
+          // Respond immediately — Quidax only checks status code
           res.status(200).json({ status: 'received' })
-
+  
           setImmediate(async () => {
               try {
                   await eventService.processRampWebhook(req.body)
@@ -748,7 +747,7 @@ class EventController {
                   logger.error('Ramp webhook processing error:', err.message)
               }
           })
-
+  
       } catch (error: any) {
           logger.error('Ramp webhook error:', error.message)
           if (!res.headersSent) {
@@ -756,6 +755,7 @@ class EventController {
           }
       }
   }
+ 
 
 
 

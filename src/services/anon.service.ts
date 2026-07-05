@@ -15,6 +15,8 @@ import { verifyPin } from '../utils';
 import walletpoolService from './walletpool.service';
 import liquidityRampService from './liquidityRamp.service';
 import ablyService from './ably.service';
+import { checkKycLimit, toUsd } from '../services/kycLimits.service';
+
 
 interface PreAction {
   orderId: string;
@@ -47,9 +49,13 @@ interface InstantAction {
   quoteWallet: Wallet;
 }
 
+const VYRE_ADMIN_ID = process.env.Admin_Id || ''
+
+
 class AnonService {
 
   private awaitingQueue: Queue;  
+
   
   constructor() {
     // Initialize the processing queue
@@ -92,6 +98,27 @@ class AnonService {
     }
     
     throw lastError;
+  }
+
+  private async getAdminWallet(currencyId: string) {
+        // const adminUser = await prisma.user.findUnique({
+        //     where:  { id: VYRE_ADMIN_ID },
+        //     select: { id: true }
+        // })
+    
+        // if (!adminUser) {
+        //     throw new Error(`Admin user not found: ${VYRE_ADMIN_ID}`)
+        // }
+    
+        const adminWallet = await prisma.wallet.findFirst({
+            where: { userId: VYRE_ADMIN_ID, currencyId }
+        })
+    
+        if (!adminWallet?.depositAddress) {
+            throw new Error(`Admin wallet not found or missing deposit address for currency ${currencyId}`)
+        }
+    
+        return { adminUserId: VYRE_ADMIN_ID, adminWallet }
   }
 
   private async setUpSyntheticUser(payload: {
@@ -190,144 +217,132 @@ class AnonService {
   }
 
   private async initOnramp(payload: {
-      userId:      string
-      order:       any
-      amount:      string
-      awaitingId:  string
-      mobileDetails?: { phoneNumber: string; networkProvider: string }
-  }) {
-      const { userId, order, amount, awaitingId, mobileDetails } = payload
+        userId:      string
+        order:       any
+        amount:      string
+        awaitingId:  string
+        userDetails: {
+            email:       string
+            firstName:   string
+            lastName:    string
+            phoneNumber: string
+        }
+    }) {
+        const { userId, order, amount, awaitingId, userDetails } = payload
+    
+        const reference      = `RAMP_${awaitingId}`
+        const toCurrencyISO  = order.pair?.baseCurrency?.ISO  ?? 'USDT'
+        const fromFiatISO    = order.pair?.quoteCurrency?.ISO ?? 'NGN'
+        const baseCurrencyId = order.pair?.baseCurrencyId ?? order.pair?.baseCurrency?.id
+        // const network        = liquidityRampService.getNetwork(toCurrencyISO)
+        const network = liquidityRampService.getNetwork(order.pair?.baseCurrency?.chain)
 
-      const reference   = `RAMP_${awaitingId}`
-      const toCurrency  = order.pair?.baseCurrency?.ISO ?? 'USDT'
-      const fromFiat    = order.pair?.quoteCurrency?.ISO ?? 'NGN'
-      const fiatAmount  = order.metadata?.fiatAmount ?? amount
-
-      // ── Get unique deposit wallet from pool ─────────────────
-      // Each onramp gets its own address — no traffic collision
-      const depositWallet = await walletpoolService.getOrCreateWallet({
-          userId,
-          currencyId: order.pair?.baseCurrencyId
-      }) ?? await this.retryOperation(
-          () => walletService.createWallet({
-              userId,
-              currencyId: order.pair?.baseCurrencyId
-          }),
-          'Create onramp deposit wallet', 3, 2000
-      )
-
-      if (!depositWallet?.depositAddress) {
-          throw new Error('Failed to get deposit address for onramp')
-      }
-
-      logger.info('Deposit wallet acquired for onramp', {
-          userId, awaitingId, depositAddress: depositWallet.depositAddress
-      })
-
-      // ── Step 1: Initiate with Quidax ────────────────────────
-      const initiated = await liquidityRampService.initiateRamp({
-          userId,
-          fromAmount:     fiatAmount,
-          fromFiat,
-          toCurrency,
-          reference,
-          depositAddress: depositWallet.depositAddress,
-          mobileDetails
-      })
-
-      // ── Step 2: Confirm (skipped for mobile money) ──────────
-      const fiatConfig  = liquidityRampService.getFiatConfig(fromFiat)
-      const bankDetails = await liquidityRampService.confirmRamp(
-          reference,
-          fiatConfig.channel
-      )
-
-      // ── Shape to match existing payments object ─────────────
-      const payments = liquidityRampService.shapeAsPayments(
-          initiated,
-          bankDetails,
-          reference
-      )
-
-      logger.info('Onramp initialized', {
-          awaitingId,
-          toAmount: initiated.to_amount,
-          channel:  fiatConfig.channel
-      })
-
-      return {
-          payments,
-          triggerAddress: depositWallet.depositAddress,  // Tatum/Moralis watches this
-          walletId:       depositWallet.id
-      }
+    
+        // Quidax delivers crypto to Vyre's shared admin wallet — NOT a per-user
+        // deposit wallet. We credit the user internally once the webhook confirms
+        // the onramp completed (see handleOnrampCompleted → process_Post_Action_Job)
+        const { adminWallet } = await this.getAdminWallet(baseCurrencyId)
+    
+        logger.info('Admin wallet resolved for onramp', {
+            userId, awaitingId, adminDepositAddress: adminWallet.depositAddress
+        })
+    
+        // Step 1 — Initiate with Quidax
+        const rampInit = await liquidityRampService.initiateRampBankTransfer({
+            merchantReference: reference,
+            fromCurrency:      fromFiatISO.toLowerCase(),
+            toCurrency:        toCurrencyISO.toLowerCase(),
+            fromAmount:        amount,
+            walletAddress:     adminWallet?.depositAddress as string,
+            walletNetwork:     network,
+            customerEmail:     userDetails.email,
+            customerFirstName: userDetails.firstName,
+            customerLastName:  userDetails.lastName,
+        })
+    
+        // Step 2 — Confirm onramp → returns bank account user pays fiat into
+        const rampConfirm = await liquidityRampService.confirmRamp(reference)
+    
+        logger.info('Onramp initialized', {
+            awaitingId, toAmount: rampInit.to_amount, bankName: rampConfirm.bank_name,
+        })
+    
+        return {
+            reference,
+            rampInit,
+            rampConfirm,
+            adminWalletId: adminWallet.id,
+            network,
+        }
   }
 
-  private async initOfframp(payload: {
-      userId:     string
-      order:      any
-      amount:     string
-      awaitingId: string
-      bank: {
-          bank_code:     string
-          accountNumber: string
-          recipient:     string   // bank-resolved name — source of truth
-      }
-      userEmail: string
-  }) {
-      const { userId, order, amount, awaitingId, bank, userEmail } = payload
+    private async initOfframp(payload: {
+        userId:     string
+        order:      any
+        amount:     string
+        awaitingId: string
+        bank: {
+            bank_code:     string
+            accountNumber: string
+            recipient:     string
+        }
+        userEmail: string
+    }) {
+        const { order, amount, awaitingId, bank, userEmail } = payload
+    
+        const reference       = `OFFRAMP_${awaitingId}`
+        const fromCurrencyISO = order.pair?.baseCurrency?.ISO  ?? 'USDT'
+        const toFiatISO       = order.pair?.quoteCurrency?.ISO ?? 'NGN'
+        // const network         = liquidityRampService.getNetwork(fromCurrencyISO)
+        const network = liquidityRampService.getNetwork(order.pair?.baseCurrency?.chain)
 
-      const reference     = `OFFRAMP_${awaitingId}`
-      const fromCurrency  = order.pair?.baseCurrency?.ISO ?? 'USDT'
-      const toFiat        = order.pair?.quoteCurrency?.ISO ?? 'NGN'
-      const network       = liquidityRampService.getNetwork(fromCurrency)
-
-      // ── Always use bank-resolved name ───────────────────────
-      // Guarantees match when payout account is added in step 3
-      const nameParts = bank.recipient.trim().split(' ')
-      const firstName = nameParts[0]
-      const lastName  = nameParts.slice(1).join(' ') || nameParts[0]
-
-      // ── Step 1: Initiate ─────────────────────────────────────
-      const initiated = await liquidityRampService.initiateOfframp({
-          fromAmount:   amount,
-          fromCurrency,
-          toFiat,
-          network,
-          reference,
-          customerName: { firstName, lastName, email: userEmail }
-      })
-
-      // ── Step 2: Confirm → get Quidax deposit address ─────────
-      const depositInfo = await liquidityRampService.confirmOfframp(reference)
-
-      // ── Step 3: Attach payout account ─────────────────────────
-      // Quidax validates name matches what was used in step 1
-      await liquidityRampService.addOfframpPayoutAccount({
-          merchantReference: reference,
-          bankCode:          bank.bank_code,
-          accountNumber:     bank.accountNumber,
-          fiatISO:           toFiat
-      })
-
-      // ── Shape to match existing crypto payments object ───────
-      const payments = liquidityRampService.shapeOfframpAsPayments(
-          initiated,
-          depositInfo,
-          reference
-      )
-
-      logger.info('Offramp initialized', {
-          awaitingId,
-          toAmount:       initiated.to_amount,
-          depositAddress: depositInfo.address
-      })
-
-      return {
-          payments,
-          triggerAddress: null,   // Quidax webhook handles this — not Tatum
-          walletId:       null
-      }
-  }
+    
+        const nameParts = bank.recipient.trim().split(' ')
+        const firstName = nameParts[0]
+        const lastName  = nameParts.slice(1).join(' ') || nameParts[0]
+    
+        // Step 1 — Initiate offramp
+        const offrampInit = await liquidityRampService.initiateOfframp({
+            merchantReference: reference,
+            fromCurrency:      fromCurrencyISO.toLowerCase(),
+            toCurrency:        toFiatISO.toLowerCase(),
+            fromAmount:        amount,
+            network,
+            customerEmail:     userEmail,
+            customerFirstName: firstName,
+            customerLastName:  lastName,
+        })
+    
+        logger.info('Offramp initiated', {
+            awaitingId, quidaxReference: offrampInit.reference, toAmount: offrampInit.to_amount
+        })
+    
+        // Step 2 — Attach payout bank account BEFORE confirming
+        const bankAccount = await liquidityRampService.addOfframpPayoutAccount({
+            merchantReference: reference,
+            bankCode:          bank.bank_code,
+            accountNumber:     bank.accountNumber,
+        })
+    
+        logger.info('Offramp bank account attached', {
+            awaitingId, accountNumber: bankAccount.metadata?.account_number
+        })
+    
+        // Step 3 — Confirm offramp → returns crypto deposit address user sends to
+        const offrampConfirm = await liquidityRampService.confirmOfframp(reference)
+    
+        logger.info('Offramp confirmed', {
+            awaitingId, address: offrampConfirm.address, network: offrampConfirm.network
+        })
+    
+        return {
+            reference,
+            offrampInit,
+            offrampConfirm,
+            bankAccount,
+            triggerAddress: offrampConfirm.address,
+        }
+    }
 
   // ============================================
   // ROBUST USER SETUP (Simplified - Service is Idempotent)
@@ -518,147 +533,183 @@ class AnonService {
   }
 
   private async handleSyntheticPreActions(payload: {
-      order: any, currency: any, userDetails: any, bank: any, mobileDetails: any,
-      amount: string, paymentMethod: string | undefined, reservation: any, expiryDuration: Date,
-      orderId: string, currencyId: string
+    order: any, currency: any, userDetails: any, bank: any, crypto: any, mobileDetails: any,
+    amount: string, paymentMethod: string | undefined, reservation: any, expiryDuration: Date,
+    orderId: string, currencyId: string
   }) {
-      const { order, currency, userDetails, bank, mobileDetails,
-              amount, paymentMethod, reservation, expiryDuration,
-              orderId, currencyId } = payload
-
-      let reservationId = reservation.awaitingId
-
-      try {
-          // ── Minimal user setup — no wallets ─────────────────
-          const syntheticSetup = await this.setUpSyntheticUser({
-              firstName:   userDetails.firstName,
-              lastName:    userDetails.lastName,
-              phoneNumber: userDetails.phoneNumber,
-              email:       userDetails.email,
-              orderId,
-              accessPin:   userDetails.pin
-          })
-
-          if (!syntheticSetup) throw new Error('Failed to set up synthetic user')
-
-          const { user } = syntheticSetup
-
-          let payments:       any            = null
-          let triggerAddress: string | null  = null
-          let walletId:       string | null  = null
-
-          // ── Route to onramp or offramp ───────────────────────
-          if (order.type === 'SELL') {
-              // User pays fiat → gets crypto
-              const onramp = await this.initOnramp({
-                  userId:    user.id,
-                  order,
-                  amount,
-                  awaitingId: reservation.awaitingId,
-                  mobileDetails
-              })
-              payments       = onramp.payments
-              triggerAddress = onramp.triggerAddress
-              walletId       = onramp.walletId
-
-          } else if (order.type === 'BUY') {
-              // User sends crypto → gets fiat
-              if (!bank) throw new Error('Bank details required for offramp')
-
-              const offramp = await this.initOfframp({
-                  userId:    user.id,
-                  order,
-                  amount,
-                  awaitingId: reservation.awaitingId,
-                  bank,
-                  userEmail: user.realEmail ?? userDetails.email
-              })
-              payments       = offramp.payments
-              triggerAddress = offramp.triggerAddress  // null
-              walletId       = offramp.walletId        // null
-          }
-
-          // ── Update awaiting — reuses existing columns ────────
-          const result = await this.retryOperation(
-              async () => prisma.$transaction(
-                  async (tx) => {
-                      const awaiting = await tx.awaiting.update({
-                          where: { id: reservation.awaitingId },
-                          data: {
-                              userId:      user.id,
-                              isSynthetic: true,
-                              currencyId,
-                              method:      paymentMethod,
-                              duration:    expiryDuration,
-                              triggerAddress,
-                              walletId,
-
-                              reference:           payments?.id,
-                              bank_Name:           payments?.bank,
-                              bank_Account_Number: payments?.account_number,
-                              bank_Account_Name:   payments?.account_name,
-                              bank_expires_At:     payments?.expires_at
-                                  ? new Date(payments.expires_at.replace(' ', 'T')).toISOString()
-                                  : null,
-
-                              paymentDetails: payments,
-
-                              ...(order.type === 'SELL' && payments && {
-                                  bank: {
-                                      amount,
-                                      ...payments,
-                                      currency: order.pair.quoteCurrency?.ISO
-                                  }
-                              }),
-
-                              ...(order.type === 'BUY' && payments && {
-                                  crypto: {
-                                      amount,
-                                      address:  payments.address,
-                                      currency: order.pair.baseCurrency?.ISO,
-                                      chain:    payments.network
-                                  }
-                              })
-                          }
-                      })
-
-                      const postDetails = await tx.postDetails.create({
-                          data: {
-                              awaitingId:     awaiting.id,
-                              walletId:       walletId ?? undefined,
-                              userId:         user.id,
-                              orderId,
-                              amount:         reservation.amountReserved as string,
-                              currencyId,
-                              bankCode:       bank?.bank_code     || null,
-                              accountNumber:  bank?.accountNumber  || null,
-                              recipient_Name: bank?.recipient      || null,
-                              chain:          currency?.chain      || null,
-                              address:        payments?.address    || null
-                          }
-                      })
-
-                      return { awaiting, postDetails }
-                  },
-                  { maxWait: 10000, timeout: 30000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }
-              ),
-              'Update synthetic awaiting', 2, 3000
-          )
-
-          await this.scheduleExpiryJob(result.awaiting.id)
-
-          logger.info('Synthetic preActions completed', {
-              awaitingId:      result.awaiting.id,
-              orderType:       order.type,
-              liquiditySource: order.liquiditySource,
-          })
-
-          return result.awaiting
-
-      } catch (error: any) {
-          // Bubble up — outer catch in preActions() handles reservation cleanup
-          throw error
-      }
+        const { order, currency, userDetails, bank, crypto,
+            amount, paymentMethod, reservation, expiryDuration,
+            orderId, currencyId } = payload
+    
+        // ── Minimal user setup — no wallets ─────────────────────────────────────
+        const syntheticSetup = await this.setUpSyntheticUser({
+            firstName:   userDetails.firstName,
+            lastName:    userDetails.lastName,
+            phoneNumber: userDetails.phoneNumber,
+            email:       userDetails.email,
+            orderId,
+            accessPin:   userDetails.pin
+        })
+    
+        if (!syntheticSetup) throw new Error('Failed to set up synthetic user')
+    
+        const { user } = syntheticSetup
+    
+        // ── SELL: user pays fiat → receives crypto (Quidax ONRAMP) ──────────────
+        if (order.type === 'SELL') {
+    
+            const onramp = await this.initOnramp({
+                userId:    user.id,
+                order,
+                amount,
+                awaitingId: reservation.awaitingId,
+                userDetails: {
+                    email:       user.realEmail ?? userDetails.email,
+                    firstName:   userDetails.firstName,
+                    lastName:    userDetails.lastName,
+                    phoneNumber: userDetails.phoneNumber,
+                }
+            })
+    
+            const { rampConfirm, rampInit, adminWalletId } = onramp
+    
+            const result = await this.retryOperation(
+                async () => prisma.$transaction(
+                    async (tx) => {
+                        const awaiting = await tx.awaiting.update({
+                            where: { id: reservation.awaitingId },
+                            data: {
+                                userId:              user.id,
+                                isSynthetic:         true,
+                                currencyId,
+                                method:              paymentMethod,
+                                duration:            expiryDuration,
+                                reference:           onramp.reference,
+                                bank_Name:           rampConfirm.bank_name,
+                                bank_Account_Number: rampConfirm.account_number,
+                                bank_Account_Name:   rampConfirm.account_name,
+                                bank_expires_At:     expiryDuration,
+                                paymentDetails: {
+                                    account_name:     rampConfirm.account_name,
+                                    account_number:   rampConfirm.account_number,
+                                    bank_name:        rampConfirm.bank_name,
+                                    amount:           rampConfirm.amount,
+                                    amount_expected:  rampConfirm.amount_expected,
+                                    processor_fee:    rampConfirm.processor_fee,
+                                    vat:              rampConfirm.vat,
+                                    toAmount:         rampInit.to_amount,
+                                    toCurrency:       order.pair?.baseCurrency?.ISO,
+                                    quidax_reference: rampInit.reference,
+                                }
+                            }
+                        })
+    
+                        // CRITICAL: walletId = ADMIN wallet (crypto lands here from Quidax).
+                        // address = user's own external wallet (crypto.address from request) —
+                        // where Vyre sends the crypto FROM the admin wallet once confirmed.
+                        const postDetails = await tx.postDetails.create({
+                            data: {
+                                awaitingId:     awaiting.id,
+                                walletId:       adminWalletId,
+                                userId:         user.id,
+                                orderId,
+                                amount:         reservation.amountReserved as string,
+                                currencyId,
+                                address:        crypto?.address || null,
+                                chain:          currency?.chain || null,
+                            }
+                        })
+    
+                        return { awaiting, postDetails }
+                    },
+                    { maxWait: 10000, timeout: 30000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }
+                ),
+                'Update synthetic onramp awaiting', 2, 3000
+            )
+    
+            await this.scheduleExpiryJob(result.awaiting.id)
+    
+            logger.info('Synthetic SELL (onramp) preActions completed', {
+                awaitingId: result.awaiting.id
+            })
+    
+            return result.awaiting
+        }
+    
+        // ── BUY: user sends crypto → receives fiat (Quidax OFFRAMP) ─────────────
+        if (order.type === 'BUY') {
+            if (!bank) throw new Error('Bank details required for offramp')
+    
+            const offramp = await this.initOfframp({
+                userId:    user.id,
+                order,
+                amount,
+                awaitingId: reservation.awaitingId,
+                bank,
+                userEmail: user.realEmail ?? userDetails.email
+            })
+    
+            const { offrampConfirm, offrampInit, bankAccount, triggerAddress } = offramp
+    
+            const result = await this.retryOperation(
+                async () => prisma.$transaction(
+                    async (tx) => {
+                        const awaiting = await tx.awaiting.update({
+                            where: { id: reservation.awaitingId },
+                            data: {
+                                userId:              user.id,
+                                isSynthetic:         true,
+                                currencyId,
+                                method:              paymentMethod,
+                                duration:            expiryDuration,
+                                reference:           offramp.reference,
+                                triggerAddress,
+                                bank_Account_Number: bankAccount.metadata?.account_number,
+                                bank_Account_Name:   bankAccount.metadata?.account_name,
+                                crypto: {
+                                    address:  offrampConfirm.address,
+                                    network:  offrampConfirm.network,
+                                    currency: offrampConfirm.currency,
+                                    tag:      offrampConfirm.tag ?? null,
+                                },
+                                paymentDetails: {
+                                    address:             offrampConfirm.address,
+                                    network:             offrampConfirm.network,
+                                    currency:            offrampConfirm.currency,
+                                    tag:                 offrampConfirm.tag ?? null,
+                                    fromAmount:          offrampInit.from_amount,
+                                    fromCurrency:        order.pair?.baseCurrency?.ISO,
+                                    toAmount:            offrampInit.to_amount,
+                                    toCurrency:          order.pair?.quoteCurrency?.ISO,
+                                    bank_account_number: bankAccount.metadata?.account_number,
+                                    bank_code:           bankAccount.metadata?.bank_code,
+                                    bank_account_name:   bankAccount.metadata?.account_name,
+                                    quidax_reference:    offrampInit.reference,
+                                }
+                            }
+                        })
+    
+                        // No postDetails needed for offramp — Quidax sends fiat directly
+                        // to the user's bank once crypto is confirmed received.
+                        // handleOfframpCompleted is the final step, no further action required.
+    
+                        return { awaiting }
+                    },
+                    { maxWait: 10000, timeout: 30000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }
+                ),
+                'Update synthetic offramp awaiting', 2, 3000
+            )
+    
+            await this.scheduleExpiryJob(result.awaiting.id)
+    
+            logger.info('Synthetic BUY (offramp) preActions completed', {
+                awaitingId: result.awaiting.id
+            })
+    
+            return result.awaiting
+        }
+    
+        throw new Error(`Unsupported order type: ${order.type}`)
   }
 
   private async handleNormalPreActions(payload: {
@@ -814,6 +865,7 @@ class AnonService {
     let reservationId: string | undefined
 
     try {
+
         // ── Step 1: Reserve order slot — same for both paths ──
         const reservation = await orderslotService.reserveOrderSlot(orderId, amount)
 
@@ -867,7 +919,7 @@ class AnonService {
 
         if (order.isSynthetic) {
             return await this.handleSyntheticPreActions({
-                order, currency, userDetails, bank, mobileDetails,
+                order, currency, userDetails, bank, crypto, mobileDetails,
                 amount, paymentMethod, reservation, expiryDuration,
                 orderId, currencyId
             })
@@ -901,7 +953,7 @@ class AnonService {
         })
         throw error
     }
-}
+  }
 
 
   // ============================================

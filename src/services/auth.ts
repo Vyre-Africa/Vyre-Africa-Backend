@@ -36,7 +36,8 @@ export const authMiddleware = async (
         bvnSubmitted: true,
         bvnVerified: true,
         isVendor: true, 
-        isAnonymous: true
+        isAnonymous: true,
+        kycTier: true
       }
     });
 
@@ -59,7 +60,8 @@ export const authMiddleware = async (
           bvnSubmitted: true,
           bvnVerified: true,
           isVendor: true, 
-          isAnonymous: true
+          isAnonymous: true,
+          kycTier: true
         }
       });
 
