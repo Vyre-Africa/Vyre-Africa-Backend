@@ -16,6 +16,8 @@ import { generateOrderId, amountSufficient, getPaymentSystems } from '../utils';
 import { getMinimumOrderAmount, getMinimumOrderDescription } from '../config/minimum.config';
 import Decimal from 'decimal.js';
 import logger from '../config/logger';
+import { checkKycLimit, toUsd } from '../services/kycLimits.service';
+
 
 
 class OrderController {
@@ -196,190 +198,151 @@ class OrderController {
 
   async processOrder(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
-    const {amount, orderId } = req.body;
-
+    const { amount, orderId } = req.body;
+  
     try {
-
-      // ============================================
-        // STEP 1: VALIDATE INPUT
-        // ============================================
+  
+      // ── STEP 1: Validate input ───────────────────────────────────────────────
       if (!amount || !orderId) {
+        return res.status(400).json({ msg: 'Amount and order ID are required', success: false });
+      }
+  
+      // ── STEP 2: Fetch order with pair details ────────────────────────────────
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: {
+          pair: {
+            include: {
+              baseCurrency:  { select: { id: true, ISO: true } },
+              quoteCurrency: { select: { id: true, ISO: true } }
+            }
+          }
+        }
+      });
+  
+      if (!order) {
+        return res.status(404).json({ msg: 'Order not found', success: false });
+      }
+  
+      if (order.userId === user.id) {
+        return res.status(400).json({ msg: 'Self trade not allowed', success: false });
+      }
+  
+      if (!order.pair) {
+        return res.status(400).json({ msg: 'Order pair not found', success: false });
+      }
+  
+      // ── STEP 3: Validate minimum amount ─────────────────────────────────────
+      const amountDecimal = new Decimal(amount);
+      const minimumAmountDecimal = new Decimal(order.amountMinimum);
+  
+      if (amountDecimal.lessThan(minimumAmountDecimal)) {
         return res.status(400).json({
-          msg: 'Amount and order ID are required',
+          msg: `Minimum order amount is ${minimumAmountDecimal.toString()} ${order.pair?.baseCurrency?.ISO}`,
           success: false
         });
       }
-
-      // ============================================
-        // STEP 2: FETCH ORDER WITH PAIR DETAILS
-        // ============================================
-        const order = await prisma.order.findUnique({
-          where: { id: orderId },
-          include: {
-            pair: {
-              include: {
-                baseCurrency: { select: { id: true, ISO: true } },
-                quoteCurrency: { select: { id: true, ISO: true } }
-              }
-            }
-          }
-        });
-
-        if (!order) {
-          return res.status(404).json({
-            msg: 'Order not found',
-            success: false
-          });
-        }
-
-        if(order.userId === user.id){
-          return res.status(400).json({
-            msg: 'Self trade not allowed',
-            success: false
-          });
-        }
-
-        if (!order.pair) {
-          return res.status(400).json({
-            msg: 'Order pair not found',
-            success: false
-          });
-        }
-
-        // ============================================
-        // STEP 3: VALIDATE MINIMUM AMOUNT WITH DECIMAL
-        // ============================================
-        const amountDecimal = new Decimal(amount);
-        const minimumAmountDecimal = new Decimal(order.amountMinimum);
-        
-        // ✅ Use Decimal's lessThan method for precise comparison
-        if (amountDecimal.lessThan(minimumAmountDecimal)) {
-          return res.status(400).json({
-            msg: `Minimum order amount is ${minimumAmountDecimal.toString()} ${order.pair?.baseCurrency?.ISO}`,
-            success: false
-          });
-        }
-
-      // ============================================
-        // STEP 4: FETCH USER WALLETS (PARALLEL)
-        // ============================================
-        const [userBaseWallet, userQuoteWallet] = await Promise.all([
-          prisma.wallet.findFirst({
-            where: {
-              currencyId: order.pair?.baseCurrency?.id,
-              userId: user.id
-            }
-          }),
-          prisma.wallet.findFirst({
-            where: {
-              currencyId: order.pair?.quoteCurrency?.id,
-              userId: user.id
-            }
-          })
-        ]);
-
-      if (!userBaseWallet || !userQuoteWallet) {
-          return res.status(400).json({
-            msg: 'Required wallets not found. Please create wallets for this trading pair.',
-            success: false
-          });
-      }
-
   
-
-      // Execute instant order
+      // ── STEP 4: KYC limit check ──────────────────────────────────────────────
+      await this.assertRegisteredKycLimit({ user, order, amount });
+  
+      // ── STEP 5: Fetch user wallets ───────────────────────────────────────────
+      const [userBaseWallet, userQuoteWallet] = await Promise.all([
+        prisma.wallet.findFirst({
+          where: { currencyId: order.pair?.baseCurrency?.id, userId: user.id }
+        }),
+        prisma.wallet.findFirst({
+          where: { currencyId: order.pair?.quoteCurrency?.id, userId: user.id }
+        })
+      ]);
+  
+      if (!userBaseWallet || !userQuoteWallet) {
+        return res.status(400).json({
+          msg: 'Required wallets not found. Please create wallets for this trading pair.',
+          success: false
+        });
+      }
+  
+      // ── STEP 6: Execute instant order ────────────────────────────────────────
       const result = await orderService.instantOrder({
         orderId,
         amount,
-        userId: user.id,
-        baseWallet: userBaseWallet,
+        userId:      user.id,
+        baseWallet:  userBaseWallet,
         quoteWallet: userQuoteWallet
       });
-
-      // ✅ Return based on result.success
+  
       if (result.success) {
-        return res.status(200).json({
-          msg: result.message,
-          success: true,
-          data: result.data
-        });
+        return res.status(200).json({ msg: result.message, success: true, data: result.data });
       } else {
-        return res.status(400).json({
-          msg: result.message,
-          success: false
+        return res.status(400).json({ msg: result.message, success: false });
+      }
+  
+    } catch (error: any) {
+  
+      // Surface KYC limit errors as structured 403
+      if (error.code === 'KYC_LIMIT_EXCEEDED') {
+        return res.status(403).json({
+          success: false,
+          msg:     error.message,
+          data:    error.data,
         });
       }
-
-    } catch (error: any) {
-
-      logger.error('Instant order action failed', {
-        userId: user.id,
-        error: error.message
-      });
-
-      return res.status(500).json({
-        msg: 'An unexpected error occurred',
-        success: false
-      });
-
+  
+      logger.error('Instant order action failed', { userId: user.id, error: error.message });
+      return res.status(500).json({ msg: 'An unexpected error occurred', success: false });
     }
-
   }
 
   async initiateAnonymous(req: Request & Record<string, any>, res: Response) {
-    // const { user } = req;
+    
     const { orderId, currencyId, amount, user, bank, crypto, paymentMethod, mobileDetails } = req.body;
-
+  
     try {
-
+  
+      // ── Fetch order with pair for validation + KYC limit check ──────────────
       const order = await prisma.order.findUnique({
         where: { id: orderId },
-        select:{
-          id: true,
-          type: true
+        select: {
+          id:    true,
+          type:  true,
+          price: true,
+          pair: {
+            select: {
+              baseCurrency:  { select: { ISO: true } },
+              quoteCurrency: { select: { ISO: true } },
+            }
+          }
         }
       });
-
-      if(!order ){
-        return res.status(400)
-            .json({
-              msg: 'order not found',
-              success: false
-        });
+  
+      if (!order) {
+        return res.status(400).json({ msg: 'order not found', success: false });
       }
-
+  
       const currency = await prisma.currency.findUnique({
-        where: { id: currencyId },
-        select:{
-          id:true
-        }
+        where:  { id: currencyId },
+        select: { id: true }
       });
-
-      if(!currency ){
-        return res.status(400)
-            .json({
-              msg: 'currency not found',
-              success: false
-        });
+  
+      if (!currency) {
+        return res.status(400).json({ msg: 'currency not found', success: false });
       }
-
-      if(order?.type === 'BUY' && (!bank.accountNumber || !bank.bankCode || !bank.recipient)){
-          return res.status(400)
-            .json({
-              msg: 'bank details required',
-              success: false
-            });
+  
+      if (order?.type === 'BUY' && (!bank.accountNumber || !bank.bankCode || !bank.recipient)) {
+        return res.status(400).json({ msg: 'bank details required', success: false });
       }
-
-      if(order?.type === 'SELL' && !crypto.address){
-        return res.status(400)
-            .json({
-              msg: 'crypto details required',
-              success: false
-        });
-
+  
+      if (order?.type === 'SELL' && !crypto.address) {
+        return res.status(400).json({ msg: 'crypto details required', success: false });
       }
-
+  
+      // ── KYC limit check ───────────────────────────────────────────────────────
+      // Reuses the order already fetched above — no extra DB query.
+      // Looks up the email's registered KYC tier silently; defaults to Tier 0.
+      await this.assertAnonKycLimit({ email: user.email, order, amount });
+  
+      // ── Proceed to preActions ─────────────────────────────────────────────────
       const transferDetails = await anonService.preActions({
         orderId,
         currencyId,
@@ -387,30 +350,33 @@ class OrderController {
         userDetails: user,
         paymentMethod,
         mobileDetails,
-
-        bank:{
+        bank: {
           accountNumber: bank.accountNumber,
-          bank_code: bank.bankCode,
-          recipient: bank.recipient
+          bank_code:     bank.bankCode,
+          recipient:     bank.recipient
         },
-        crypto:{
+        crypto: {
           address: crypto.address
-          // chain: crypto.chain
         }
-        
-      })
-
-
-      return res
-        .status(200)
-        .json({
-          msg: 'Order initialization Successful',
-          success: true,
-          details: transferDetails
-        });
-
-    } catch (error) {
+      });
+  
+      return res.status(200).json({
+        msg:     'Order initialization Successful',
+        success: true,
+        details: transferDetails
+      });
+  
+    } catch (error: any) {
       console.log(error);
+  
+      if (error.code === 'KYC_LIMIT_EXCEEDED') {
+        return res.status(403).json({
+          success: false,
+          msg:     error.message,
+          data:    error.data,
+        });
+      }
+  
       return res.status(500).send({ msg: 'Initialisation failed', success: false, error });
     }
   }
@@ -943,6 +909,110 @@ class OrderController {
       return res.status(500).send({ msg: 'Internal Server Error', success: false, error });
     }
   }
+
+  async assertRegisteredKycLimit({
+    user,
+    order,
+    amount,
+  }: {
+    user:   any;
+    order:  any;   // already fetched with pair.baseCurrency + pair.quoteCurrency
+    amount: string;
+  }): Promise<void> {
+    // Registered users: kycTier comes directly from req.user (set by JWT middleware)
+    // No extra DB lookup needed — order already fetched with pair currencies
+  
+    const currencyIso = order.type === 'SELL'
+      ? (order.pair?.quoteCurrency?.ISO ?? 'NGN')   // user sends fiat
+      : (order.pair?.baseCurrency?.ISO  ?? 'USDC'); // user sends crypto
+  
+    const tradeAmountUsd = toUsd({
+      amount:     parseFloat(amount),
+      currencyIso,
+      ratePerUsd: Number(order.price ?? 1),
+    });
+  
+    const limitCheck = await checkKycLimit({
+      userId:         user.id,
+      kycTier:        user.kycTier ?? 0,
+      tradeAmountUsd,
+    });
+  
+    if (!limitCheck.allowed) {
+      throw Object.assign(new Error(limitCheck.reason ?? 'Trading limit exceeded'), {
+        code: 'KYC_LIMIT_EXCEEDED',
+        data: {
+          code:            'KYC_LIMIT_EXCEEDED',
+          kycTier:         user.kycTier ?? 0,
+          remainingUsd:    limitCheck.remainingUsd ?? null,
+          limitUsd:        limitCheck.limitUsd     ?? null,
+          usedUsd:         limitCheck.usedUsd      ?? null,
+          upgradeRequired: (user.kycTier ?? 0) < 3,
+        }
+      });
+    }
+  }
+
+  private async assertAnonKycLimit({
+    email,
+    order,
+    amount,
+  }: {
+    email:  string;
+    order:  { type: string; price: any; pair?: { baseCurrency?: { ISO: string } | null; quoteCurrency?: { ISO: string } | null } | null };
+    amount: string;
+  }): Promise<void> {
+  
+    // Silent lookup — default Tier 0 if no registered account found
+    const registeredUser = await prisma.user.findFirst({
+      where: {
+        realEmail:     email,
+        isAnonymous:   false,
+        isDeactivated: false,
+      },
+      select: { id: true, kycTier: true },
+    });
+  
+    const kycTier = (() => {
+      const t = Number(registeredUser?.kycTier ?? 0);
+      return (t === 1 || t === 2 || t === 3 ? t : 0) as 0 | 1 | 2 | 3;
+    })();
+  
+    const kycUserId = registeredUser?.id ?? null;
+  
+    // SELL: user sends fiat (quoteCurrency) → convert to USD
+    // BUY:  user sends crypto (baseCurrency) → already USD
+    const currencyIso = order.type === 'SELL'
+      ? (order.pair?.quoteCurrency?.ISO ?? 'NGN')
+      : (order.pair?.baseCurrency?.ISO  ?? 'USDC');
+  
+    const tradeAmountUsd = toUsd({
+      amount:     parseFloat(amount),
+      currencyIso,
+      ratePerUsd: Number(order.price ?? 1),
+    });
+  
+    const limitCheck = await checkKycLimit({
+      userId:         kycUserId,
+      kycTier,
+      tradeAmountUsd,
+    });
+  
+    if (!limitCheck.allowed) {
+      throw Object.assign(new Error(limitCheck.reason ?? 'Trading limit exceeded'), {
+        code: 'KYC_LIMIT_EXCEEDED',
+        data: {
+          code:            'KYC_LIMIT_EXCEEDED',
+          kycTier,
+          remainingUsd:    limitCheck.remainingUsd ?? null,
+          limitUsd:        limitCheck.limitUsd     ?? null,
+          usedUsd:         limitCheck.usedUsd      ?? null,
+          upgradeRequired: kycTier < 3,
+        }
+      });
+    }
+  }
+ 
 
   // async updateOrder(req: Request & Record<string, any>, res: Response) {
   //   const user = req.user;

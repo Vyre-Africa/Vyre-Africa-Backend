@@ -19,6 +19,8 @@ import sweepService from './sweep.service';
 import gaspumpService from './gaspump.service';
 import virtualAccountService from './virtualAccount.service';
 import { currency } from '../globals';
+import { trackKycUsage } from '../services/kycLimits.service';
+
 
 
   // {
@@ -573,7 +575,7 @@ class eventService {
 
       // ── Step 9: Find pending awaiting order ───────────────────────────
       const awaiting = await prisma.awaiting.findFirst({
-        where:   { triggerAddress: wallet.depositAddress, status: 'PENDING' },
+        where: { triggerAddress: wallet.depositAddress, status: 'PENDING', isSynthetic: false },
         include: { currency: true, wallet: true, order: true }
       })
 
@@ -1621,6 +1623,16 @@ class eventService {
         }
       );
 
+      trackKycUsage({
+        userId:      awaiting.userId as string,
+        amount:      transferAmount.toNumber(),
+        currencyIso: awaiting?.order?.type === 'BUY'
+          ? (awaiting?.order?.pair?.quoteCurrency?.ISO ?? 'NGN')   // fiat — needs conversion
+          : (awaiting?.order?.pair?.baseCurrency?.ISO ?? 'USDC'),  // crypto — already USD
+        ratePerUsd:  Number(awaiting?.order?.price ?? 1),
+        context:     `process_Post_Action_Job | awaitingId=${awaitingId} | type=${awaiting?.order?.type}`,
+      });
+
       logger.info(`Post action completed successfully`, {
         awaitingId,
         awaitingStatus: updated.awaiting.status,
@@ -2086,59 +2098,70 @@ class eventService {
   // ______________________________________________//
 
   async processRampWebhook(body: any) {
-        const { event, data } = body
+      const { event, data } = body
   
-        logger.info('Ramp webhook received', { event, merchantReference: data.merchant_reference })
+      logger.info('Ramp webhook received', { event, merchantReference: data.merchant_reference })
   
-        // ── Find the awaiting by merchant reference ────────────
-        const awaiting = await prisma.awaiting.findFirst({
-            where:   { reference: data.merchant_reference },
-            include: { order: true }
-        })
+      // Find the awaiting by merchant reference
+      // Include pair + currencies so trackKycUsage can convert to USD
+      const awaiting = await prisma.awaiting.findFirst({
+          where:   { reference: data.merchant_reference },
+          include: {
+              order: {
+                  include: {
+                      pair: {
+                          include: {
+                              baseCurrency:  true,
+                              quoteCurrency: true,
+                          }
+                      }
+                  }
+              }
+          }
+      })
   
-        if (!awaiting) {
-            logger.warn('Ramp webhook — awaiting not found', {
-                reference: data.merchant_reference
-            })
-            return
-        }
+      if (!awaiting) {
+          logger.warn('Ramp webhook — awaiting not found', { reference: data.merchant_reference })
+          return
+      }
   
-        if (!awaiting.isSynthetic) {
-            logger.warn('Ramp webhook — awaiting is not synthetic', {
-                awaitingId: awaiting.id
-            })
-            return
-        }
+      if (!awaiting.isSynthetic) {
+          logger.warn('Ramp webhook — awaiting is not synthetic', { awaitingId: awaiting.id })
+          return
+      }
   
-        // ── Route to correct handler ────────────────────────────
-        switch (event) {
-            case 'on_ramp.processing':
-                await this.handleOnrampProcessing(awaiting)
-                break
+      // Route to correct handler based on Quidax event names
+      switch (event) {
   
-            case 'on_ramp.completed':
-                await this.handleOnrampCompleted(awaiting)
-                break
+        // ── SELL order (user pays fiat → receives crypto) = Quidax ONRAMP ────────
+          case 'buy_transaction.processing':
+              await this.handleOnrampProcessing(awaiting)
+              break
   
-            case 'on_ramp.failed':
-                await this.handleRampFailed(awaiting, 'onramp')
-                break
+          case 'buy_transaction.successful':
+              await this.handleOnrampCompleted(awaiting)
+              break
   
-            case 'off_ramp.processing':
-                await this.handleOfframpProcessing(awaiting)
-                break
+          case 'buy_transaction.failed':
+              await this.handleRampFailed(awaiting, 'onramp')
+              break
   
-            case 'off_ramp.completed':
-                await this.handleOfframpCompleted(awaiting, data)
-                break
+        // ── BUY order (user sends crypto → receives fiat) = Quidax OFFRAMP ───────
+          case 'sell_transaction.processing':
+              await this.handleOfframpProcessing(awaiting)
+              break
   
-            case 'off_ramp.failed':
-                await this.handleRampFailed(awaiting, 'offramp')
-                break
+          case 'sell_transaction.successful':
+              await this.handleOfframpCompleted(awaiting, data)
+              break
   
-            default:
-                logger.warn('Ramp webhook — unhandled event', { event })
-        }
+          case 'sell_transaction.failed':
+              await this.handleRampFailed(awaiting, 'offramp')
+              break
+  
+          default:
+              logger.warn('Ramp webhook — unhandled event', { event })
+      }
   }
 
   // ── ONRAMP: Quidax received the fiat, processing now ───────
@@ -2157,21 +2180,41 @@ class eventService {
   // Tatum/Moralis will independently detect this same deposit
   // and run handleCreditTransaction() — we just update status
   // and notify frontend here, nothing more
+  
   private async handleOnrampCompleted(awaiting: any) {
       await prisma.awaiting.update({
           where: { id: awaiting.id },
-          data:  { status: 'CONFIRMED' }
+          data:  { status: 'SUCCESS' }
       })
-
+  
       await ablyService.awaiting_Order_Update(awaiting.id)
-
-      logger.info('Onramp completed — awaiting on-chain confirmation', {
+  
+      logger.info('Onramp completed — crypto delivered to admin wallet', {
           awaitingId: awaiting.id
       })
-
-      // Tatum/Moralis picks up from here automatically
+  
+      // Queue post-action job — process_Post_Action_Job will find postDetails
+      // (walletId = admin wallet, address = user's destination) and execute
+      // the blockchain transfer from admin wallet to the user's wallet address
+      const postDetails = await prisma.postDetails.findFirst({
+          where: { awaitingId: awaiting.id, status: 'PENDING' }
+      })
+  
+      if (postDetails) {
+          await this.orderProcessingQueue.add('process-post-action', {
+              awaitingId: awaiting.id
+          })
+  
+          logger.info('Queued post-action for onramp completion', {
+              awaitingId: awaiting.id
+          })
+      } else {
+          logger.warn('No pending postDetails found for completed onramp', {
+              awaitingId: awaiting.id
+          })
+      }
   }
-
+  
 
 
   // ── OFFRAMP: Quidax received the crypto, processing now ────
@@ -2193,9 +2236,20 @@ class eventService {
   private async handleOfframpCompleted(awaiting: any, data: any) {
       await prisma.awaiting.update({
           where: { id: awaiting.id },
-          data:  { status: 'SUCCESS' }   // ← final state, matches your enum
+          data:  { status: 'SUCCESS' }
       });
-
+  
+      // ── Non-blocking KYC usage recording ──────────────────────────────────────
+      // Offramp = SELL: user committed fiat (quoteCurrency), receives crypto.
+      // awaiting.amount is in quoteCurrency — convert to USD via pair rate.
+      trackKycUsage({
+        userId:      awaiting.userId as string,
+        amount:      Number(awaiting.amount),
+        currencyIso: awaiting.order?.pair?.baseCurrency?.ISO ?? 'USDC',  // ✅ FIXED — crypto, not fiat
+        ratePerUsd:  Number(awaiting.order?.price ?? 1),
+        context:     `handleOfframpCompleted | awaitingId=${awaiting.id}`,
+      });
+  
       if (awaiting.userId) {
           await ablyService.notifyUser(
               awaiting.userId,
@@ -2203,16 +2257,16 @@ class eventService {
               `${awaiting.paymentDetails?.toAmount ?? ''} has been sent to your account.`
           );
       }
-
+  
       await ablyService.awaiting_Order_Update(awaiting.id);
-
+  
       if (awaiting.order?.isSynthetic) {
           await prisma.order.update({
               where: { id: awaiting.order.id },
               data:  { status: 'OPEN', amount: awaiting.order.amount }
           });
       }
-
+  
       logger.info('Offramp completed — user paid out', { awaitingId: awaiting.id });
   }
 

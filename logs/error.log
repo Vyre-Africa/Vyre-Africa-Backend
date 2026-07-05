@@ -109,3 +109,5 @@ Error: Admin wallet not found
     at async bullmq_1.Worker.connection [as processFn] (/Users/user/Vyre-Africa-Backend/build/workers/general.worker.js:34:24)
     at async /Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:496:32
     at async Worker.retryIfFailed (/Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:774:24)
+2026-07-04 02:42:55 [error] Script failed: 
+2026-07-04 02:57:51 [error] Script failed: 

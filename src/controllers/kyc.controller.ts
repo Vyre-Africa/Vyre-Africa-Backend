@@ -7,17 +7,15 @@ import {
   screenEmail,
   COUNTRY_ID_TYPES,
 } from '../services/dojah.service';
-import { getUsageSummary } from '../services/kycLimits.service';
+import { getUsageSummary, getMonthlyUsage } from '../services/kycLimits.service';
 import type { KycCountry, Tier1IdType } from '../services/dojah.service';
 import type { KycTier } from '../services/kycLimits.service';
 
 class KycController {
 
   // GET /kyc/id-types?country=NG
-  // Returns supported ID types for a country — used by frontend to populate dropdown
   async getIdTypes(req: Request, res: Response) {
     const country = (req.query.country as string)?.toUpperCase() as KycCountry;
-
     try {
       if (!country || !COUNTRY_ID_TYPES[country]) {
         return res.status(400).json({
@@ -25,7 +23,6 @@ class KycController {
           msg: `Unsupported country: ${country}. Supported: ${Object.keys(COUNTRY_ID_TYPES).join(', ')}`,
         });
       }
-
       return res.status(200).json({
         success: true,
         msg: 'ID types fetched successfully',
@@ -37,14 +34,65 @@ class KycController {
     }
   }
 
+  // GET /kyc/lookup?email=harvey@vyre.africa
+  // Public — no auth required.
+  // Returns ONLY kycTier + usage figures. No PII ever returned.
+  // Used by the anonymous order flow to silently apply higher limits
+  // when the email belongs to a verified registered account.
+  async lookupByEmail(req: Request, res: Response) {
+    const email = (req.query.email as string)?.toLowerCase().trim();
+    try {
+      if (!email) {
+        return res.status(400).json({ success: false, msg: 'email is required' });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { email },
+        select: { id: true, kycTier: true }, // never select PII
+      });
+
+      // No account — return Tier 0 defaults, not an error
+      if (!user) {
+        return res.status(200).json({
+          success: true,
+          kycTier: 0,
+          monthlyLimitUsd: null,
+          usedUsd: 0,
+          remainingUsd: null,
+        });
+      }
+
+      const tier = Number(user.kycTier ?? 0) as KycTier;
+      const usedUsd = await getMonthlyUsage(user.id);
+
+      const monthlyLimitUsd =
+        tier === 1 ? 10000 :
+        tier === 2 ? 50000 :
+        tier === 3 ? null :
+        null;
+
+      const remainingUsd =
+        monthlyLimitUsd !== null ? Math.max(0, monthlyLimitUsd - usedUsd) : null;
+
+      return res.status(200).json({
+        success: true,
+        kycTier: tier,
+        monthlyLimitUsd,
+        usedUsd,
+        remainingUsd,
+      });
+
+    } catch (error) {
+      console.log(error);
+      return res.status(500).json({ msg: 'Internal Server Error', success: false });
+    }
+  }
+
   // GET /kyc/usage
-  // Returns the current user's monthly usage summary and remaining limits
   async getUsage(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
-
     try {
       const summary = await getUsageSummary(user.id, user.kycTier as KycTier);
-
       return res.status(200).json({
         success: true,
         msg: 'KYC usage fetched successfully',
@@ -57,11 +105,8 @@ class KycController {
   }
 
   // POST /kyc/upgrade/tier1
-  // Body: { country, idType, idNumber, tzParams?, email? }
-  // Verifies identity via Dojah, runs AML screening, upgrades user to Tier 1
   async upgradeTier1(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
-
     try {
       if (user.kycTier >= 1) {
         return res.status(200).json({
@@ -86,10 +131,7 @@ class KycController {
       };
 
       if (!country || !idType) {
-        return res.status(400).json({
-          success: false,
-          msg: 'country and idType are required',
-        });
+        return res.status(400).json({ success: false, msg: 'country and idType are required' });
       }
 
       if (!COUNTRY_ID_TYPES[country]) {
@@ -117,39 +159,26 @@ class KycController {
       }
 
       if (!isTanzania && !idNumber) {
-        return res.status(400).json({
-          success: false,
-          msg: 'idNumber is required',
-        });
+        return res.status(400).json({ success: false, msg: 'idNumber is required' });
       }
 
-      // Log the verification attempt — required for AML/CFT audit trail (Policy Section 9)
       const verificationRecord = await prisma.kycVerification.create({
         data: { userId: user.id, type: idType, country, status: 'PENDING' },
       });
 
-      // 1. Verify identity with Dojah
       const idResult = await verifyTier1({ country, idType, idNumber, tzParams });
 
       if (!idResult.success) {
         await prisma.kycVerification.update({
           where: { id: verificationRecord.id },
-          data: {
-            status: 'FAILED',
-            dojahData: idResult.rawData ?? null,
-            resolvedAt: new Date(),
-          },
+          data: { status: 'FAILED', dojahData: idResult.rawData ?? null, resolvedAt: new Date() },
         });
-
         return res.status(422).json({
           success: false,
           msg: idResult.error ?? 'Identity verification failed. Please check your details and try again.',
         });
       }
 
-      // 2. AML screening — mandatory at Tier 1 upgrade (per AML/CFT Policy Section 7)
-      // Note: Dojah AML returns only { reference_id, status } synchronously.
-      // Actual hit results are delivered asynchronously via webhook.
       const amlResult = await screenAml({
         firstName: idResult.firstName ?? '',
         lastName: idResult.lastName ?? '',
@@ -167,7 +196,6 @@ class KycController {
         },
       });
 
-      // 3. Optional email reputation check
       if (email) {
         const emailResult = await screenEmail(email);
         await prisma.kycVerification.create({
@@ -183,7 +211,6 @@ class KycController {
         });
       }
 
-      // 4. Mark identity verification as approved
       const dojahRefField =
         idType === 'BVN' ? 'dojahBvnRef' :
         idType === 'NIN' || idType === 'VNIN' || idType === 'TZ_NIN' ? 'dojahNinRef' :
@@ -199,14 +226,9 @@ class KycController {
         },
       });
 
-      // 5. Upgrade user to Tier 1
       await prisma.user.update({
         where: { id: user.id },
-        data: {
-          kycTier: 1,
-          kycTier1At: new Date(),
-          [dojahRefField]: String(idNumber ?? ''),
-        },
+        data: { kycTier: 1, kycTier1At: new Date(), [dojahRefField]: String(idNumber ?? '') },
       });
 
       return res.status(200).json({
@@ -222,11 +244,8 @@ class KycController {
   }
 
   // POST /kyc/upgrade/tier2
-  // Body: { selfieImageBase64, idImageBase64 }
-  // Country-agnostic face match — works for all supported countries
   async upgradeTier2(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
-
     try {
       if (user.kycTier < 1) {
         return res.status(403).json({
@@ -269,13 +288,8 @@ class KycController {
       if (!result.success || !result.match) {
         await prisma.kycVerification.update({
           where: { id: verificationRecord.id },
-          data: {
-            status: 'FAILED',
-            dojahData: result.rawData ?? null,
-            resolvedAt: new Date(),
-          },
+          data: { status: 'FAILED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
         });
-
         return res.status(422).json({
           success: false,
           msg: result.error ??
@@ -285,20 +299,12 @@ class KycController {
 
       await prisma.kycVerification.update({
         where: { id: verificationRecord.id },
-        data: {
-          status: 'APPROVED',
-          dojahData: result.rawData ?? null,
-          resolvedAt: new Date(),
-        },
+        data: { status: 'APPROVED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
       });
 
       await prisma.user.update({
         where: { id: user.id },
-        data: {
-          kycTier: 2,
-          kycTier2At: new Date(),
-          dojahLivenessRef: `tier2_${Date.now()}`,
-        },
+        data: { kycTier: 2, kycTier2At: new Date(), dojahLivenessRef: `tier2_${Date.now()}` },
       });
 
       return res.status(200).json({

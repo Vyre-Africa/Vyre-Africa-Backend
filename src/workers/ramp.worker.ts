@@ -3,17 +3,23 @@ import prisma from '../config/prisma.client'
 import liquidityRampService from '../services/liquidityRamp.service'
 import logger from '../config/logger'
 
+// const RAMP_PAIRS = [
+//     { toCurrency: 'USDT', fromFiat: 'NGN' },
+//     { toCurrency: 'USDC', fromFiat: 'NGN' },
+//     { toCurrency: 'USDT', fromFiat: 'GHS' },
+//     { toCurrency: 'USDC', fromFiat: 'GHS' },
+// ]
+
 const RAMP_PAIRS = [
-    { toCurrency: 'USDT', fromFiat: 'NGN' },
-    { toCurrency: 'USDC', fromFiat: 'NGN' },
-    { toCurrency: 'USDT', fromFiat: 'GHS' },
-    { toCurrency: 'USDC', fromFiat: 'GHS' },
+    { toCurrency: 'USDC', fromFiat: 'NGN', chain: 'BASE' },
+    // add more as needed, e.g.:
+    // { toCurrency: 'USDT', fromFiat: 'NGN', chain: 'TRON' },
 ]
 
 const NGN_AMOUNTS = ['5000', '10000', '20000', '50000', '100000']
 const GHS_AMOUNTS = ['100', '200', '500', '1000', '2000']
 
-const LIQUIDITY_USER_EMAIL = 'liquidity@vyre.internal'
+const LIQUIDITY_USER_EMAIL = 'vyreafrica@gmail.com'
 
 export async function startRampOrderSync() {
     logger.info('Ramp order sync worker started')
@@ -53,10 +59,10 @@ async function syncRampOrders() {
 
 async function syncPair(
     liquidityUserId: string,
-    pair: { toCurrency: string; fromFiat: string }
+    pair: { toCurrency: string; fromFiat: string; chain: string }
 ) {
     // Get live rate from Quidax
-    const liveRate = await liquidityRampService.getRate(pair.toCurrency, pair.fromFiat)
+    const liveRate = await liquidityRampService.getRate(pair.toCurrency, pair.fromFiat, pair.chain)
 
     // Add 0.5% Vyre spread
     const vyrePrice = (liveRate * 1.005).toFixed(8)

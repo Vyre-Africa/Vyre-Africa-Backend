@@ -22,7 +22,8 @@
         "test:sweep": "ts-node --transpile-only -r dotenv/config src/scripts/testNonceChainSweep.ts",
         "retry-webhook": "ts-node --transpile-only -r dotenv/config src/scripts/retryWebhookEvent.ts",
         "setup:moralis": "ts-node --transpile-only -r dotenv/config src/scripts/setupMoralisStreams.ts",
-        "moralis:add-address": "ts-node --transpile-only -r dotenv/config src/scripts/addMoralisAddress.ts"
+        "moralis:add-address": "ts-node --transpile-only -r dotenv/config src/scripts/addMoralisAddress.ts",
+        "sync-ramp-orders": "ts-node --transpile-only -r dotenv/config src/scripts/sync-ramp-orders.ts"
     },
     "author": "harvey ana",
     "license": "ISC",
