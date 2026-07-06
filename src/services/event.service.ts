@@ -2203,7 +2203,7 @@ class eventService {
       if (postDetails) {
           await this.orderProcessingQueue.add('process-post-action', {
               awaitingId: awaiting.id
-          })
+            },{ jobId: `post-action-${awaiting.id}` })
   
           logger.info('Queued post-action for onramp completion', {
               awaitingId: awaiting.id
