@@ -2238,7 +2238,9 @@ class eventService {
           where: { id: awaiting.id },
           data:  { status: 'SUCCESS' }
       });
-  
+
+      console.log('Offramp completed — user paid out', { awaitingId: awaiting.id, data });
+
       // ── Non-blocking KYC usage recording ──────────────────────────────────────
       // Offramp = SELL: user committed fiat (quoteCurrency), receives crypto.
       // awaiting.amount is in quoteCurrency — convert to USD via pair rate.
@@ -2250,24 +2252,44 @@ class eventService {
         context:     `handleOfframpCompleted | awaitingId=${awaiting.id}`,
       });
   
-      if (awaiting.userId) {
-          await ablyService.notifyUser(
-              awaiting.userId,
-              'Withdrawal Successful',
-              `${awaiting.paymentDetails?.toAmount ?? ''} has been sent to your account.`
-          );
-      }
-  
+      // if (awaiting.userId) {
+      //     await ablyService.notifyUser(
+      //         awaiting.userId,
+      //         'Withdrawal Successful',
+      //         `${awaiting.paymentDetails?.toAmount ?? ''} has been sent to your account.`
+      //     );
+      // }
+
       await ablyService.awaiting_Order_Update(awaiting.id);
-  
+      console.log('Offramp completed — user paid out passed through Ably', { awaitingId: awaiting.id, data });
+
+      //  Send user notification
+      if (awaiting.userId) {
+        try {
+            await notificationService.queue({
+                userId:  awaiting.userId,
+                title:   'Withdrawal Successful',
+                type:    'ORDER',
+                content: `Your withdrawal of ${awaiting.paymentDetails?.toAmount ?? ''} ${awaiting.order?.pair?.quoteCurrency?.ISO ?? ''} has been sent to your bank account.`
+            });
+        } catch (notifError) {
+            logger.error(`Failed to queue notification for offramp completion ${awaiting.id}`, {
+                error: notifError
+            });
+            // Don't fail the job if notification fails
+        }
+      }
+
+      
       if (awaiting.order?.isSynthetic) {
           await prisma.order.update({
               where: { id: awaiting.order.id },
               data:  { status: 'OPEN', amount: awaiting.order.amount }
           });
+          console.log('Offramp completed — user paid out passed through order update', { awaitingId: awaiting.id, data });
       }
   
-      logger.info('Offramp completed — user paid out', { awaitingId: awaiting.id });
+      logger.info('Offramp completed — user paid out finally', { awaitingId: awaiting.id });
   }
 
   
