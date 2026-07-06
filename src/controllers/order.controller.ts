@@ -124,33 +124,23 @@ class OrderController {
   async createOrder(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     const { price, amount, type, pairId, minimumAmount } = req.body;
-
+ 
     console.log(price, amount, type, pairId)
-
+ 
     try {
-
-      //  const userData = await prisma.user.findUnique({
-      //     where: { id: user.id }
-      //   })
-
-        // fetch pair
-        // check if user has both wallets
-        // check the base currency balance of the user if its sufficient for the order
-        // block the amount for the order
-        // create the order using a prisma transaction
-
-        // Anonymous users can trade (counterparty) but not create orders
+ 
+      // Anonymous users can trade (counterparty) but not create orders
       if (user?.isAnonymous) {
           throw new Error('Anonymous users cannot create orders. Please create a Vyre account.');
       }
-
+ 
       // Must be an approved vendor to create orders
       if (!user?.isVendor) {
           const application = await prisma.vendorApplication.findUnique({
               where:  { userId: user.id },
               select: { status: true }
           });
-
+ 
           if (!application) {
               throw new Error('VENDOR_REQUIRED: You need to apply to become a vendor to create orders.');
           }
@@ -163,112 +153,128 @@ class OrderController {
           if (application.status === 'SUSPENDED') {
               throw new Error('VENDOR_SUSPENDED: Your vendor account has been suspended. Please contact support.');
           }
-
+ 
           throw new Error('VENDOR_REQUIRED: You are not approved to create orders.');
       }
-
-        const pair = await prisma.pair.findUnique({
-          where:{id: pairId},
-          include:{
-            quoteCurrency:{
-              select:{
-                id:true,
-                ISO:true  
-              },
+ 
+      // ── Guard against zero/missing price BEFORE any Decimal division ────────
+      // Needed now that BUY orders convert amount → base-currency equivalent
+      // using price. A zero/invalid price would otherwise throw inside Decimal
+      // and surface as a confusing 500 instead of a clean 400.
+      const priceDecimal = new Decimal(price ?? 0);
+      if (priceDecimal.lessThanOrEqualTo(0)) {
+        return res.status(400).json({
+          msg: 'A valid price greater than zero is required',
+          success: false,
+        });
+      }
+ 
+      const pair = await prisma.pair.findUnique({
+        where:{id: pairId},
+        include:{
+          quoteCurrency:{
+            select:{
+              id:true,
+              ISO:true  
             },
-            baseCurrency:{
-              select:{
-                id:true,
-                ISO:true  
-              },
+          },
+          baseCurrency:{
+            select:{
+              id:true,
+              ISO:true  
             },
-            quoteWallet:true,
-            baseWallet:true,
-          }
-        })
-
-        if(!pair){
-          return res.status(400)
-            .json({
-              msg: 'order pair does not exist',
-              success: false,
-            });
+          },
+          quoteWallet:true,
+          baseWallet:true,
         }
-
-
-        console.log('pair', pair)
-
-        const [baseWallet, quoteWallet] = await Promise.all([
-          prisma.wallet.findFirst({
-            where: {
-              userId: user.id,
-              currencyId: pair?.baseCurrency?.id!
-            }
-          }),
-          prisma.wallet.findFirst({
-            where: {
-              userId: user.id,
-              currencyId: pair?.quoteCurrency?.id!
-            }
-          })
-        ]);
-
-
-        if(!baseWallet || !quoteWallet){
-          return res.status(400)
-            .json({
-              msg: 'User wallets required does not exist',
-              success: false,
-            });
-        }
-
-        // ✅ Quick balance check before queuing
-        const amountDecimal = new Decimal(amount);
-        const walletToCheck = type === 'SELL' ? baseWallet : quoteWallet;
-        const availableBalance = new Decimal(walletToCheck.availableBalance);
-
-        if (availableBalance.lessThan(amountDecimal)) {
-          return res.status(400).json({
-            msg: `Insufficient ${type === 'SELL' ? 'base' : 'quote'} balance`,
+      })
+ 
+      if(!pair){
+        return res.status(400)
+          .json({
+            msg: 'order pair does not exist',
             success: false,
           });
-        }
-
-        // ✅ Get configured minimum for the base currency
-        const configuredMinimum = getMinimumOrderAmount(pair.baseCurrency?.ISO as string);
-
-        const userMinimum = minimumAmount ? new Decimal(minimumAmount) : new Decimal(0);
-        const enforcedMinimum = Decimal.max(userMinimum, configuredMinimum);
-
-        // ✅ Validate order amount meets minimum
-        if (amountDecimal.lessThan(enforcedMinimum)) {
-          const description = getMinimumOrderDescription(pair.baseCurrency?.ISO as string);
-
-          return res.status(400).json({
-            msg: `Order amount ${amountDecimal.toString()} ${pair.baseCurrency?.ISO as string} is below minimum requirement of ${description}`,
-            success: false
+      }
+ 
+      console.log('pair', pair)
+ 
+      const [baseWallet, quoteWallet] = await Promise.all([
+        prisma.wallet.findFirst({
+          where: {
+            userId: user.id,
+            currencyId: pair?.baseCurrency?.id!
+          }
+        }),
+        prisma.wallet.findFirst({
+          where: {
+            userId: user.id,
+            currencyId: pair?.quoteCurrency?.id!
+          }
+        })
+      ]);
+ 
+      if(!baseWallet || !quoteWallet){
+        return res.status(400)
+          .json({
+            msg: 'User wallets required does not exist',
+            success: false,
           });
-
-        }
-
-        // ✅ PHASE 2: Generate order ID immediately
-        const orderId = generateOrderId();
-
-        // ✅ Queue the heavy work (transaction, blocking, etc.)
-        await orderService.create_Order_Queue({
-          orderId, // Pass the pre-generated ID
-          userId: user.id,
-          rate: parseFloat(price),
-          amount: parseFloat(amount), 
-          orderType: type, 
-          pairId, 
-          minimumAmount: minimumAmount ? parseFloat(minimumAmount) : undefined,
-          baseWallet,
-          quoteWallet
+      }
+ 
+      // ✅ Quick balance check before queuing — already correctly directional
+      const amountDecimal = new Decimal(amount);
+      const walletToCheck = type === 'SELL' ? baseWallet : quoteWallet;
+      const availableBalance = new Decimal(walletToCheck.availableBalance);
+ 
+      if (availableBalance.lessThan(amountDecimal)) {
+        return res.status(400).json({
+          msg: `Insufficient ${type === 'SELL' ? 'base' : 'quote'} balance`,
+          success: false,
         });
-
-
-
+      }
+ 
+      // ✅ Get configured minimum for the base currency
+      const configuredMinimum = getMinimumOrderAmount(pair.baseCurrency?.ISO as string);
+ 
+      const userMinimum = minimumAmount ? new Decimal(minimumAmount) : new Decimal(0);
+      const enforcedMinimum = Decimal.max(userMinimum, configuredMinimum);
+ 
+      // ── Convert amountDecimal to its BASE-currency equivalent before
+      // comparing against enforcedMinimum, which is always base-denominated.
+      // SELL: amountDecimal is already base currency — no conversion.
+      // BUY:  amountDecimal is quote currency (fiat) — divide by price to get
+      //       the equivalent base-currency (crypto) exposure.
+      const baseEquivalentAmount = type === 'SELL'
+        ? amountDecimal
+        : amountDecimal.dividedBy(priceDecimal);
+ 
+      // ✅ Validate order amount meets minimum — now unit-consistent
+      if (baseEquivalentAmount.lessThan(enforcedMinimum)) {
+        const description = getMinimumOrderDescription(pair.baseCurrency?.ISO as string);
+ 
+        return res.status(400).json({
+          msg: `Order amount (${baseEquivalentAmount.toString()} ${pair.baseCurrency?.ISO as string} equivalent) is below minimum requirement of ${description}`,
+          success: false
+        });
+      }
+ 
+      // ✅ PHASE 2: Generate order ID immediately
+      const orderId = generateOrderId();
+ 
+      // ✅ Queue the heavy work (transaction, blocking, etc.)
+      await orderService.create_Order_Queue({
+        orderId, // Pass the pre-generated ID
+        userId: user.id,
+        rate: parseFloat(price),
+        amount: parseFloat(amount), 
+        orderType: type, 
+        pairId, 
+        minimumAmount: minimumAmount ? parseFloat(minimumAmount) : undefined,
+        baseWallet,
+        quoteWallet
+      });
+ 
       return res
         .status(200)
         .json({
@@ -284,7 +290,7 @@ class OrderController {
             createdAt: new Date().toISOString()
           }
         });
-
+ 
     } catch (error) {
       console.log(error);
       return res.status(500).json({
@@ -438,7 +444,7 @@ class OrderController {
       // ── KYC limit check ───────────────────────────────────────────────────────
       // Reuses the order already fetched above — no extra DB query.
       // Looks up the email's registered KYC tier silently; defaults to Tier 0.
-      
+
       // await assertAnonKycLimit({ email: user.email, order, amount });
   
       // ── Proceed to preActions ─────────────────────────────────────────────────

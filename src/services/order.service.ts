@@ -99,18 +99,36 @@ class OrderService {
       const userMinimum = minimumAmount ? new Decimal(minimumAmount) : new Decimal(0);
       const enforcedMinimum = Decimal.max(userMinimum, configuredMinimum);
 
-      // ✅ Validate order amount meets minimum
-      if (amountDecimal.lessThan(enforcedMinimum)) {
+      // ── Guard against zero/invalid rate before any division ──────────────────
+      // The controller already validates price > 0 before queuing this job,
+      // but this service can in principle be called from elsewhere, so it
+      // stays defensive here too rather than assuming the caller checked.
+      const rateDecimal = new Decimal(rate);
+      if (rateDecimal.lessThanOrEqualTo(0)) {
+        throw new Error('A valid rate greater than zero is required to create an order');
+      }
+
+      // ── Convert amountDecimal to its BASE-currency equivalent before
+      // comparing against enforcedMinimum, which is always base-denominated.
+      // SELL: amountDecimal is already base currency — no conversion.
+      // BUY:  amountDecimal is quote currency (fiat) — divide by rate to get
+      //       the equivalent base-currency (crypto) exposure this order represents.
+      const baseEquivalentAmount = orderType === 'SELL'
+        ? amountDecimal
+        : amountDecimal.dividedBy(rateDecimal);
+
+      // ✅ Validate order amount meets minimum — unit-consistent now
+      if (baseEquivalentAmount.lessThan(enforcedMinimum)) {
         const description = getMinimumOrderDescription(pair.baseCurrency?.ISO as string);
         throw new Error(
-          `Order amount ${amountDecimal.toString()} ${pair.baseCurrency?.ISO as string} is below minimum requirement of ${description}`
+          `Order amount (${baseEquivalentAmount.toString()} ${pair.baseCurrency?.ISO as string} equivalent) is below minimum requirement of ${description}`
         );
       }
-      
+
       const baseBalance = new Decimal(baseWallet.availableBalance);
       const quoteBalance = new Decimal(quoteWallet.availableBalance);
 
-      // ✅ Balance checks with Decimal
+      // ✅ Balance checks with Decimal — already correctly directional, unchanged
       if (orderType === 'SELL' && baseBalance.lessThan(amountDecimal)) {
         throw new Error('Insufficient base balance');
       }
@@ -118,23 +136,35 @@ class OrderService {
         throw new Error('Insufficient quote balance');
       }
 
-      // ✅ Fee calculation with Decimal (1.2% fee)
+      // ✅ Fee calculation with Decimal (1.2% fee) — stays in the amount's own
+      // native currency (base for SELL, quote for BUY), unchanged
       const feeRate = new Decimal('0.012');
       const fee = amountDecimal.times(feeRate);
       const adjustedAmount = amountDecimal;
 
       // const adjustedAmount = amountDecimal.minus(fee);
 
+      // ── Same base-equivalent conversion applied to the post-fee check ────────
+      // (Currently redundant since adjustedAmount === amountDecimal with fee
+      // subtraction commented out above, but kept correct for when that's
+      // re-enabled.)
+      const adjustedBaseEquivalentAmount = orderType === 'SELL'
+        ? adjustedAmount
+        : adjustedAmount.dividedBy(rateDecimal);
+
       // ✅ Ensure adjusted amount (after fee) still meets minimum
-      if (adjustedAmount.lessThan(enforcedMinimum)) {
+      if (adjustedBaseEquivalentAmount.lessThan(enforcedMinimum)) {
         throw new Error(
-          `Order amount after fees (${adjustedAmount.toString()} ${pair.baseCurrency?.ISO as string}) is below minimum. ` +
+          `Order amount after fees (${adjustedBaseEquivalentAmount.toString()} ${pair.baseCurrency?.ISO as string} equivalent) is below minimum. ` +
           `Please increase order amount to cover fees and meet minimum of ${enforcedMinimum.toString()} ${pair.baseCurrency?.ISO as string}`
         );
       }
 
       logger.info('Fee calculation', {
+        orderType,
         amount: amountDecimal.toString(),
+        amountCurrency: orderType === 'SELL' ? pair.baseCurrency?.ISO : pair.quoteCurrency?.ISO,
+        baseEquivalent: baseEquivalentAmount.toString(),
         fee: fee.toString(),
         adjustedAmount: adjustedAmount.toString()
       });
