@@ -4096,3 +4096,21 @@ Error: Admin wallet not found
 2026-07-06 03:24:22 [info] Connected to Ably! 
 2026-07-06 03:24:37 [info] Server running on port 4000 
 2026-07-06 03:24:37 [info] Connected to Ably! 
+2026-07-06 14:58:08 [info] Starting BUY order sync script... 
+2026-07-06 14:58:11 [info] Liquidity user found: vyreafrica@gmail.com (id: user_38OI3Y47pS0u4gKiRoee5GySGiV) 
+2026-07-06 14:58:11 [info] Syncing BUY orders for USDC/NGN... 
+2026-07-06 14:58:13 [info] Rate fetched 
+2026-07-06 14:58:13 [info] Live rate from Quidax: 1413.5074774545558 NGN per USDC 
+2026-07-06 14:58:13 [info] Using live rate directly: 1413.50747745 
+2026-07-06 14:58:13 [info] Pair found: USDC-BASE/NGN (id: cmck1dguh000079t0zi19nnv4) 
+2026-07-06 14:58:14 [info] ✅ BUY order upserted: 
+2026-07-06 14:58:14 [info] ✅ BUY order upserted: 
+2026-07-06 14:58:14 [info] ✅ BUY order upserted: 
+2026-07-06 14:58:14 [info] ✅ BUY order upserted: 
+2026-07-06 14:58:15 [info] ✅ BUY order upserted: 
+2026-07-06 14:58:15 [info] ✅ BUY order sync completed successfully 
+2026-07-06 14:58:15 [info] You should now see 5 RAMP_BUY_USDC_NGN_* orders in your Order table 
+2026-07-06 16:45:25 [info] Server running on port 4000 
+2026-07-06 16:45:26 [info] Connected to Ably! 
+2026-07-06 16:45:37 [info] Server running on port 4000 
+2026-07-06 16:45:38 [info] Connected to Ably! 
