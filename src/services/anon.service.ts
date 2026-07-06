@@ -581,6 +581,7 @@ class AnonService {
                             data: {
                                 userId:              user.id,
                                 isSynthetic:         true,
+                                amount:              rampConfirm.amount_expected,
                                 currencyId,
                                 method:              paymentMethod,
                                 duration:            expiryDuration,
@@ -597,6 +598,8 @@ class AnonService {
                                     amount_expected:  rampConfirm.amount_expected,
                                     processor_fee:    rampConfirm.processor_fee,
                                     vat:              rampConfirm.vat,
+                                    fromAmount:       rampConfirm.amount,
+                                    fromCurrency:     order.pair.quoteCurrency.ISO, 
                                     toAmount:         rampInit.to_amount,
                                     toCurrency:       order.pair?.baseCurrency?.ISO,
                                     quidax_reference: rampInit.reference,
@@ -1573,3 +1576,5 @@ class AnonService {
 
 
 export default new AnonService()
+
+
