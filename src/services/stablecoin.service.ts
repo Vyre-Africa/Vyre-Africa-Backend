@@ -375,7 +375,11 @@ class stableCoinService
             }
             
             const withdrawalFeeDecimal = new Decimal(transferfeeService.calculateFee(chain));
-            const netAmountDecimal = amountDecimal.minus(withdrawalFeeDecimal);
+            // const netAmountDecimal = amountDecimal.minus(withdrawalFeeDecimal);
+            const netAmountDecimal = amountDecimal.minus(0);
+
+
+            // const netAmountDecimal = amountDecimal
 
             if (netAmountDecimal.lessThanOrEqualTo(0)) {
                 throw new Error(`Amount too small to cover network fee of $${withdrawalFeeDecimal.toString()}`);
