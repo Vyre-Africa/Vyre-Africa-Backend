@@ -156,7 +156,7 @@ class LiquidityRampService {
         const { data } = await rampApi.post('/custodial/off_ramp_transactions/initiate', {
             from_currency:      payload.fromCurrency,
             to_currency:        payload.toCurrency,
-            from_amount:        payload.fromAmount,
+            from_amount:        String(payload.fromAmount),
             network:            payload.network,
             merchant_reference: payload.merchantReference,
             customer: {
