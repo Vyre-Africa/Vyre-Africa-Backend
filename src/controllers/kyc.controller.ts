@@ -168,6 +168,8 @@ class KycController {
 
       const idResult = await verifyTier1({ country, idType, idNumber, tzParams });
 
+      console.log('Dojah Tier 1 result:', idResult);
+
       if (!idResult.success) {
         await prisma.kycVerification.update({
           where: { id: verificationRecord.id },
@@ -179,25 +181,26 @@ class KycController {
         });
       }
 
-      const amlResult = await screenAml({
-        firstName: idResult.firstName ?? '',
-        lastName: idResult.lastName ?? '',
-      });
+    //   const amlResult = await screenAml({
+    //     firstName: idResult.firstName ?? '',
+    //     lastName: idResult.lastName ?? '',
+    //   });
 
-      await prisma.kycVerification.create({
-        data: {
-          userId: user.id,
-          type: 'AML',
-          country,
-          status: amlResult.success ? 'APPROVED' : 'FAILED',
-          dojahData: amlResult.rawData ?? null,
-          dojahRef: amlResult.referenceId ?? null,
-          resolvedAt: new Date(),
-        },
-      });
+    //   await prisma.kycVerification.create({
+    //     data: {
+    //       userId: user.id,
+    //       type: 'AML',
+    //       country,
+    //       status: amlResult.success ? 'APPROVED' : 'FAILED',
+    //       dojahData: amlResult.rawData ?? null,
+    //       dojahRef: amlResult.referenceId ?? null,
+    //       resolvedAt: new Date(),
+    //     },
+    //   });
 
       if (email) {
         const emailResult = await screenEmail(email);
+        console.log('Dojah email fraud result:', emailResult);
         await prisma.kycVerification.create({
           data: {
             userId: user.id,
@@ -228,7 +231,14 @@ class KycController {
 
       await prisma.user.update({
         where: { id: user.id },
-        data: { kycTier: 1, kycTier1At: new Date(), [dojahRefField]: String(idNumber ?? '') },
+        data: { 
+            kycTier: 1, 
+            kycTier1At: new Date(), 
+            [dojahRefField]: String(idNumber ?? ''),
+            legalFirstName: idResult.firstName,
+            legalLastName: idResult.lastName,
+            legalNameVerifiedAt: new Date()
+        },
       });
 
       return res.status(200).json({

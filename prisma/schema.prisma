@@ -352,6 +352,11 @@ model User {
   authId       String?     @unique
   firstName    String      @db.VarChar(255)
   lastName     String      @db.VarChar(255)
+  
+  legalFirstName  String?
+  legalLastName   String?
+  legalNameVerifiedAt DateTime?
+
   BusinessName String?
   referralId   String?
   referreeId   String?
