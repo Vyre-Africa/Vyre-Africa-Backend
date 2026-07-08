@@ -115,7 +115,9 @@ export async function verifyTier1({
       if (idType === 'BVN') {
         // entity: NigeriaKycGetBvn1ResponseEntity
         const res = await dojah.nigeriaKyc.getBasicBvn1({ bvn: idNumber as number });
+        console.log('response',res.data);
         const entity = (res.data as any)?.entity;
+        console.log('entity',entity);
         return {
           success: !!entity,
           firstName: entity?.first_name,
