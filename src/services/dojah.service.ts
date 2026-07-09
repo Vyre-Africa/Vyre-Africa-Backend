@@ -10,10 +10,8 @@ import axios, { type AxiosInstance } from 'axios';
 // This client sets headers in exactly one place, using exactly the two
 // headers Dojah's docs specify: AppId + Authorization (no "Bearer" prefix).
 
-const DOJAH_ENV = process.env.DOJAH_ENV === 'live' ? 'live' : 'sandbox';
 
-const DOJAH_BASE_URL =
-  DOJAH_ENV === 'live' ? 'https://api.dojah.io' : 'https://sandbox.dojah.io';
+const DOJAH_BASE_URL = 'https://api.dojah.io';
 
 if (!process.env.DOJAH_APP_ID || !process.env.DOJAH_SECRET_KEY) {
   throw new Error('DOJAH_APP_ID and DOJAH_SECRET_KEY must both be set');
