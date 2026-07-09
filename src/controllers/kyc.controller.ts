@@ -107,6 +107,7 @@ class KycController {
   // POST /kyc/upgrade/tier1
   async upgradeTier1(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
+    console.log('Upgrade Tier 1 request body:', req.body);
     try {
       if (user.kycTier >= 1) {
         return res.status(200).json({
