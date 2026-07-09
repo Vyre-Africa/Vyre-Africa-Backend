@@ -3,9 +3,9 @@ import { Dojah } from 'dojah-typescript-sdk';
 // ─── Client ────────────────────────────────────────────────────────────────────
 
 const dojah = new Dojah({
-  authorization: process.env.DOJAH_SECRET_KEY!,
-  appId: process.env.DOJAH_SECRET_KEY!,
-//   appId: process.env.DOJAH_APP_ID!,
+  authorization: '2xiqyUFcWGAlhsM3',
+  apiKey: process.env.DOJAH_SECRET_KEY!,
+  appId: process.env.DOJAH_APP_ID!,
 });
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
