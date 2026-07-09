@@ -10,8 +10,9 @@ import axios, { type AxiosInstance } from 'axios';
 // This client sets headers in exactly one place, using exactly the two
 // headers Dojah's docs specify: AppId + Authorization (no "Bearer" prefix).
 
+// const DOJAH_ENV = process.env.DOJAH_ENV === 'live' ? 'live' : 'sandbox';
 
-const DOJAH_BASE_URL = 'https://api.dojah.io';
+const DOJAH_BASE_URL = 'https://api.dojah.io'
 
 if (!process.env.DOJAH_APP_ID || !process.env.DOJAH_SECRET_KEY) {
   throw new Error('DOJAH_APP_ID and DOJAH_SECRET_KEY must both be set');
@@ -98,6 +99,7 @@ export interface AmlResult {
   success: boolean;
   isPep: boolean;
   isSanctioned: boolean;
+  hasAdverseMedia: boolean;
   riskLevel?: string;
   matchStatus?: string;
   hits: any[];
@@ -443,9 +445,11 @@ export async function verifyTier2({
 }
 
 // ─── AML Screening (v2) — CONFIRMED, fully synchronous ─────────────────────
-// Rewritten from scratch: the previous version assumed an async
-// reference_id/webhook pattern that doesn't match this endpoint's real
-// behavior. It returns full PEP/sanctions/adverse-media results inline.
+// Returns full PEP/sanctions/adverse-media results inline. `hasAdverseMedia`
+// is tracked separately from isPep/isSanctioned because Dojah's own
+// risk_level/match_status can flag a "Medium risk / Potential Match" purely
+// on adverse media, with isPep and isSanctioned both false — callers must
+// not treat isPep/isSanctioned as the complete risk signal.
 
 export async function screenAml({
   firstName,
@@ -482,11 +486,13 @@ export async function screenAml({
 
     const isPep = results.some((r: any) => r?.source_type === 'PEP' && r?.match === true);
     const isSanctioned = results.some((r: any) => r?.source_type === 'SANCTIONS' && r?.match === true);
+    const hasAdverseMedia = results.some((r: any) => r?.source_type === 'ADVERSE_MEDIA');
 
     return {
       success: true,
       isPep,
       isSanctioned,
+      hasAdverseMedia,
       riskLevel: entity?.risk_level,
       matchStatus: entity?.match_status,
       hits: results,
@@ -494,7 +500,7 @@ export async function screenAml({
     };
   } catch (error: any) {
     const { error: msg } = handleDojahError('screenAml', error);
-    return { success: false, isPep: false, isSanctioned: false, hits: [], error: msg };
+    return { success: false, isPep: false, isSanctioned: false, hasAdverseMedia: false, hits: [], error: msg };
   }
 }
 
