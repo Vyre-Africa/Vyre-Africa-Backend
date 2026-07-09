@@ -1,15 +1,49 @@
-import { Dojah } from 'dojah-typescript-sdk';
+import axios, { type AxiosInstance } from 'axios';
 
-// ─── Client ────────────────────────────────────────────────────────────────────
+// ─── Client ────────────────────────────────────────────────────────────────
+//
+// SECURITY: the previous client hardcoded a secret key literal alongside
+// three other guessed auth field names ('authorization', 'accessToken',
+// 'apiKey'). That key must be treated as compromised — rotate it in the
+// Dojah dashboard regardless of anything else in this file.
+//
+// This client sets headers in exactly one place, using exactly the two
+// headers Dojah's docs specify: AppId + Authorization (no "Bearer" prefix).
 
-const dojah = new Dojah({
-  authorization: '2xiqyUFcWGAlhsM3',
-  accessToken:'2xiqyUFcWGAlhsM3',
-  apiKey: process.env.DOJAH_SECRET_KEY!,
-  appId: process.env.DOJAH_APP_ID!,
+const DOJAH_ENV = process.env.DOJAH_ENV === 'live' ? 'live' : 'sandbox';
+
+const DOJAH_BASE_URL =
+  DOJAH_ENV === 'live' ? 'https://api.dojah.io' : 'https://sandbox.dojah.io';
+
+if (!process.env.DOJAH_APP_ID || !process.env.DOJAH_SECRET_KEY) {
+  throw new Error('DOJAH_APP_ID and DOJAH_SECRET_KEY must both be set');
+}
+
+const dojahClient: AxiosInstance = axios.create({
+  baseURL: DOJAH_BASE_URL,
+  headers: {
+    AppId: process.env.DOJAH_APP_ID,
+    Authorization: process.env.DOJAH_SECRET_KEY, // NOT "Bearer <key>"
+  },
+  timeout: 15000,
 });
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
+// Shared error handler — every call routes through here so we always get
+// the real status/response, instead of the SDK's stripped-down error.
+function handleDojahError(context: string, error: any) {
+  console.error(`Dojah call failed [${context}]:`, {
+    url: error?.config?.url,
+    baseURL: error?.config?.baseURL,
+    status: error?.response?.status,
+    responseData: error?.response?.data,
+  });
+  return {
+    error: error?.response?.data?.error ?? error?.response?.data?.message ?? error.message,
+    rawData: error?.response?.data,
+  };
+}
+
+// ─── Types ─────────────────────────────────────────────────────────────────
 
 export type KycCountry = 'NG' | 'GH' | 'KE' | 'TZ' | 'UG' | 'ZA';
 
@@ -17,6 +51,7 @@ export type Tier1IdType =
   | 'BVN'
   | 'NIN'
   | 'VNIN'
+  | 'VIN'
   | 'PASSPORT'
   | 'DRIVERS_LICENSE'
   | 'NATIONAL_ID'
@@ -24,11 +59,10 @@ export type Tier1IdType =
   | 'SSNIT'
   | 'TZ_NIN';
 
-// Tanzania lookup requires personal details instead of an ID number
 export interface TanzaniaLookupParams {
   firstName: string;
   lastName: string;
-  dateOfBirth: string;          // YYYY-MM-DD
+  dateOfBirth: string;
   mothersFirstName?: string;
   mothersLastName?: string;
 }
@@ -36,8 +70,11 @@ export interface TanzaniaLookupParams {
 export interface Tier1Input {
   country: KycCountry;
   idType: Tier1IdType;
-  idNumber?: number | string;   // all countries except TZ
-  tzParams?: TanzaniaLookupParams; // TZ only
+  idNumber?: number | string;
+  surname?: string;       // NG PASSPORT (endpoint currently disabled)
+  fullName?: string;      // required for GH DRIVERS_LICENSE / SSNIT
+  dateOfBirth?: string;   // required for GH DRIVERS_LICENSE / SSNIT (yyyy-MM-dd)
+  tzParams?: TanzaniaLookupParams;
 }
 
 export interface Tier1Result {
@@ -63,7 +100,8 @@ export interface AmlResult {
   success: boolean;
   isPep: boolean;
   isSanctioned: boolean;
-  referenceId?: string;
+  riskLevel?: string;
+  matchStatus?: string;
   hits: any[];
   rawData?: any;
   error?: string;
@@ -77,14 +115,15 @@ export interface FraudResult {
   error?: string;
 }
 
-// ID types available per country — exported for frontend dropdown population
+// ID types available per country — exported for frontend dropdown population.
+// NG PASSPORT / DRIVERS_LICENSE / VNIN (plain lookup) are intentionally
+// excluded — endpoints unconfirmed against current Dojah docs. Do not
+// re-add without verifying exact path/params in sandbox first.
 export const COUNTRY_ID_TYPES: Record<KycCountry, { value: Tier1IdType; label: string }[]> = {
   NG: [
-    { value: 'BVN',             label: 'BVN (Bank Verification Number)' },
-    { value: 'NIN',             label: 'NIN (National Identity Number)' },
-    { value: 'VNIN',            label: 'Virtual NIN (vNIN)' },
-    { value: 'PASSPORT',        label: 'International Passport' },
-    { value: 'DRIVERS_LICENSE', label: "Driver's Licence" },
+    { value: 'BVN', label: 'BVN (Bank Verification Number)' },
+    { value: 'NIN', label: 'NIN (National Identity Number)' },
+    { value: 'VIN', label: "Voter's Card (VIN)" },
   ],
   GH: [
     { value: 'PASSPORT',        label: 'Passport' },
@@ -93,118 +132,101 @@ export const COUNTRY_ID_TYPES: Record<KycCountry, { value: Tier1IdType; label: s
     { value: 'DRIVERS_LICENSE', label: "Driver's Licence" },
   ],
   KE: [
-    { value: 'NATIONAL_ID',     label: 'National ID' },
-    // KE Passport excluded — Dojah SDK does not support passing a passport number
-    // for the Kenya passport endpoint. Re-enable once SDK is updated.
+    { value: 'NATIONAL_ID', label: 'National ID' },
+    { value: 'PASSPORT',    label: 'Passport' },
   ],
-  TZ: [{ value: 'TZ_NIN',      label: 'National ID (NIN)' }],
-  UG: [{ value: 'VOTER',       label: 'Voter ID' }],
+  TZ: [{ value: 'TZ_NIN', label: 'National ID (NIN)' }], // UNCONFIRMED — see verifyTier1
+  UG: [{ value: 'NATIONAL_ID', label: 'National ID (NIN)' }],
   ZA: [{ value: 'NATIONAL_ID', label: 'National ID' }],
 };
 
-// ─── Tier 1 — Identity Lookup ──────────────────────────────────────────────────
+// ─── Tier 1 — Identity Lookup ──────────────────────────────────────────────
 
 export async function verifyTier1({
   country,
   idType,
   idNumber,
+  surname,
+  fullName,
+  dateOfBirth,
   tzParams,
 }: Tier1Input): Promise<Tier1Result> {
   try {
-    // ── Nigeria ───────────────────────────────────────────────────────────────
+    // ── Nigeria ───────────────────────────────────────────────────────────
     if (country === 'NG') {
 
       if (idType === 'BVN') {
-        // entity: NigeriaKycGetBvn1ResponseEntity
-        const res = await dojah.nigeriaKyc.getBasicBvn1({ bvn: idNumber as number });
-        console.log('response',res.data);
-        const entity = (res.data as any)?.entity;
-        console.log('entity',entity);
+        // CONFIRMED against current Dojah docs
+        const res = await dojahClient.get('/api/v1/kyc/bvn/full', {
+          params: { bvn: idNumber },
+        });
+        const entity = res.data?.entity;
         return {
           success: !!entity,
           firstName: entity?.first_name,
           lastName: entity?.last_name,
           dob: entity?.date_of_birth,
           phone: entity?.phone_number1,
+          photo: entity?.image,
           rawData: res.data,
         };
       }
 
       if (idType === 'NIN') {
-        // entity: NigeriaKycGetNinResponseEntity
-        // note: uses 'surname' not 'last_name', 'birth_date' not 'date_of_birth',
-        //       'telephone' not 'phone_number', 'picture' not 'photo'
-        const res = await dojah.nigeriaKyc.getNin({ nin: idNumber as number });
-        const entity = (res.data as any)?.entity;
+        // CONFIRMED against current Dojah docs
+        const res = await dojahClient.get('/api/v1/kyc/nin', {
+          params: { nin: idNumber },
+        });
+        const entity = res.data?.entity;
         return {
           success: !!entity,
           firstName: entity?.first_name,
-          lastName: entity?.surname,
-          dob: entity?.birth_date,
-          phone: entity?.telephone,
-          photo: entity?.picture,
-          rawData: res.data,
-        };
-      }
-
-      if (idType === 'VNIN') {
-        // entity: GetVninResponseEntity
-        // note: uses 'firstname'/'surname' not 'first_name'/'last_name',
-        //       'dateOfBirth' (camelCase) not 'date_of_birth',
-        //       'mobile' not 'phone_number'
-        const res = await dojah.nigeriaKyc.getVnin({ vnin: idNumber as string });
-        const entity = (res.data as any)?.entity;
-        return {
-          success: !!entity,
-          firstName: entity?.firstname,
-          lastName: entity?.surname,
-          dob: entity?.dateOfBirth,
-          phone: entity?.mobile,
-          photo: entity?.photo,
-          rawData: res.data,
-        };
-      }
-
-      if (idType === 'PASSPORT') {
-        // entity: GetKycPassportResponseEntity
-        // note: uses 'surname' not 'last_name'
-        const res = await dojah.nigeriaKyc.getPassport({ passportNumber: idNumber as string });
-        const entity = (res.data as any)?.entity;
-        return {
-          success: !!entity,
-          firstName: entity?.first_name,
-          lastName: entity?.surname,
+          lastName: entity?.last_name,
           dob: entity?.date_of_birth,
+          phone: entity?.phone_number,
           photo: entity?.photo,
           rawData: res.data,
         };
       }
 
-      if (idType === 'DRIVERS_LICENSE') {
-        // entity: GetKycDriversLicenseResponseEntity
-        // note: personal details are nested under entity.personal_details
-        //       uses 'firstname'/'surname', 'birth_date' not 'date_of_birth'
-        const res = await dojah.nigeriaKyc.getDriversLicense({ licenseNumber: idNumber as string });
-        const entity = (res.data as any)?.entity;
-        const pd = entity?.personal_details;
+      if (idType === 'VIN') {
+        // CONFIRMED against current Dojah docs — Nigeria Voter's ID
+        const res = await dojahClient.get('/api/v1/kyc/vin', {
+          params: { vin: idNumber },
+        });
+        const entity = res.data?.entity;
+        const [firstName, ...rest] = (entity?.full_name ?? '').split(' ');
         return {
-          success: !!pd,
-          firstName: pd?.firstname,
-          lastName: pd?.surname,
-          dob: pd?.birth_date,
+          success: !!entity,
+          firstName,
+          lastName: rest.join(' ') || undefined,
+          dob: entity?.date_of_birth,
+          phone: entity?.phone,
           rawData: res.data,
+        };
+      }
+
+      if (idType === 'PASSPORT' || idType === 'DRIVERS_LICENSE' || idType === 'VNIN') {
+        // Disabled — endpoint not confirmed against current Dojah docs.
+        // Do not re-enable without verifying exact path/params in sandbox
+        // first. This block is defense in depth: even if a stale frontend
+        // dropdown or cached client still sends one of these idTypes, the
+        // backend refuses rather than hitting an unverified endpoint.
+        return {
+          success: false,
+          error: `${idType} verification is temporarily unavailable for Nigeria. Please use BVN, NIN, or Voter's Card instead.`,
         };
       }
     }
 
-    // ── Ghana ─────────────────────────────────────────────────────────────────
+    // ── Ghana — all four CONFIRMED against current Dojah docs ──────────────
     if (country === 'GH') {
 
       if (idType === 'PASSPORT') {
-        // entity: GetPassportResponseEntity
-        // note: uses 'last_name' not 'surname', 'picture' not 'photo'
-        const res = await dojah.ghKyc.getPassport({ id: idNumber as string });
-        const entity = (res.data as any)?.entity;
+        const res = await dojahClient.get('/api/v1/gh/kyc/passport', {
+          params: { id: idNumber },
+        });
+        const entity = res.data?.entity;
         return {
           success: !!entity,
           firstName: entity?.first_name,
@@ -216,30 +238,34 @@ export async function verifyTier1({
       }
 
       if (idType === 'VOTER') {
-        // SDK returns untyped `data: object` — log raw in dev to confirm field names
-        const res = await dojah.ghKyc.getVoter({ id: idNumber as number });
-        const raw = res.data as any;
-        if (process.env.NODE_ENV !== 'production') console.log('[dojah GH VOTER raw]', JSON.stringify(raw, null, 2));
-        const entity = raw?.entity ?? raw;
+        const res = await dojahClient.get('/api/v1/gh/kyc/voter', {
+          params: { id: idNumber },
+        });
+        const entity = res.data?.entity;
+        const [firstName, ...rest] = (entity?.full_name ?? '').split(' ');
         return {
           success: !!entity,
-          firstName: entity?.first_name,
-          lastName: entity?.last_name,
-          dob: entity?.date_of_birth,
-          rawData: raw,
+          firstName,
+          lastName: rest.join(' ') || undefined,
+          photo: entity?.picture,
+          rawData: res.data,
         };
       }
 
       if (idType === 'SSNIT') {
-        // entity: GetSsnitResponseEntity
-        // note: has 'full_name' only (no separate first/last), 'picture' not 'photo'
-        const res = await dojah.ghKyc.getSsnit({ id: idNumber as string });
-        const entity = (res.data as any)?.entity;
-        const nameParts = (entity?.full_name ?? '').split(' ');
+        // full_name and date_of_birth are REQUIRED by Dojah for this endpoint
+        if (!fullName || !dateOfBirth) {
+          return { success: false, error: 'fullName and dateOfBirth are required for Ghana SSNIT lookup' };
+        }
+        const res = await dojahClient.get('/api/v1/gh/kyc/ssnit', {
+          params: { id: idNumber, full_name: fullName, date_of_birth: dateOfBirth },
+        });
+        const entity = res.data?.entity;
+        const [firstName, ...rest] = (entity?.full_name ?? '').split(' ');
         return {
           success: !!entity,
-          firstName: nameParts[0],
-          lastName: nameParts.slice(1).join(' ') || undefined,
+          firstName,
+          lastName: rest.join(' ') || undefined,
           dob: entity?.date_of_birth,
           photo: entity?.picture,
           rawData: res.data,
@@ -247,15 +273,19 @@ export async function verifyTier1({
       }
 
       if (idType === 'DRIVERS_LICENSE') {
-        // entity: GetDriversLicenseResponseEntity
-        // note: has 'full_name' only, 'picture' not 'photo'
-        const res = await dojah.ghKyc.getDriversLicense({ id: idNumber as string });
-        const entity = (res.data as any)?.entity;
-        const nameParts = (entity?.full_name ?? '').split(' ');
+        // full_name and date_of_birth are REQUIRED by Dojah for this endpoint
+        if (!fullName || !dateOfBirth) {
+          return { success: false, error: 'fullName and dateOfBirth are required for Ghana Drivers Licence lookup' };
+        }
+        const res = await dojahClient.get('/api/v1/gh/kyc/dl', {
+          params: { id: idNumber, full_name: fullName, date_of_birth: dateOfBirth },
+        });
+        const entity = res.data?.entity;
+        const [firstName, ...rest] = (entity?.full_name ?? '').split(' ');
         return {
           success: !!entity,
-          firstName: nameParts[0],
-          lastName: nameParts.slice(1).join(' ') || undefined,
+          firstName,
+          lastName: rest.join(' ') || undefined,
           dob: entity?.date_of_birth,
           photo: entity?.picture,
           rawData: res.data,
@@ -263,14 +293,14 @@ export async function verifyTier1({
       }
     }
 
-    // ── Kenya ──────────────────────────────────────────────────────────────────
+    // ── Kenya — both CONFIRMED against current Dojah docs ──────────────────
     if (country === 'KE') {
 
       if (idType === 'NATIONAL_ID') {
-        // entity: GetNationalIdResponseEntity
-        // note: uses 'last_name'/'middle_name', no photo field
-        const res = await dojah.keKyc.getNationalId({ id: Number(idNumber) });
-        const entity = (res.data as any)?.entity;
+        const res = await dojahClient.get('/api/v1/ke/kyc/id', {
+          params: { id: idNumber },
+        });
+        const entity = res.data?.entity;
         return {
           success: !!entity,
           firstName: entity?.first_name,
@@ -281,80 +311,59 @@ export async function verifyTier1({
       }
 
       if (idType === 'PASSPORT') {
-        // The Dojah SDK's keKyc.getPassport() accepts no parameters — the passport
-        // number cannot be passed through it. This endpoint is not usable until
-        // Dojah updates the SDK or documents an alternative approach (e.g. direct
-        // HTTP call with the passport number as a query param).
-        // TODO: check Dojah dashboard for KE passport endpoint requirements and
-        //       implement via direct axios call if needed.
+        const res = await dojahClient.get('/api/v1/ke/kyc/passport', {
+          params: { id_number: idNumber },
+        });
+        const entity = res.data?.entity;
         return {
-          success: false,
-          error: 'Kenya Passport lookup is not currently supported. Please use National ID instead.',
+          success: !!entity,
+          firstName: entity?.first_name,
+          lastName: entity?.last_name,
+          dob: entity?.date_of_birth,
+          phone: entity?.phone_number,
+          photo: entity?.photo,
+          rawData: res.data,
         };
       }
     }
 
-    // ── Tanzania ───────────────────────────────────────────────────────────────
-    // Does NOT take an ID number — requires personal details for lookup.
-    // Frontend must collect firstName, lastName, dateOfBirth (+ optional mother's names).
+    // ── Tanzania — UNCONFIRMED WHETHER THIS COUNTRY IS EVEN SUPPORTED ──────
+    // No Tanzania page has turned up across two rounds of research covering
+    // NG, GH, KE, UG, ZA, Angola, Zimbabwe, and Zambia. Get explicit
+    // confirmation from Dojah support before this ever reaches a real user.
     if (country === 'TZ' && idType === 'TZ_NIN') {
-      if (!tzParams) {
-        return {
-          success: false,
-          error: 'Tanzania NIN lookup requires personal details (firstName, lastName, dateOfBirth). Provide tzParams.',
-        };
-      }
-      const res = await dojah.tzKyc.getNin({
-        firstName: tzParams.firstName,
-        lastName: tzParams.lastName,
-        dateOfBirth: tzParams.dateOfBirth,
-        mothersFirstName: tzParams.mothersFirstName,
-        mothersLastName: tzParams.mothersLastName,
+      return {
+        success: false,
+        error: 'Tanzania NIN lookup is not confirmed as a supported Dojah endpoint.',
+      };
+    }
+
+    // ── Uganda — CONFIRMED: this is a NIN lookup ────────────────────────────
+    if (country === 'UG' && idType === 'NATIONAL_ID') {
+      const res = await dojahClient.get('/api/v1/ug/kyc/nin', {
+        params: { nin: idNumber },
       });
-      // SDK returns untyped `data: object` — log raw in dev to confirm field names
-      const raw = res.data as any;
-      if (process.env.NODE_ENV !== 'production') console.log('[dojah TZ NIN raw]', JSON.stringify(raw, null, 2));
-      const entity = raw?.entity ?? raw;
+      const entity = res.data?.entity;
       return {
         success: !!entity,
         firstName: entity?.first_name,
         lastName: entity?.last_name,
         dob: entity?.date_of_birth,
-        rawData: raw,
+        rawData: res.data,
       };
     }
 
-    // ── Uganda ─────────────────────────────────────────────────────────────────
-    if (country === 'UG' && idType === 'VOTER') {
-      // SDK returns untyped `data: object` — log raw in dev to confirm field names
-      const res = await dojah.ugKyc.getVoter({ id: idNumber as number });
-      const raw = res.data as any;
-      if (process.env.NODE_ENV !== 'production') console.log('[dojah UG VOTER raw]', JSON.stringify(raw, null, 2));
-      const entity = raw?.entity ?? raw;
-      return {
-        success: !!entity,
-        firstName: entity?.first_name,
-        lastName: entity?.last_name,
-        rawData: raw,
-      };
-    }
-
-    // ── South Africa ───────────────────────────────────────────────────────────
+    // ── South Africa — CONFIRMED against current Dojah docs ────────────────
     if (country === 'ZA' && idType === 'NATIONAL_ID') {
-      // entity: ZafKycGetIdResponseEntity
-      // note: has 'full_name' + separate 'last_name', 'date_of_birth', 'photo'
-      const res = await dojah.zafKyc.getId({ idNumber: idNumber as number });
-      const entity = (res.data as any)?.entity;
-      // full_name includes first + last — extract first name by removing last_name from it
-      const fullName: string = entity?.full_name ?? '';
-      const lastName: string = entity?.last_name ?? '';
-      const firstName = fullName.replace(lastName, '').trim() || fullName;
+      const res = await dojahClient.get('/api/v1/za/kyc/id', {
+        params: { id_number: idNumber },
+      });
+      const entity = res.data?.entity;
       return {
         success: !!entity,
-        firstName,
-        lastName,
+        firstName: entity?.first_name,
+        lastName: entity?.last_name,
         dob: entity?.date_of_birth,
-        photo: entity?.photo,
         rawData: res.data,
       };
     }
@@ -362,24 +371,53 @@ export async function verifyTier1({
     return { success: false, error: `Unsupported country/idType: ${country}/${idType}` };
 
   } catch (error: any) {
-    console.error('Dojah BVN call failed:', {
-        url: error?.config?.url,
-        baseURL: error?.config?.baseURL,
-        method: error?.config?.method,
-        responseData: error?.response?.data,
-        status: error?.response?.status,
-    });
-
-    return { success: false, error: error?.response?.data?.error ?? error.message, rawData: error?.response?.data };
-
+    const { error: msg, rawData } = handleDojahError(`verifyTier1:${country}/${idType}`, error);
+    return { success: false, error: msg, rawData };
   }
 }
 
-// ─── Tier 2 — Photo ID + Selfie ────────────────────────────────────────────────
-// Country-agnostic: Dojah compares the face on the ID document against the
-// selfie using computer vision only — it does not care what country issued
-// the ID or what type it is. Works identically for NG, GH, KE, TZ, UG, ZA
-// and any other country. The user simply provides their ID photo and a selfie.
+// ─── Selfie-combined lookups (identity + liveness in one call) ────────────
+// Separate, higher-assurance endpoints Dojah offers alongside the plain
+// lookups above. Wire these in if/when your Tier1 flow starts collecting a
+// selfie at the same step as the ID number.
+
+export async function verifyBvnWithSelfie(bvn: string, selfieImageBase64: string) {
+  try {
+    const res = await dojahClient.post('/api/v1/kyc/bvn/verify', {
+      bvn,
+      selfie_image: selfieImageBase64,
+    });
+    return { success: true, rawData: res.data };
+  } catch (error: any) {
+    return { success: false, ...handleDojahError('verifyBvnWithSelfie', error) };
+  }
+}
+
+export async function verifyNinWithSelfie(nin: string, selfieImageBase64: string) {
+  try {
+    const res = await dojahClient.post('/api/v1/kyc/nin/verify', {
+      nin,
+      selfie_image: selfieImageBase64,
+    });
+    return { success: true, rawData: res.data };
+  } catch (error: any) {
+    return { success: false, ...handleDojahError('verifyNinWithSelfie', error) };
+  }
+}
+
+export async function verifyVninWithSelfie(vnin: string, selfieImageBase64: string) {
+  try {
+    const res = await dojahClient.post('/api/v1/kyc/vnin/verify', {
+      vnin,
+      selfie_image: selfieImageBase64,
+    });
+    return { success: true, rawData: res.data };
+  } catch (error: any) {
+    return { success: false, ...handleDojahError('verifyVninWithSelfie', error) };
+  }
+}
+
+// ─── Tier 2 — Photo ID + Selfie — CONFIRMED against current Dojah docs ────
 
 export async function verifyTier2({
   selfieImageBase64,
@@ -389,107 +427,148 @@ export async function verifyTier2({
   idImageBase64: string;
 }): Promise<Tier2Result> {
   try {
-    const res = await dojah.ml.verifyPhotoIdWithSelfie({
+    const res = await dojahClient.post('/api/v1/kyc/photoid/verify', {
       selfie_image: selfieImageBase64,
       photoid_image: idImageBase64,
     });
-
-    // SDK returns untyped `data: object` — log raw in dev to confirm match field names
-    const raw = res.data as any;
-    if (process.env.NODE_ENV !== 'production') console.log('[dojah TIER2 SELFIE raw]', JSON.stringify(raw, null, 2));
-    const data = raw?.entity ?? raw;
-    const match: boolean =
-      data?.match === true ||
-      data?.face_match === true ||
-      (typeof data?.confidence === 'number' && data.confidence >= 0.8);
-
+    const data = res.data?.entity?.selfie;
     return {
       success: true,
-      match,
-      confidence: data?.confidence ?? data?.similarity,
-      rawData: raw,
+      match: data?.match === true, // Dojah: confidence_value >= 90 → match true
+      confidence: data?.confidence_value,
+      rawData: res.data,
     };
-  } catch (err: any) {
-    console.error('[dojah.verifyTier2]', err?.message ?? err);
-    return { success: false, match: false, error: err?.message ?? 'Verification failed' };
+  } catch (error: any) {
+    const { error: msg } = handleDojahError('verifyTier2', error);
+    return { success: false, match: false, error: msg };
   }
 }
 
-// ─── AML Screening ─────────────────────────────────────────────────────────────
-// entity: AmlScreenAmlResponseEntity
-// note: response is async — returns { reference_id, status } only.
-// Dojah sends actual hit results to your webhook, not inline.
-// Store the reference_id and handle hits via webhook for production use.
-// For now, we treat a successful call as a clean screen and log the reference.
+// ─── AML Screening (v2) — CONFIRMED, fully synchronous ─────────────────────
+// Rewritten from scratch: the previous version assumed an async
+// reference_id/webhook pattern that doesn't match this endpoint's real
+// behavior. It returns full PEP/sanctions/adverse-media results inline.
 
 export async function screenAml({
   firstName,
   lastName,
+  dateOfBirth,
+  nationality,
+  idNumber,
 }: {
   firstName: string;
   lastName: string;
+  dateOfBirth?: string;
+  nationality?: string;
+  idNumber?: string;
 }): Promise<AmlResult> {
   try {
-    const res = await dojah.aml.screenAml({ first_name: firstName, last_name: lastName });
-    const entity = (res.data as any)?.entity;
+    const res = await dojahClient.post('/api/v1/aml/v2/screening', {
+      schema: 'individual',
+      properties: {
+        names: `${firstName} ${lastName}`.trim(),
+        date_of_birth: dateOfBirth ?? '',
+        nationality: nationality ?? '',
+        id_number: idNumber ?? '',
+      },
+      screening_options: {
+        pep_check: true,
+        sanction: true,
+        adverse_media_check: true,
+        match_threshold: 0.85,
+      },
+    });
 
-    // AML response is { reference_id, status } — hits arrive via webhook asynchronously
+    const entity = res.data?.entity;
+    const results = entity?.results ?? [];
+
+    const isPep = results.some((r: any) => r?.source_type === 'PEP' && r?.match === true);
+    const isSanctioned = results.some((r: any) => r?.source_type === 'SANCTIONS' && r?.match === true);
+
     return {
       success: true,
-      isPep: false,       // will be updated by webhook handler when Dojah delivers results
-      isSanctioned: false,
-      referenceId: entity?.reference_id,
-      hits: [],
+      isPep,
+      isSanctioned,
+      riskLevel: entity?.risk_level,
+      matchStatus: entity?.match_status,
+      hits: results,
       rawData: res.data,
     };
-  } catch (err: any) {
-    console.error('[dojah.screenAml]', err?.message ?? err);
-    return { success: false, isPep: false, isSanctioned: false, hits: [], error: err?.message };
+  } catch (error: any) {
+    const { error: msg } = handleDojahError('screenAml', error);
+    return { success: false, isPep: false, isSanctioned: false, hits: [], error: msg };
   }
 }
 
-// ─── Phone Fraud Screening ─────────────────────────────────────────────────────
-// entity: FraudScreenPhoneResponseEntity
-// note: uses 'valid' not 'is_valid', 'disposable' not 'is_disposable',
-//       'score' not 'risk_score', 'type' includes 'voip'
-
-export async function screenPhone(phoneNumber: number): Promise<FraudResult> {
-  try {
-    const res = await dojah.fraud.screenPhone({ phoneNumber });
-    const entity = (res.data as any)?.entity;
-
-    const flags: string[] = [];
-    if (entity?.valid === false) flags.push('INVALID_PHONE');
-    if (entity?.type?.toLowerCase() === 'voip') flags.push('VOIP_NUMBER');
-    if (entity?.disposable === true) flags.push('DISPOSABLE_NUMBER');
-    if (typeof entity?.score === 'number' && entity.score >= 70) flags.push('HIGH_RISK_SCORE');
-
-    return { success: true, riskScore: entity?.score, flags, rawData: res.data };
-  } catch (err: any) {
-    console.error('[dojah.screenPhone]', err?.message ?? err);
-    return { success: false, flags: [], error: err?.message };
-  }
-}
-
-// ─── Email Fraud Screening ─────────────────────────────────────────────────────
-// entity: FraudGetEmailReputationResponseEntity
-// note: uses 'suspicious' not 'is_disposable', 'score' not 'fraud_score',
-//       'reputation' is a string ('low'/'medium'/'high'), 'deliverable' is bool
+// ─── Email Fraud Screening — CONFIRMED against current Dojah docs ─────────
 
 export async function screenEmail(email: string): Promise<FraudResult> {
   try {
-    const res = await dojah.fraud.getEmailReputation({ email });
-    const entity = (res.data as any)?.entity;
+    const res = await dojahClient.get('/api/v1/fraud/email', {
+      params: { email_address: email },
+    });
+    const entity = res.data?.entity;
+    const d = entity?.details ?? {};
 
     const flags: string[] = [];
     if (entity?.suspicious === true) flags.push('SUSPICIOUS_EMAIL');
-    if (entity?.deliverable === false) flags.push('UNDELIVERABLE_EMAIL');
+    if (d.disposable === true) flags.push('DISPOSABLE_EMAIL');
+    if (d.deliverable === false) flags.push('UNDELIVERABLE_EMAIL');
+    if (d.data_breach === true) flags.push('IN_DATA_BREACH');
+    if (d.credentials_leaked === true) flags.push('CREDENTIALS_LEAKED');
     if (entity?.reputation?.toLowerCase() === 'low') flags.push('LOW_REPUTATION');
-    if (typeof entity?.score === 'number' && entity.score >= 70) flags.push('HIGH_FRAUD_SCORE');
+    if (d.new_domain === true) flags.push('NEW_DOMAIN');
 
-    return { success: true, riskScore: entity?.score, flags, rawData: res.data };
-  } catch (err: any) {
-    console.error('[dojah.screenEmail]', err?.message ?? err);
-    return { success: false, flags: [], error: err?.message };
+    return { success: true, flags, rawData: res.data };
+  } catch (error: any) {
+    const { error: msg } = handleDojahError('screenEmail', error);
+    return { success: false, flags: [], error: msg };
+  }
+}
+
+// ─── Combined User Screening (phone + email + AML + IP in one call) ───────
+// Dojah offers a single endpoint that does everything a standalone
+// screenPhone would have tried to do, plus AML and IP risk in the same
+// call — GET /api/v1/fraud/user. No standalone phone-only endpoint was
+// found in the docs available, so this is the confirmed path for phone
+// risk rather than a guessed one.
+
+export async function screenUser({
+  firstName,
+  lastName,
+  middleName,
+  dateOfBirth,
+  email,
+  phone,
+  ipAddress,
+}: {
+  firstName: string;
+  lastName: string;
+  middleName?: string;
+  dateOfBirth: string;
+  email?: string;
+  phone?: string;
+  ipAddress?: string;
+}) {
+  try {
+    const res = await dojahClient.get('/api/v1/fraud/user', {
+      params: {
+        first_name: firstName,
+        last_name: lastName,
+        middle_name: middleName,
+        date_of_birth: dateOfBirth,
+        email,
+        phone,
+        ip_address: ipAddress,
+      },
+    });
+    return {
+      success: true,
+      rawData: res.data,
+      overallRiskScore: res.data?.entity?.overall_risk_score,
+    };
+  } catch (error: any) {
+    const { error: msg } = handleDojahError('screenUser', error);
+    return { success: false, error: msg };
   }
 }
