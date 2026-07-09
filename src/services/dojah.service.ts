@@ -4,7 +4,8 @@ import { Dojah } from 'dojah-typescript-sdk';
 
 const dojah = new Dojah({
   authorization: process.env.DOJAH_SECRET_KEY!,
-  appId: process.env.DOJAH_APP_ID!,
+  appId: process.env.DOJAH_SECRET_KEY!,
+//   appId: process.env.DOJAH_APP_ID!,
 });
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -367,7 +368,7 @@ export async function verifyTier1({
         responseData: error?.response?.data,
         status: error?.response?.status,
     });
-    
+
     return { success: false, error: error?.response?.data?.error ?? error.message, rawData: error?.response?.data };
 
   }
