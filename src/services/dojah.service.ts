@@ -4,6 +4,7 @@ import { Dojah } from 'dojah-typescript-sdk';
 
 const dojah = new Dojah({
   authorization: '2xiqyUFcWGAlhsM3',
+  accessToken:'2xiqyUFcWGAlhsM3',
   apiKey: process.env.DOJAH_SECRET_KEY!,
   appId: process.env.DOJAH_APP_ID!,
 });
