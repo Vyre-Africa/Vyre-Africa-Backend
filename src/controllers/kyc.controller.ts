@@ -193,13 +193,21 @@ class KycController {
         });
       }
 
-      // AML/PEP/sanctions screening — mandatory at Tier 1 upgrade per
-      // AML/CFT Policy Section 7. This does NOT hard-block the upgrade on a
-      // hit; it flags the verification record for manual compliance review
-      // instead, since PEP/adverse-media hits are common false positives on
-      // common names and a human should make the final call. If you want
-      // hits to hard-block the Tier 1 upgrade instead, say so explicitly —
-      // that's a deliberate policy choice, not something to default silently.
+      // AML/PEP/sanctions/adverse-media screening — mandatory at Tier 1
+      // upgrade per AML/CFT Policy Section 7. This does NOT hard-block the
+      // upgrade on a hit; it flags the verification record for manual
+      // compliance review instead, since PEP/adverse-media hits are common
+      // false positives on common names and a human should make the final
+      // call. If you want hits to hard-block the Tier 1 upgrade instead,
+      // say so explicitly — that's a deliberate policy choice, not
+      // something to default silently.
+      //
+      // IMPORTANT: flag on the aggregate outcome, not just isPep/isSanctioned.
+      // Dojah's own risk engine can return risk_level 'Medium' / match_status
+      // 'Potential Match' purely from an ADVERSE_MEDIA hit, with isPep and
+      // isSanctioned both false. Checking only those two booleans lets a
+      // Medium-risk potential match through with flaggedForReview: false —
+      // exactly the bug this comment is here to prevent regressing on.
       const amlResult = await screenAml({
         firstName: idResult.firstName ?? '',
         lastName: idResult.lastName ?? '',
@@ -207,7 +215,11 @@ class KycController {
 
       console.log('Dojah AML result:', amlResult);
 
-      const amlFlagged = amlResult.isPep || amlResult.isSanctioned;
+      const amlFlagged =
+        amlResult.isPep ||
+        amlResult.isSanctioned ||
+        amlResult.hasAdverseMedia ||
+        (!!amlResult.matchStatus && amlResult.matchStatus !== 'No Match');
 
       await prisma.kycVerification.create({
         data: {
@@ -218,7 +230,7 @@ class KycController {
           dojahData: amlResult.rawData ?? null,
           flaggedForReview: amlFlagged,
           reviewNote: amlFlagged
-            ? `AML screen: riskLevel=${amlResult.riskLevel ?? 'unknown'}, matchStatus=${amlResult.matchStatus ?? 'unknown'}`
+            ? `AML screen: riskLevel=${amlResult.riskLevel ?? 'unknown'}, matchStatus=${amlResult.matchStatus ?? 'unknown'}, isPep=${amlResult.isPep}, isSanctioned=${amlResult.isSanctioned}, hasAdverseMedia=${amlResult.hasAdverseMedia}`
             : null,
           resolvedAt: new Date(),
         },
