@@ -359,9 +359,17 @@ export async function verifyTier1({
 
     return { success: false, error: `Unsupported country/idType: ${country}/${idType}` };
 
-  } catch (err: any) {
-    console.error('[dojah.verifyTier1]', err?.message ?? err);
-    return { success: false, error: err?.message ?? 'Verification failed' };
+  } catch (error: any) {
+    console.error('Dojah BVN call failed:', {
+        url: error?.config?.url,
+        baseURL: error?.config?.baseURL,
+        method: error?.config?.method,
+        responseData: error?.response?.data,
+        status: error?.response?.status,
+    });
+    
+    return { success: false, error: error?.response?.data?.error ?? error.message, rawData: error?.response?.data };
+
   }
 }
 
