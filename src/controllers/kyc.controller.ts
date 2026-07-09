@@ -117,7 +117,7 @@ class KycController {
         });
       }
 
-      const { country, idType, idNumber, tzParams, email } = req.body as {
+      const { country, idType, idNumber, tzParams, email, fullName, dateOfBirth } = req.body as {
         country: KycCountry;
         idType: Tier1IdType;
         idNumber?: number | string;
@@ -129,6 +129,8 @@ class KycController {
           mothersLastName?: string;
         };
         email?: string;
+        fullName?: string;      // required for GH SSNIT / DRIVERS_LICENSE
+        dateOfBirth?: string;   // required for GH SSNIT / DRIVERS_LICENSE (yyyy-MM-dd)
       };
 
       if (!country || !idType) {
@@ -151,11 +153,20 @@ class KycController {
       }
 
       const isTanzania = country === 'TZ' && idType === 'TZ_NIN';
+      const requiresGhNameDob =
+        country === 'GH' && (idType === 'SSNIT' || idType === 'DRIVERS_LICENSE');
 
       if (isTanzania && (!tzParams?.firstName || !tzParams?.lastName || !tzParams?.dateOfBirth)) {
         return res.status(400).json({
           success: false,
           msg: 'Tanzania NIN lookup requires tzParams with firstName, lastName, and dateOfBirth',
+        });
+      }
+
+      if (requiresGhNameDob && (!fullName || !dateOfBirth)) {
+        return res.status(400).json({
+          success: false,
+          msg: `${idType} verification for Ghana requires fullName and dateOfBirth`,
         });
       }
 
@@ -167,7 +178,7 @@ class KycController {
         data: { userId: user.id, type: idType, country, status: 'PENDING' },
       });
 
-      const idResult = await verifyTier1({ country, idType, idNumber, tzParams });
+      const idResult = await verifyTier1({ country, idType, idNumber, tzParams, fullName, dateOfBirth });
 
       console.log('Dojah Tier 1 result:', idResult);
 
@@ -182,22 +193,36 @@ class KycController {
         });
       }
 
-    //   const amlResult = await screenAml({
-    //     firstName: idResult.firstName ?? '',
-    //     lastName: idResult.lastName ?? '',
-    //   });
+      // AML/PEP/sanctions screening — mandatory at Tier 1 upgrade per
+      // AML/CFT Policy Section 7. This does NOT hard-block the upgrade on a
+      // hit; it flags the verification record for manual compliance review
+      // instead, since PEP/adverse-media hits are common false positives on
+      // common names and a human should make the final call. If you want
+      // hits to hard-block the Tier 1 upgrade instead, say so explicitly —
+      // that's a deliberate policy choice, not something to default silently.
+      const amlResult = await screenAml({
+        firstName: idResult.firstName ?? '',
+        lastName: idResult.lastName ?? '',
+      });
 
-    //   await prisma.kycVerification.create({
-    //     data: {
-    //       userId: user.id,
-    //       type: 'AML',
-    //       country,
-    //       status: amlResult.success ? 'APPROVED' : 'FAILED',
-    //       dojahData: amlResult.rawData ?? null,
-    //       dojahRef: amlResult.referenceId ?? null,
-    //       resolvedAt: new Date(),
-    //     },
-    //   });
+      console.log('Dojah AML result:', amlResult);
+
+      const amlFlagged = amlResult.isPep || amlResult.isSanctioned;
+
+      await prisma.kycVerification.create({
+        data: {
+          userId: user.id,
+          type: 'AML',
+          country,
+          status: amlResult.success ? 'APPROVED' : 'FAILED',
+          dojahData: amlResult.rawData ?? null,
+          flaggedForReview: amlFlagged,
+          reviewNote: amlFlagged
+            ? `AML screen: riskLevel=${amlResult.riskLevel ?? 'unknown'}, matchStatus=${amlResult.matchStatus ?? 'unknown'}`
+            : null,
+          resolvedAt: new Date(),
+        },
+      });
 
       if (email) {
         const emailResult = await screenEmail(email);
@@ -301,10 +326,12 @@ class KycController {
           where: { id: verificationRecord.id },
           data: { status: 'FAILED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
         });
+        // Dojah's confidence_value is already on a 0-100 scale — do not
+        // multiply by 100 again (that previously showed e.g. "8500%").
         return res.status(422).json({
           success: false,
           msg: result.error ??
-            `Face match failed (confidence: ${((result.confidence ?? 0) * 100).toFixed(0)}%). Please ensure your face is clearly visible and matches your ID photo.`,
+            `Face match failed (confidence: ${(result.confidence ?? 0).toFixed(0)}%). Please ensure your face is clearly visible and matches your ID photo.`,
         });
       }
 
