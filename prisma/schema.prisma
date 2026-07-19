@@ -352,7 +352,7 @@ model User {
   authId       String?     @unique
   firstName    String      @db.VarChar(255)
   lastName     String      @db.VarChar(255)
-  
+
   legalFirstName  String?
   legalLastName   String?
   legalNameVerifiedAt DateTime?
@@ -379,10 +379,21 @@ model User {
   otpCodeUsed       Boolean  @default(false)
   otpCodeExpiryTime String?
 
+  // ✅ Bank details
   bvnSubmitted Boolean @default(false)
   bvnVerified  Boolean @default(false)
   bvn          String?
   bvnDetails   Json?
+
+  bankId            String?
+  bankCode          String?
+  bankAccountNumber String?
+
+  qorepayCustomerId       String?
+  qorepayVirtualAccountId String?
+  qorepayStatus           String?
+  qorepayProvisionedAt    DateTime?
+
 
   // ✅ ACCESS PIN (for anonymous orders - 6 digits)
   accessPin          String? // Hashed PIN
@@ -417,6 +428,7 @@ model User {
 
   isVendor        Boolean @default(false)
   vendorApplication VendorApplication?
+
 
   kycTier          Int       @default(0)
   kycTier1At       DateTime?
@@ -680,30 +692,31 @@ model Notification {
 }
 
 model Transaction {
-  id          String            @id @default(cuid())
-  walletId    String?
-  userId      String?
-  orderId     String?
-  currency    String?
-  user        User?             @relation(fields: [userId], references: [id])
-  wallet      Wallet?           @relation(fields: [walletId], references: [id])
-  reference   String?
-  amount      Decimal           @db.Decimal(20, 8)
-  status      TransactionStatus
-  type        TransactionType
-  description String
-  createdAt   DateTime          @default(now())
-  metadata    Json?
+  id                String            @id @default(cuid())
+  walletId          String?
+  userId            String?
+  orderId           String?
+  currency          String?
+  user              User?             @relation(fields: [userId], references: [id])
+  wallet            Wallet?           @relation(fields: [walletId], references: [id])
+  reference         String?
+  amount            Decimal           @db.Decimal(20, 8)
+  status            TransactionStatus
+  type              TransactionType
+  description       String
+  platformFeeAmount Decimal?          @db.Decimal(20, 8)
+  createdAt         DateTime          @default(now())
+  metadata          Json?
 
   // 🚀 PERFORMANCE INDEXES - ADD THESE
-  @@index([userId]) // Fast user lookups
-  @@index([walletId]) // Fast wallet lookups
-  @@index([status]) // Fast status lookups
-  @@index([type]) // Fast type lookups
-  @@index([reference]) // For reference lookups
-  @@index([userId, status]) // Compound for user transactions
-  @@index([createdAt]) // For time-based queries
-  @@index([userId, createdAt(sort: Desc)]) // For recent user transactions
+  @@index([userId])                          // Fast user lookups
+  @@index([walletId])                        // Fast wallet lookups
+  @@index([status])                          // Fast status lookups
+  @@index([type])                            // Fast type lookups
+  @@index([reference])                       // For reference lookups
+  @@index([userId, status])                  // Compound for user transactions
+  @@index([createdAt])                       // For time-based queries
+  @@index([userId, createdAt(sort: Desc)])   // For recent user transactions
 }
 
 model Currency {
@@ -791,7 +804,7 @@ model bankDetails {
   bank_name      String?
   status         bankDetailStatus @default(PENDING)
 
-  walletId String?
+  walletId String @unique
   wallet   Wallet? @relation(fields: [walletId], references: [id])
 }
 
@@ -1437,6 +1450,20 @@ model KycVerification {
   @@index([userId])
   @@index([status])
   @@index([type])
+}
+
+model UnreconciledDeposit {
+  id         String    @id @default(cuid())
+  dvaId      String
+  reference  String
+  amount     Float
+  rawPayload Json
+  resolved   Boolean   @default(false)
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([dvaId])
+  @@index([resolved])
 }
 
 

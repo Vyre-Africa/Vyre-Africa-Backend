@@ -1181,14 +1181,14 @@ class VirtualAccountService {
     }
 
     async generateHDAddress(
-        blockchain: string,
+        chainKey: string,
         xpub: string,
         index: number
     ): Promise<string> {
-        const config = CHAIN_CONFIG[blockchain.toUpperCase()];
-        if (!config) throw new Error(`Unsupported blockchain: ${blockchain}`);
-        if (config.walletType !== 'HD') throw new Error(`${blockchain} is not an HD wallet chain`);
-        if (!config.tatumEndpoint) throw new Error(`No endpoint configured for ${blockchain}`);
+        const config = CHAIN_CONFIG[chainKey.toUpperCase()];
+        if (!config) throw new Error(`Unsupported blockchain: ${chainKey}`);
+        if (config.walletType !== 'HD') throw new Error(`${config.blockchain} is not an HD wallet chain`);
+        if (!config.tatumEndpoint) throw new Error(`No endpoint configured for ${config.blockchain}`);
 
         const response = await axios.get(
             `${config.tatumEndpoint}/${xpub}/${index}`,
@@ -1198,20 +1198,20 @@ class VirtualAccountService {
         );
 
         const address = response.data?.address;
-        if (!address) throw new Error(`Failed to generate address for ${blockchain}`);
+        if (!address) throw new Error(`Failed to generate address for ${config.blockchain}`);
 
         return address;
     }
 
-    async generateKeypairWallet(blockchain: string): Promise<{
+    async generateKeypairWallet(chainKey: string): Promise<{
         address: string;
         privateKey: string;
         mnemonic?: string;
     }> {
-        const config = CHAIN_CONFIG[blockchain.toUpperCase()];
-        if (!config) throw new Error(`Unsupported blockchain: ${blockchain}`);
-        if (config.walletType !== 'KEYPAIR') throw new Error(`${blockchain} is not a keypair chain`);
-        if (!config.tatumWalletEndpoint) throw new Error(`No wallet endpoint configured for ${blockchain}`);
+        const config = CHAIN_CONFIG[chainKey.toUpperCase()];
+        if (!config) throw new Error(`Unsupported blockchain: ${chainKey}`);
+        if (config.walletType !== 'KEYPAIR') throw new Error(`${config.blockchain} is not a keypair chain`);
+        if (!config.tatumWalletEndpoint) throw new Error(`No wallet endpoint configured for ${config.blockchain}`);
 
         const response = await axios.get(
             config.tatumWalletEndpoint,
@@ -1227,7 +1227,7 @@ class VirtualAccountService {
         
 
         if (!address || !privateKey) {
-            throw new Error(`Failed to generate keypair wallet for ${blockchain}`);
+            throw new Error(`Failed to generate keypair wallet for ${config.blockchain}`);
         }
 
         return { address, privateKey, mnemonic };
@@ -1394,7 +1394,7 @@ class VirtualAccountService {
 
             // ── No address provided — generate from Tatum ────────
             const index = await this.getNextIndex(accountXpub, blockchain);
-            const generatedAddress = await this.generateHDAddress(blockchain, accountXpub, index);
+            const generatedAddress = await this.generateHDAddress(chainKey, accountXpub, index);
 
             await this.connectHDAddress(
                 virtualAccountId,
@@ -1440,7 +1440,7 @@ class VirtualAccountService {
 
             // Generate fresh keypair for this account
             const { address: generatedAddress, privateKey, mnemonic } =
-                await this.generateKeypairWallet(blockchain);
+                await this.generateKeypairWallet(chainKey);
 
             await this.connectKeypairAddress(
                 virtualAccountId,
@@ -1460,7 +1460,7 @@ class VirtualAccountService {
             };
         }
 
-        throw new Error(`Unknown wallet type for ${chainKey}`);
+        throw new Error(`Unknown wallet type for ${config.currency} on ${config.blockchain}`);
     }
 
     async transferCryptoToExternal(payload:{

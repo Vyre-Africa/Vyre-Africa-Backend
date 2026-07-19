@@ -111,3 +111,5 @@ Error: Admin wallet not found
     at async Worker.retryIfFailed (/Users/user/Vyre-Africa-Backend/node_modules/bullmq/dist/cjs/classes/worker.js:774:24)
 2026-07-04 02:42:55 [error] Script failed: 
 2026-07-04 02:57:51 [error] Script failed: 
+2026-07-19 14:45:13 [error] Failed to create USDC wallet on SOLANA 
+2026-07-19 16:31:44 [error] Failed to create USDC wallet on SOLANA 

@@ -24,7 +24,8 @@
         "setup:moralis": "ts-node --transpile-only -r dotenv/config src/scripts/setupMoralisStreams.ts",
         "moralis:add-address": "ts-node --transpile-only -r dotenv/config src/scripts/addMoralisAddress.ts",
         "sync-ramp-orders": "ts-node --transpile-only -r dotenv/config src/scripts/sync-ramp-orders.ts",
-        "sync-buy-orders": "ts-node --transpile-only -r dotenv/config src/scripts/sync-buy-orders.ts"
+        "sync-buy-orders": "ts-node --transpile-only -r dotenv/config src/scripts/sync-buy-orders.ts",
+        "test:solana-wallet": "ts-node --transpile-only -r dotenv/config src/scripts/testSolanaWalletCreation.ts"
     },
     "author": "harvey ana",
     "license": "ISC",

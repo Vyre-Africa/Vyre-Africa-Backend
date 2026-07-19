@@ -4138,3 +4138,22 @@ Error: Admin wallet not found
 2026-07-09 14:08:35 [info] Connected to Ably! 
 2026-07-09 14:08:49 [info] Server running on port 4000 
 2026-07-09 14:08:50 [info] Connected to Ably! 
+2026-07-19 14:45:11 [info] Connected to Ably! 
+2026-07-19 14:45:12 [info] Creating USDC wallet on SOLANA 
+2026-07-19 14:45:13 [error] Failed to create USDC wallet on SOLANA 
+2026-07-19 14:45:13 [warn] Cleaning up orphaned wallet cmrr3on5000000ds6cetpj5hy 
+2026-07-19 16:31:40 [info] Connected to Ably! 
+2026-07-19 16:31:41 [info] Creating USDC wallet on SOLANA 
+2026-07-19 16:31:44 [info] Moralis SDK initialized 
+2026-07-19 16:31:44 [warn] Moralis: unsupported chain SOLANA 
+2026-07-19 16:31:44 [warn] Tatum subscription failed 
+2026-07-19 16:31:44 [info] Moralis subscription created 
+2026-07-19 16:31:44 [error] Failed to create USDC wallet on SOLANA 
+2026-07-19 16:31:44 [warn] Cleaning up orphaned wallet cmrr3on5000000ds6cetpj5hy 
+2026-07-19 19:46:59 [info] Connected to Ably! 
+2026-07-19 19:47:03 [info] Creating USDC wallet on SOLANA 
+2026-07-19 19:47:06 [info] Moralis SDK initialized 
+2026-07-19 19:47:06 [warn] Moralis: unsupported chain SOLANA 
+2026-07-19 19:47:08 [info] Tatum subscription created 
+2026-07-19 19:47:08 [info] Moralis subscription created 
+2026-07-19 19:47:09 [info] Wallet created successfully 

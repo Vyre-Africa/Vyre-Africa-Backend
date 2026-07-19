@@ -912,7 +912,7 @@ class eventService {
   public async handle_DVA_Event(payload: QorepayDVAPayload) {
     
     console.log('data', payload)
-
+ 
     const {payment_intent_id,
       reference,
       paid_amount,
@@ -923,58 +923,83 @@ class eventService {
       currency, 
       dva 
     } = payload
-
+ 
     try {
-
+ 
       // 1. Check for duplicate
       const existingTransaction = await prisma.transaction.findFirst({
         where: { reference }
       });
-
+ 
       if (existingTransaction) {
         console.log(`Duplicate webhook for reference: ${reference}`);
         logger.warn(`Duplicate webhook for reference: ${reference}`);
         return { status: 'success', reason: 'already_processed', transactionId: existingTransaction.id };
       }
-
+ 
       if (!dva || !dva.id) {
         console.log(`DVA not found for reference: ${reference}`);
         logger.warn(`DVA not found for reference: ${reference}`);
         return { status: 'success', reason: 'dva_not_found', reference };
       }
-
+ 
       // 3. Find bank details
       const bankDetails = await prisma.bankDetails.findUnique({
         where: { id: dva.id },
         include: { wallet: true }
       });
-
-
+ 
       if (!bankDetails || !bankDetails.wallet) {
-        logger.warn(`Bank details or wallet not found for DVA id: ${dva.id}`);
+        // Real money has already landed with Qorepay by the time this
+        // webhook fires — this is not a normal warning, it's an
+        // unreconciled deposit that needs a human, not just a log line
+        // that scrolls past. The webhook always returns 200 regardless
+        // of this outcome, so Qorepay will NOT retry — this table is the
+        // only remaining trace unless someone looks for it.
+        logger.error(`UNRECONCILED DEPOSIT — bank details/wallet not found for DVA id: ${dva.id}`, {
+          reference, paid_amount, dva,
+        });
+ 
+        await prisma.unreconciledDeposit.create({
+          data: {
+            dvaId: dva.id,
+            reference,
+            amount: paid_amount / 100,
+            rawPayload: payload as any,
+          },
+        }).catch((e) => logger.error('Failed to record unreconciled deposit', e));
+ 
         return { status: 'rejected', reason: 'wallet_not_found' };
       }
-
+ 
       const wallet = bankDetails.wallet;
+ 
+      // Confirmed against a real settlement record: paid_amount is the
+      // GROSS amount the customer transferred (e.g. Harvey sent ₦5,000).
+      // `fees` is Qorepay's charge to Vyre (merchant), deducted from
+      // Vyre's settlement balance — the customer never sees it, and the
+      // user's wallet must be credited with the full gross amount, not
+      // amount minus fees. Do not reintroduce a netAmount-based credit
+      // here without re-confirming against Qorepay's settlement report.
       const amount = paid_amount / 100; // convert back to naira from Kobo
-      const feeAmount = fees / 100;
-      const netAmount = amount - feeAmount;
-
+      const feeAmount = fees / 100;      // Qorepay's fee charged to Vyre — a business cost, not a user-facing deduction
+ 
       await walletService.credit_Wallet(Number(amount), wallet.id)
-
+ 
       // 1. create transaction record
       const transaction = await prisma.transaction.create({
           data: {
             userId: wallet.userId,
             currency,
             amount,
+            platformFeeAmount: feeAmount, // queryable business cost — see metadata for full raw payload too
             reference,
             status: 'SUCCESSFUL',
             
             walletId: wallet.id,
             type: 'FIAT_DEPOSIT',
             description: `${currency} deposit`,
-
+ 
             metadata: {
               payment_intent_id,
               reference,
@@ -988,20 +1013,20 @@ class eventService {
             }
           }
       });
-
+ 
       console.log('transaction',transaction)
-
+ 
       await notificationService.queue({
         userId: transaction.userId as string,
         title: 'Deposit Successful',
         type: 'GENERAL',
         content: `Your deposit of <strong>${transaction.amount} ${currency}</strong> has been processed successfully. The funds are now available in your wallet.`
       });
-
+ 
       await walletService.getAccount(wallet.id)
-
+ 
       return { status: 'success', transactionId: transaction.id };
-
+ 
     } catch (error:any) {
         logger.error(`Error handling webhook for: ${reference}`, {
           error: error.message,
@@ -1015,6 +1040,7 @@ class eventService {
         };
     }
   }
+ 
 
   public async handle_DVA_Created(payload: QorepayVirtualAccount) {
 
@@ -1805,6 +1831,7 @@ class eventService {
     'USDC_BSC':       '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
     'USDC_ARBITRUM':  '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
     'USDC_OPTIMISM':  '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+    'USDC_SOLANA': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     // USDT
     'USDT_ETHEREUM':  '0xdac17f958d2ee523a2206206994597c13d831ec7',
     'USDT_BASE':      '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2',
@@ -1812,7 +1839,8 @@ class eventService {
     'USDT_BSC':       '0x55d398326f99059ff775485246999027b3197955',
     'USDT_ARBITRUM':  '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',
     'USDT_OPTIMISM':  '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58',
-    'USDT_TRON':      'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+    'USDT_TRON':      'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+    'USDT_SOLANA': 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
   }
   WEBHOOK_CHAIN_MAP: Record<string, string> = {
     'ethereum-mainnet': 'ETHEREUM',
@@ -1821,7 +1849,8 @@ class eventService {
     'polygon-mainnet':  'POLYGON',
     'arb-one-mainnet':  'ARBITRUM',
     'optimism-mainnet': 'OPTIMISM',
-    'tron-mainnet':     'TRON'
+    'tron-mainnet':     'TRON',
+    'solana-mainnet':   'SOLANA'
   }
 
 
@@ -1841,16 +1870,20 @@ class eventService {
           return { status: 'ignored', reason: 'unsupported_chain_currency', message: `No contract for ${lookupKey}` }
       }
 
-      if (contractAddress.toLowerCase() !== expectedContract.toLowerCase()) {
-          logger.warn('Ignored — contract mismatch', {
-              received: contractAddress,
-              expected: expectedContract,
-              txId
-          })
-          return { status: 'ignored', reason: 'unsupported_token', message: `Token ${contractAddress} not supported` }
+      // Solana mint addresses are case-sensitive — compare exact case.
+      // EVM contract addresses are case-insensitive — compare lowercased.
+      const matches = chainKey === 'SOLANA'
+        ? contractAddress === expectedContract
+        : contractAddress.toLowerCase() === expectedContract.toLowerCase();
+        
+        
+      if (!matches) {
+        logger.warn('Ignored — contract mismatch', { received: contractAddress, expected: expectedContract, txId })
+        return { status: 'ignored', reason: 'unsupported_token', message: `Token ${contractAddress} not supported` }
       }
 
-      return null  // ← validation passed
+    return null
+
   }
 
   private isSweepFeedback(
@@ -2068,8 +2101,17 @@ class eventService {
         'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8',          // USDC TRON
     ]);
 
-    const isStablecoin = !!contractAddress && 
-      STABLECOIN_CONTRACTS.has(contractAddress.toLowerCase());
+    // Solana mint addresses are case-sensitive Base58 — never lowercase
+    // these, unlike the EVM contracts above.
+    const SOLANA_STABLECOIN_MINTS = new Set([
+        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC SOLANA
+        'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT SOLANA
+    ]);
+
+    const isStablecoin = !!contractAddress && (
+        STABLECOIN_CONTRACTS.has(contractAddress.toLowerCase()) ||
+        SOLANA_STABLECOIN_MINTS.has(contractAddress) // exact case, no .toLowerCase()
+    );
 
     const minAmount = isStablecoin ? 1 : 0.0001;
 
