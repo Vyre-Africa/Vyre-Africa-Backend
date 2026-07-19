@@ -138,7 +138,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
 
     // ── Native Keypair Chains ────────────────────────────────────
 
-    SOL: {
+    SOLANA: {
         blockchain: 'SOLANA',
         walletType: 'KEYPAIR',
         tatumWalletEndpoint: 'https://api.tatum.io/v3/solana/wallet',

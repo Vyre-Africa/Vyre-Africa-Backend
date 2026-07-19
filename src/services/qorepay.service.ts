@@ -216,9 +216,6 @@ class QorepayService {
       } catch (error:any) {
 
         logger.error('Bank transfer initialization failed:', error);
-
-
-        logger.error('Bank transfer initialization failed:', error);
         throw error;
       }
       
@@ -226,65 +223,94 @@ class QorepayService {
 
     }
 
-    async create_virtual_Account(payload: { userId: string }) {
-    const { userId } = payload;
+    // Reads BVN + bank details straight from the User record — both are
+    // captured exactly once, elsewhere (BVN via KYC Tier 1, bank details
+    // via the bank-account save endpoint), and never re-collected here.
+    // The retired bvnSubmitted/bvnDetails JSON blob is no longer read.
+    //
+    // Caller (wallet.service.ts createWallet) is responsible for only
+    // calling this once dojahBvnRef, bankCode, and bankAccountNumber are
+    // all confirmed present — this function still defends against being
+    // called out of order, but should not be the only gate.
+    async create_virtual_Account(payload: { userId: string; walletId?: string }) {
+      const { userId, walletId } = payload;
 
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          firstName: true,
-          lastName: true,
-          email: true,
-          bvnSubmitted: true,
-          bvnDetails: true,
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            email: true,
+            phoneNumber: true,
+            legalFirstName: true,
+            legalLastName: true,
+            firstName: true,
+            lastName: true,
+            dojahBvnRef: true,
+            bankCode: true,
+            bankAccountNumber: true,
+            qorepayVirtualAccountId: true,
+          }
+        });
+
+        if (!user) {
+          throw new Error(`User not found with id: ${userId}`);
         }
-      });
 
-      if (!user) {
-        throw new Error(`User not found with id: ${userId}`);
+        // Idempotency guard — never re-create for a user who already has
+        // one. Without this, a retry (e.g. after the wallet-creation flow
+        // above times out waiting on this call) creates a second, orphaned
+        // Qorepay virtual account tied to nothing.
+        if (user.qorepayVirtualAccountId) {
+          logger.info(`Qorepay virtual account already exists for user ${userId}, skipping creation`);
+          return null;
+        }
+
+        if (!user.dojahBvnRef) {
+          throw new Error(`User has not completed BVN verification: ${userId}`);
+        }
+
+        if (!user.bankCode || !user.bankAccountNumber) {
+          throw new Error(`Bank account details not found for user: ${userId}`);
+        }
+
+        const data = {
+          brand_id: config.QOREPAY_BRAND_ID,
+          email: user.email,
+          first_name: user.legalFirstName || user.firstName,
+          last_name: user.legalLastName || user.lastName,
+          // phone: user.phoneNumber,
+          bvn: user.dojahBvnRef,
+          bank_code: user.bankCode,
+          account_number: user.bankAccountNumber,
+          // preferred_bank: 'wema-bank', // TODO: confirm static vs configurable with Qorepay
+        };
+
+        const response = await qorepayAxios.post('/v1/virtual-accounts', data);
+        const axiosData = response.data;
+        const result = axiosData.data;
+        console.log('bank generation data', result)
+
+        if (!result) throw new Error('Could not initialize virtual account');
+
+        // Persist the Qorepay-side identifiers immediately so the
+        // idempotency check above works on the very next call, even
+        // before the DVA webhook confirms activation.
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            qorepayVirtualAccountId: result.id,
+            qorepayCustomerId: result.customer_id,
+            qorepayStatus: result.status,
+            qorepayProvisionedAt: new Date(),
+          },
+        });
+
+        return result;
+
+      } catch (error) {
+        logger.error('Virtual account initialization failed:', error);
+        throw error;
       }
-
-      if (!user.bvnSubmitted) {
-        throw new Error(`User has not submitted BVN`);
-      }
-
-      if (!user.bvnDetails) {
-        throw new Error(`BVN details not found for user: ${userId}`);
-      }
-
-      // Cast the Json field to a typed object
-      const bvnDetails = user.bvnDetails as {
-        bvn: string;
-        bank_code: string;
-        account_number: string;
-        firstName: string,
-        lastName: string
-      };
-
-      const data = {
-        brand_id: config.QOREPAY_BRAND_ID,
-        email: user.email,
-        first_name: bvnDetails.firstName || user.firstName,
-        last_name: bvnDetails.lastName || user.lastName,
-        bvn: bvnDetails.bvn,
-        bank_code: bvnDetails.bank_code,
-        account_number: bvnDetails.account_number
-      };
-
-      const response = await qorepayAxios.post('/v1/virtual-accounts', data);
-      const axiosData = response.data;
-      const result = axiosData.data;
-      console.log('bank generation data',result)
-
-      if (!result) throw new Error('Could not initialize virtual account');
-
-      return result;
-
-    } catch (error) {
-      logger.error('Virtual account initialization failed:', error);
-      throw error;
-    }
     }
 
 

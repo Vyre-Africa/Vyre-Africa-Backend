@@ -324,24 +324,20 @@ class nativeCoinService
         userId: string,
         currencyId: string
     ): Promise<WalletCreationResult> {
-
+    
         let wallet: any = null;
-
+    
         try {
             // ── 1. Validate coin support ─────────────────────────────
             if (!CoinConfigurations.isSupported(coin)) {
                 throw new Error(`Coin ${coin} not supported`);
             }
-
+    
             const coinConfig = CoinConfigurations.getConfig(coin);
             const isCrypto = CoinConfigurations.isCrypto(coin);
-
-            // const currency = await prisma.currency.findUnique({
-            //     where: { id: currencyId }
-            // });
-
+    
             const [user, currency] = await Promise.all([
-                        
+    
                 prisma.user.findUnique({
                     where: { id: userId },
                     select: {
@@ -349,31 +345,40 @@ class nativeCoinService
                         email: true,
                         firstName: true,
                         lastName: true,
-                        bvnSubmitted: true,
+                        // Replaces the retired bvnSubmitted flag. BVN now comes
+                        // from KYC Tier 1 (dojahBvnRef); bank details are saved
+                        // separately via the bank-account endpoint. Both must
+                        // be present before a virtual account is attempted.
+                        legalFirstName: true,
+                        legalLastName: true,
+                        phoneNumber: true,
+                        dojahBvnRef: true,
+                        bankCode: true,
+                        bankAccountNumber: true,
                     }
                 }),
                 prisma.currency.findUnique({
                     where: { id: currencyId }
                 })
-                        
+    
             ]);
-
+    
             if (!currency) throw new Error(`Currency not found: ${currencyId}`);
-
+    
             if (!user) { throw new Error(`User not found with id: ${userId}`); }
-
+    
             // ── 2. Get chain config for crypto coins ─────────────────
             let chainConfig;
             let chainKey: string | undefined;
-
+    
             if (isCrypto) {
                 chainKey = coinConfig.chainKey!.toUpperCase();
                 chainConfig = CHAIN_CONFIG[chainKey];
                 if (!chainConfig) throw new Error(`No chain config found for ${chainKey}`);
             }
-
+    
             logger.info(`Creating ${coin} wallet`, { userId, currencyId });
-
+    
             // ── 3. Create virtual account (ledger) ───────────────────
             const account = await virtualAccountService.createAccount({
                 userId,
@@ -383,7 +388,7 @@ class nativeCoinService
                 xpub: isCrypto ? chainConfig!.xpub : undefined,
                 blockchain: isCrypto ? chainConfig!.blockchain : undefined
             });
-
+    
             // ── 4. Create wallet record in DB ────────────────────────
             wallet = await prisma.wallet.create({
                 data: {
@@ -395,23 +400,23 @@ class nativeCoinService
                     frozen:             false
                 }
             });
-
+    
             // ── 5. Generate deposit address for crypto wallets ───────
             if (isCrypto) {
-
+    
                 // Gas pump chains get address from Tatum gas pump
                 let gasPumpAddress: string | undefined;
-
+    
                 if (gaspumpService.isGasPumpChain(coin)) {
                     const result = await gaspumpService.generateAddress(
                         wallet.id,
                         coin,
                         currencyId
                     );
-
+    
                     gasPumpAddress = result?.address;
                 }
-
+    
                 // Connect address to virtual account
                 // Gas pump address passed directly, otherwise generated from Tatum
                 const { address: depositAddress, index } = await virtualAccountService.generateAndConnectAddress(
@@ -419,13 +424,13 @@ class nativeCoinService
                     chainKey!,
                     gasPumpAddress  // undefined for non-gas-pump chains
                 );
-
+    
                 // ── 6. Subscribe to deposit events ───────────────────
                 const subscription = await this.subscribeAddress({
                     address: depositAddress,
                     chain:   coinConfig.webhookChain!
                 });
-
+    
                 // ── 7. Update wallet with address + subscription ──────
                 const updatedWallet = await prisma.wallet.update({
                     where: { id: wallet.id },
@@ -435,13 +440,13 @@ class nativeCoinService
                         derivationKey:  index ?? null
                     }
                 });
-
+    
                 logger.info(`${coin} wallet created successfully`, {
                     walletId: updatedWallet.id,
                     address:  updatedWallet.depositAddress,
                     chain:    chainKey
                 });
-
+    
                 return {
                     id:             updatedWallet.id,
                     depositAddress: updatedWallet.depositAddress ?? undefined,
@@ -450,28 +455,59 @@ class nativeCoinService
                     destinationTag: Number(updatedWallet.destinationTag) || undefined
                 };
             }
-
+    
             // ── 8. Fiat wallet (NGN, USD) ────────────────────────────
-            if (user.bvnSubmitted && coin === 'NGN') {
-                
-                const bankResult = await qorepayService.create_virtual_Account({ userId });
-                if (bankResult) {
-                    await prisma.bankDetails.create({
-                        data: {
-                            id:             bankResult.id,
-                            customer_id:    bankResult.customer_id,
-                            walletId:       wallet.id,
-                            account_number: bankResult.account_number,
-                            account_name:   bankResult.account_name,
-                            bank_name:      bankResult.bank_name,
-                            status:         bankResult.status
-                        }
+            // Gate replaced: bvnSubmitted no longer exists. A virtual account
+            // is only attempted once BVN (from KYC Tier 1) AND bank details
+            // (saved separately, whenever the user provides them) are both
+            // already on the user record — neither is asked for here.
+            if (coin === 'NGN' && user.dojahBvnRef && user.bankCode && user.bankAccountNumber) {
+                try {
+                    const bankResult = await qorepayService.create_virtual_Account({
+                        userId,
+                        walletId: wallet.id,
+                    });
+    
+                    if (bankResult) {
+                        // upsert, keyed on walletId — safe if this block ever
+                        // runs twice for the same wallet (retry, re-triggered
+                        // creation), rather than throwing a unique-constraint
+                        // error or leaving a duplicate row behind.
+                        await prisma.bankDetails.upsert({
+                            where: { walletId: wallet.id },
+                            create: {
+                                id:             bankResult.id,
+                                customer_id:    bankResult.customer_id,
+                                walletId:       wallet.id,
+                                account_number: bankResult.account_number,
+                                account_name:   bankResult.account_name,
+                                bank_name:      bankResult.bank_name,
+                                status:         bankResult.status,
+                            },
+                            update: {
+                                account_number: bankResult.account_number,
+                                account_name:   bankResult.account_name,
+                                bank_name:      bankResult.bank_name,
+                                status:         bankResult.status,
+                            },
+                        });
+                    }
+                } catch (err) {
+                    // The NGN wallet itself was already created successfully
+                    // above — a Qorepay failure here must NOT roll that back.
+                    // Log and let provisioning be retried later (next wallet
+                    // fetch, a background reconciliation job, etc.) instead of
+                    // falling through to the outer catch's wallet cleanup.
+                    logger.error('Qorepay virtual account provisioning failed', {
+                        userId,
+                        walletId: wallet.id,
+                        err,
                     });
                 }
             }
-
+    
             logger.info(`${coin} wallet created successfully`, { walletId: wallet.id });
-
+    
             return {
                 id:             wallet.id,
                 depositAddress: wallet.depositAddress ?? undefined,
@@ -479,11 +515,11 @@ class nativeCoinService
                 derivationKey:  wallet.derivationKey  ?? undefined,
                 destinationTag: Number(wallet.destinationTag) || undefined
             };
-
+    
         } catch (error) {
-
+    
             logger.error(`Failed to create ${coin} wallet`, { userId, currencyId, error });
-
+    
             // Clean up orphaned wallet if created before error
             if (wallet?.id) {
                 logger.warn(`Cleaning up orphaned wallet ${wallet.id}`);
@@ -491,10 +527,10 @@ class nativeCoinService
                     where: { id: wallet.id }
                 }).catch((e) => logger.error(`Failed to clean up wallet ${wallet.id}`, e));
             }
-
+    
             throw error;
-        
-        }    
+    
+        }
     }
 
     // ============================================

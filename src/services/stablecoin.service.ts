@@ -178,7 +178,7 @@ class stableCoinService
                         'https://api-dev.vyre.africa/api/v1/webhook/tatum'
                 };
 
-                if (contractAddress) {
+                if (contractAddress && chain !== 'solana-mainnet') {
                     attr.conditions = [
                         {
                             field:    'contractAddress',
@@ -263,6 +263,8 @@ class stableCoinService
                 blockchain: chainConfig.blockchain
             });
 
+            console.log(` 1 Virtual account created for ${stablecoin} on ${chain}:`, account);
+
             // ── 3. Create wallet record in DB ────────────────────────
             wallet = await prisma.wallet.create({
                 data: {
@@ -296,6 +298,8 @@ class stableCoinService
                 gasPumpAddress  // undefined for non-gas-pump chains — generates from Tatum
             );
 
+            console.log(`address connected and generated ${depositAddress}`)
+
             // ── 5. Subscribe to deposit events ───────────────────────
             const subscription = await this.subscribeAddress({
                 address: depositAddress,
@@ -303,6 +307,8 @@ class stableCoinService
                 blockchain:      chainConfig.blockchain,  
                 contractAddress: chainConfig.tokenMint  // Only add contract condition for ERC20 tokens
             });
+
+            console.log('address subscribed for notification')
 
             // ── 6. Update wallet with address + subscription ─────────
             const updatedWallet = await prisma.wallet.update({

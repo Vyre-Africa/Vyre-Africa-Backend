@@ -6,6 +6,7 @@ import prisma from '../config/prisma.client';
 import axios from "axios";
 import { UserBank } from "@prisma/client";
 import { generateRefCode } from "../utils";
+import logger from "../config/logger";
 const Flutterwave = require('flutterwave-node-v3');
 // import Flutterwave from 'flutterwave-node-v3'
 
@@ -128,25 +129,22 @@ class FlutterwaveService {
     //     }
     // }
 
-    async resolveAccount(bank_code: string, account_number:string){
-
+    async resolveAccount(bank_code: string, account_number: string) {
       try {
         const payload = {
-            account_number: account_number,
-            account_bank: bank_code
-        }
-        const response = await this.flw.Misc.verify_Account(payload)
-        console.log(response);
-        return response
-
+          account_number,
+          account_bank: bank_code,
+        };
+        const response = await this.flw.Misc.verify_Account(payload);
+        return response;
       } catch (error) {
-        console.log(error)
+        logger.error('Flutterwave account resolution failed:', error);
+        // Distinguishable from a genuine "account not found" response — the
+        // controller's `verifyDetails?.status !== 'success'` check still
+        // catches this, but now it's traceable in logs as an infra failure
+        // rather than silently returning undefined.
+        return { status: 'error', message: 'Verification request failed — please try again' };
       }
-
-        // return await this.paystack.verification.resolveAccount({
-        //     account_number,
-        //     bank_code
-        // });
     }
 
     // async verifyTransaction(transactionId: string)

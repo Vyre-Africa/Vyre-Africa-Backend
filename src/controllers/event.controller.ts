@@ -453,24 +453,30 @@ class EventController {
     try {
       const { body } = req;
 
-      console.log('request body', req.body)
-      const xPayloadHash = req.headers['x-payload-hash'] as string;
-      const rawBody = req.body.toString();//
-      const stringifybody = JSON.stringify(req.body);
-      // const body = JSON.parse(rawBody);
+      // req.rawBody must be captured by raw-body-preserving middleware on
+        // this route, registered before JSON parsing — same requirement as
+        // the Qorepay webhook fix earlier in this project.
+        const rawBody = req.rawBody as Buffer | undefined;
+        const xPayloadHash = req.headers['x-payload-hash'] as string;
+
+        if (!rawBody || !xPayloadHash) {
+            logger.warn('Tatum webhook missing rawBody or x-payload-hash header');
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+
+        const base64Hash = createHmac('sha512', config.HMACSECRET as string)
+            .update(rawBody)
+            .digest('base64');
+
+        if (xPayloadHash !== base64Hash) {
+            logger.warn('Tatum webhook signature verification failed');
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
     
       
-      console.log('body',body)      
+      console.log('body',body)
 
-      // Step 4: Calculate digest as a Base64 string using the HMAC Secret, the webhook payload, and the HMAC SHA512 algorithm.
-      const base64Hash = createHmac("sha512", config.HMACSECRET as string)
-      .update(JSON.stringify(body))
-      .digest("base64");
-
-      // Step 5: Compare x-payload-hash value with calculated digest as a Base64 string
-      const checkValues = xPayloadHash == base64Hash;
-
-      console.log(`x-payload-hash and base64Hash are equal? ${checkValues}`);
+      console.log(`x-payload-hash and base64Hash are equal? ${xPayloadHash !== base64Hash ? 'NO' : 'YES'}`);
   
   
       // ... (your webhook processing logic here) ...
