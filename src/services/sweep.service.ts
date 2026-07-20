@@ -5,6 +5,7 @@ import logger from "../config/logger";
 import { Queue } from 'bullmq'
 import connection from '../config/redis.config';
 import { tatumGet, tatumPost } from "../utils";
+import { decrypt } from '../utils/encryption';
 import chainService from "./chain.service";
 import { CHAIN_CONFIG, getChainConfigByCurrency, getChainKey} from '../config/blockchain.config';
 
@@ -13,9 +14,9 @@ export interface SweepJobData {
   currencyId: string
   userId: string
   depositAddress: string
-  derivationKey: number   // Wallet.derivationKey
+  derivationKey: number   // Wallet.derivationKey — unused for SOLANA (KEYPAIR chain, no HD index)
   amount: string
-  chain: string           // ETHEREUM, BASE, ARB etc (internal format)
+  chain: string           // ETHEREUM, BASE, ARB, SOLANA etc (internal format)
   contractAddress?: string
   depositTxId: string
   sweepLogId: string
@@ -23,7 +24,8 @@ export interface SweepJobData {
 
 const SWEEP_CHAINS = [
   'ETHEREUM', 'POLYGON', 'BSC', 'TRON',   // gas pump
-  'BASE', 'ARBITRUM', 'OPTIMISM'  // nonce chain
+  'BASE', 'ARBITRUM', 'OPTIMISM',         // nonce chain
+  'SOLANA'                                // SPL, feePayer-subsidized
 ]
 
 
@@ -52,7 +54,10 @@ class SweepService{
         return queue
     }
 
-    // Maps your internal chain key → Tatum's transfer endpoint prefix
+    // Maps your internal chain key → Tatum's transfer endpoint prefix.
+    // Not used for SOLANA — Solana SPL transfers always go through the
+    // fixed /blockchain/token/transaction endpoint (see solanaSweep below),
+    // never the /${endpoint}/transaction pattern the other chains use.
     public CHAIN_ENDPOINT_MAP: Record<string, string> = {
         ETHEREUM: 'ethereum',
         BASE:     'base',
@@ -89,7 +94,7 @@ class SweepService{
         if (!currency) throw new Error(`Currency not found: ${currencyId}`)
 
 
-        // Get chain config — this gives us mnemonic, endpoint, masterAddress etc
+        // Get chain config — this gives us mnemonic, endpoint, tokenMint etc
         const chainConfig = getChainConfigByCurrency(currency.chain as any, currency.ISO);
 
         // Update log to PROCESSING
@@ -100,8 +105,18 @@ class SweepService{
 
         let sweepTxId: string
 
-        if (chainService.GAS_PUMP_CHAINS.has(chain)) {
-            // ── ETH / POLYGON / BSC — gas pump, master pays atomically ──────────────
+        if (chain === 'SOLANA') {
+            // ── SOLANA — KEYPAIR chain, SPL token, feePayer-subsidized ───────
+            // Neither gas-pump (custodial contract) nor nonce-chain (HD
+            // derivation) apply here — see solanaSweep() for why.
+            sweepTxId = await this.solanaSweep({
+                currencyId,
+                chainConfig,
+                depositAddress,
+                amount
+            })
+        } else if (chainService.GAS_PUMP_CHAINS.has(chain)) {
+            // ── ETH / POLYGON / BSC / TRON — gas pump, master pays atomically ────────
             sweepTxId = await this.gasPumpSweep({
                 chain,
                 currencyId,
@@ -220,6 +235,91 @@ class SweepService{
         return res.txId
     }
 
+
+    // ── SOLANA SPL sweep ─────────────────────────────────────────────────
+    //
+    // Solana wallets are KEYPAIR type (see blockchain.config.ts) — the
+    // private key was generated once and stored encrypted on
+    // VirtualAccountAddress.encryptedPrivateKey at wallet-creation time.
+    // There's no mnemonic/HD-index derivation here, unlike the EVM chains
+    // above, so this doesn't call /wallet/priv at all.
+    //
+    // Solana also requires the SENDING address to hold native SOL to pay
+    // the transaction fee. Rather than pre-funding every deposit address
+    // (the EVM "gas top-up" pattern used in nonceChainSweep), Tatum's SPL
+    // transfer endpoint accepts a separate feePayer — so the admin/master
+    // wallet covers the fee directly and deposit addresses never need a
+    // SOL balance at all.
+    //
+    // IMPORTANT — confirmed from Tatum's own schema: the `chain` field in
+    // this request body must be the literal string "SOL", NOT "SOLANA".
+    // Your internal CHAIN_CONFIG uses blockchain: 'SOLANA' — that's a
+    // separate, internal vocabulary. Do not pass chainConfig.blockchain
+    // directly into this payload; the mismatch would produce a 400 from
+    // Tatum identical in spirit to the earlier CHAIN_CONFIG key bug.
+    async solanaSweep({
+        currencyId,
+        chainConfig,
+        depositAddress,
+        amount,
+    }: {
+        currencyId: string
+        chainConfig: any
+        depositAddress: string
+        amount: string
+    }) {
+
+        if (!chainConfig?.tokenMint) {
+            throw new Error(`No tokenMint configured for this Solana currency — is this a native SOL sweep instead of SPL?`)
+        }
+
+        const adminWallet = await prisma.wallet.findFirst({
+            where: { userId: config.Admin_Id, currencyId },
+            select: { id: true, depositAddress: true }
+        })
+
+        console.log('adminWallet', adminWallet)
+
+        if (!adminWallet?.depositAddress) {
+            throw new Error(`No admin Solana wallet found for currency ${currencyId} — has the admin's ${chainConfig.tokenSymbol} wallet been created?`)
+        }
+
+        const [userAddress, masterAddress] = await Promise.all([
+            prisma.virtualAccountAddress.findFirst({
+                where: { address: depositAddress, isActive: true },
+                select: { encryptedPrivateKey: true }
+            }),
+            prisma.virtualAccountAddress.findFirst({
+                where: { address: adminWallet.depositAddress!, isActive: true },
+                select: { encryptedPrivateKey: true }
+            })
+        ])
+
+        if (!userAddress?.encryptedPrivateKey) {
+            throw new Error(`No stored private key found for Solana deposit address ${depositAddress}`)
+        }
+        if (!masterAddress?.encryptedPrivateKey) {
+            throw new Error(`No stored private key found for Solana admin address ${adminWallet.depositAddress}`)
+        }
+
+        const fromPrivateKey     = decrypt(userAddress.encryptedPrivateKey)
+        const feePayerPrivateKey = decrypt(masterAddress.encryptedPrivateKey)
+
+        const body = {
+            chain: chainConfig.tatumChainParam ?? 'SOL', // was hardcoded 'SOL' literal
+            from:               depositAddress,
+            to:                 adminWallet.depositAddress,
+            contractAddress:    chainConfig.tokenMint,
+            amount,
+            digits:             chainConfig.decimals ?? 6,
+            fromPrivateKey,
+            feePayer:           adminWallet.depositAddress,
+            feePayerPrivateKey,
+        }
+
+        const res = await tatumPost('/blockchain/token/transaction', body)
+        return res.txId
+    }
 
 
     async nonceChainSweep({
@@ -435,6 +535,13 @@ class SweepService{
         ISO: string
     }): Promise<string> {
 
+        // NOTE: this method assumes an HD chain (mnemonic + derivation
+        // index) throughout. It has NOT been extended for SOLANA — calling
+        // it with chain: 'SOLANA' will fail at chainConfig.mnemonic (which
+        // is undefined for KEYPAIR chains). If master-initiated Solana
+        // transfers are needed outside the sweep flow, this needs the same
+        // KEYPAIR treatment as solanaSweep() above, not addressed here
+        // since it wasn't part of what was asked.
 
         const [adminWallet, currency] = await Promise.all([
             prisma.wallet.findFirst({

@@ -16,6 +16,7 @@ export type ChainConfig = {
     tokenSymbol?: string;
     tokenStandard?: string;           // ERC20, TRC20, SPL, BEP20
     webhookChain?: string;
+    tatumChainParam?: string;
     
 };
 
@@ -33,7 +34,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'ETH_XPUB',
         currency: 'ETH',
         decimals: 18,
-        webhookChain: 'ethereum-mainnet',  // ← added
+        webhookChain: 'ethereum-mainnet',
+        tatumChainParam: 'ETH',
     },
 
     BTC: {
@@ -44,7 +46,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'BTC_XPUB',
         currency: 'BTC',
         decimals: 8,
-        webhookChain: 'bitcoin-mainnet',  // ← added
+        webhookChain: 'bitcoin-mainnet',
     },
 
     TRON: {
@@ -57,7 +59,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'TRON_XPUB',
         currency: 'TRX',
         decimals: 6,
-        webhookChain: 'tron-mainnet',  // ← added
+        webhookChain: 'tron-mainnet',
+        tatumChainParam: 'TRON',
     },
 
     LTC: {
@@ -68,7 +71,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'LTC_XPUB',
         currency: 'LTC',
         decimals: 8,
-        webhookChain: 'litecoin-mainnet',  // ← added
+        webhookChain: 'litecoin-mainnet',
     },
 
     POLYGON: {
@@ -81,7 +84,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'MATIC_XPUB',
         currency: 'MATIC',
         decimals: 18,
-        webhookChain: 'polygon-mainnet',  // ← added
+        webhookChain: 'polygon-mainnet',
+        tatumChainParam: 'MATIC',
     },
 
     BSC: {
@@ -94,7 +98,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'BSC_XPUB',
         currency: 'BSC',
         decimals: 18,
-        webhookChain: 'bsc-mainnet',  // ← added
+        webhookChain: 'bsc-mainnet',
+        tatumChainParam: 'BSC',
     },
 
     BASE: {
@@ -107,7 +112,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'BASE_XPUB',
         currency: 'ETH_BASE',
         decimals: 18,
-        webhookChain: 'base-mainnet',  // ← added
+        webhookChain: 'base-mainnet',
     },
 
     ARBITRUM: {
@@ -120,7 +125,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'ARB_XPUB',
         currency: 'ETH_ARB',
         decimals: 18,
-        webhookChain: 'arb-one-mainnet',  // ← added
+        webhookChain: 'arb-one-mainnet',
     },
 
     OPTIMISM: {
@@ -133,7 +138,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         xpubEnvKey: 'OP_XPUB',
         currency: 'ETH_OP',
         decimals: 18,
-        webhookChain: 'optimism-mainnet',  // ← added
+        webhookChain: 'optimism-mainnet',
     },
 
     // ── Native Keypair Chains ────────────────────────────────────
@@ -145,7 +150,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tatumTransferEndpoint: 'https://api.tatum.io/v3/solana/transaction',
         currency: 'SOL',
         decimals: 9,
-        webhookChain: 'solana-mainnet',  // ← added
+        webhookChain: 'solana-mainnet',
+        tatumChainParam: 'SOL',
     },
 
     XRP: {
@@ -155,7 +161,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tatumTransferEndpoint: 'https://api.tatum.io/v3/xrp/transaction',
         currency: 'XRP',
         decimals: 6,
-        webhookChain: 'xrp-mainnet',  // ← added
+        webhookChain: 'xrp-mainnet',
     },
 
     // ── ERC20 Tokens (ETH chain) ─────────────────────────────────
@@ -174,7 +180,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
         tokenSymbol: 'USDT',
         tokenStandard: 'ERC20',
-        webhookChain: 'ethereum-mainnet',  // ← added
+        webhookChain: 'ethereum-mainnet',
+        tatumChainParam: 'ETH',
     },
 
     USDC_ETH: {
@@ -191,7 +198,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
         tokenSymbol: 'USDC',
         tokenStandard: 'ERC20',
-        webhookChain: 'ethereum-mainnet',  // ← added
+        webhookChain: 'ethereum-mainnet',
+        tatumChainParam: 'ETH',
     },
 
     // ── TRC20 Tokens (TRON chain) ────────────────────────────────
@@ -210,7 +218,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
         tokenSymbol: 'USDT_TRON',
         tokenStandard: 'TRC20',
-        webhookChain: 'tron-mainnet',  // ← added
+        webhookChain: 'tron-mainnet',
+        tatumChainParam: 'TRON',
     },
 
     USDC_TRON: {
@@ -227,7 +236,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: 'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8',
         tokenSymbol: 'USDC_TRON',
         tokenStandard: 'TRC20',
-        webhookChain: 'tron-mainnet',  // ← added
+        webhookChain: 'tron-mainnet',
+        tatumChainParam: 'TRON',
     },
 
     // ── BEP20 Tokens (BSC chain) ─────────────────────────────────
@@ -246,7 +256,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0x55d398326f99059fF775485246999027B3197955',
         tokenSymbol: 'USDT_BSC',
         tokenStandard: 'BEP20',
-        webhookChain: 'bsc-mainnet',  // ← added
+        webhookChain: 'bsc-mainnet',
+        tatumChainParam: 'BSC',
     },
 
     USDC_BSC: {
@@ -263,7 +274,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
         tokenSymbol: 'USDC_BSC',
         tokenStandard: 'BEP20',
-        webhookChain: 'bsc-mainnet',  // ← added
+        webhookChain: 'bsc-mainnet',
+        tatumChainParam: 'BSC',
     },
 
     // ── SPL Tokens (Solana chain) ────────────────────────────────
@@ -279,7 +291,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
         tokenSymbol: 'USDC_SOL',
         tokenStandard: 'SPL',
-        webhookChain: 'solana-mainnet',  // ← added
+        webhookChain: 'solana-mainnet',
+        tatumChainParam: 'SOL',
     },
 
     USDT_SOL: {
@@ -293,7 +306,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
         tokenSymbol: 'USDT_SOL',
         tokenStandard: 'SPL',
-        webhookChain: 'solana-mainnet',  // ← added
+        webhookChain: 'solana-mainnet',
+        tatumChainParam: 'SOL',
     },
 
     // ── Polygon Tokens ───────────────────────────────────────────
@@ -312,7 +326,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
         tokenSymbol: 'USDT_MATIC',
         tokenStandard: 'ERC20',
-        webhookChain: 'polygon-mainnet',  // ← added
+        webhookChain: 'polygon-mainnet',
+        tatumChainParam: 'MATIC',
     },
 
     USDC_MATIC: {
@@ -329,7 +344,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
         tokenSymbol: 'USDC_MATIC',
         tokenStandard: 'ERC20',
-        webhookChain: 'polygon-mainnet',  // ← added
+        webhookChain: 'polygon-mainnet',
+        tatumChainParam: 'MATIC',
     },
 
     // ── Arbitrum Tokens ──────────────────────────────────────────
@@ -348,7 +364,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
         tokenSymbol: 'USDT_ARB',
         tokenStandard: 'ERC20',
-        webhookChain: 'arb-one-mainnet',  // ← added
+        webhookChain: 'arb-one-mainnet',
     },
 
     USDC_ARB: {
@@ -365,7 +381,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
         tokenSymbol: 'USDC_ARB',
         tokenStandard: 'ERC20',
-        webhookChain: 'arb-one-mainnet',  // ← added
+        webhookChain: 'arb-one-mainnet',
     },
 
     // ── Optimism Tokens ──────────────────────────────────────────
@@ -384,7 +400,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58',
         tokenSymbol: 'USDT_OP',
         tokenStandard: 'ERC20',
-        webhookChain: 'optimism-mainnet',  // ← added
+        webhookChain: 'optimism-mainnet',
     },
 
     USDC_OP: {
@@ -401,7 +417,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
         tokenSymbol: 'USDC_OP',
         tokenStandard: 'ERC20',
-        webhookChain: 'optimism-mainnet',  // ← added
+        webhookChain: 'optimism-mainnet',
     },
 
     // ── Base Tokens ──────────────────────────────────────────────
@@ -420,7 +436,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         tokenSymbol: 'USDC_BASE',
         tokenStandard: 'ERC20',
-        webhookChain: 'base-mainnet',  // ← added
+        webhookChain: 'base-mainnet',
     },
 
     USDT_BASE: {
@@ -437,7 +453,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenMint: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
         tokenSymbol: 'USDT_BASE',
         tokenStandard: 'ERC20',
-        webhookChain: 'base-mainnet',  // ← added
+        webhookChain: 'base-mainnet',
     },
 };
 
@@ -490,4 +506,16 @@ export function getChainKey(
         config.blockchain.toUpperCase() === blockchain.toUpperCase() &&
         config.currency.toUpperCase() === currency.toUpperCase()
     )?.[0];
+}
+
+// Returns Tatum's required `chain` enum value for a blockchain/currency pair
+// — only meaningful for the generic multi-chain endpoints (e.g.
+// /blockchain/token/transaction, /blockchain/sc/custodial/transfer).
+// Falls back to the raw blockchain string if no override is set, which is
+// correct for chains that never needed one — the dedicated per-chain
+// endpoints (/base/transaction, /arb/transaction etc.) don't take a `chain`
+// field at all, so nothing reads this fallback value for them.
+export function getTatumChainParam(blockchain: string, currency: string): string {
+    const config = getChainConfigByCurrency(blockchain, currency);
+    return config?.tatumChainParam ?? blockchain;
 }

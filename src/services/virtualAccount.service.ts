@@ -1899,8 +1899,8 @@ class VirtualAccountService {
 
       switch (config.blockchain) {
 
-          // ── SOL ──────────────────────────────────────────────────
-          case 'SOL':
+          // ── SOLANA ──────────────────────────────────────────────
+          case 'SOLANA':
               payload = {
                   from: addressRecord.address,
                   to: toAddress,
@@ -2029,7 +2029,7 @@ class VirtualAccountService {
           // ── SPL (Solana tokens - USDC_SOL, USDT_SOL) ────────────
           case 'SPL':
               payload = {
-                  chain: config.blockchain,
+                  chain: config.tatumChainParam ?? 'SOL', // was: config.blockchain → 'SOLANA', wrong per Tatum's schema
                   from: addressRecord.address,
                   to: toAddress,
                   contractAddress: config.tokenMint,
