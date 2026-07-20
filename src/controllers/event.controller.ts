@@ -451,8 +451,6 @@ class EventController {
   async tatum_WebHook(req: Request | any, res: Response) {
 
     try {
-      const { body } = req;
-
         const rawBody: Buffer = req.body;
         const xPayloadHash = req.headers['x-payload-hash'] as string;
 
@@ -477,12 +475,15 @@ class EventController {
             return res.status(401).json({ error: 'Invalid signature' });
         }
 
-      
-      console.log('body',body)
+        // ← this was missing. `req.body` is the raw Buffer, not a parsed
+        // object — only safe (and only necessary) to parse it into JSON
+        // once signature verification has passed above.
+        const body = JSON.parse(rawBody.toString('utf8'));
 
-      console.log(`x-payload-hash and base64Hash are equal? ${xPayloadHash !== base64Hash ? 'NO' : 'YES'}`);
+        console.log('body', body);
+        console.log(`x-payload-hash and base64Hash are equal? ${xPayloadHash !== base64Hash ? 'NO' : 'YES'}`);
 
-      const counterAddress: string | undefined =
+        const counterAddress: string | undefined =
             body.counterAddress ??
             (Array.isArray(body.counterAddresses) ? body.counterAddresses[0] : undefined);
 
@@ -492,38 +493,33 @@ class EventController {
                 counterAddresses: body.counterAddresses,
             });
         }
-  
-  
-      // ... (your webhook processing logic here) ...
-      await eventService.queue({
-        type: 'TATUM', 
 
-        Tatum_Address:         body.address, 
-        Tatum_CounterAddress:  counterAddress,
-        Tatum_Chain:           body.chain,
-        Tatum_Type:            body?.type,
-        Tatum_Amount:          body.amount, 
-        Tatum_SubscriptionId:  body.subscriptionId, 
-        Tatum_EventType:       body.subscriptionType,
-        Tatum_TxId:            body.txId,
-        Tatum_ContractAddress: body.contractAddress,
-        Tatum_Asset:           body.asset,
-        Tatum_currency:        body.currency
-      })
+        await eventService.queue({
+            type: 'TATUM',
+            Tatum_Address:         body.address,
+            Tatum_CounterAddress:  counterAddress,
+            Tatum_Chain:           body.chain,
+            Tatum_Type:            body?.type,
+            Tatum_Amount:          body.amount,
+            Tatum_SubscriptionId:  body.subscriptionId,
+            Tatum_EventType:       body.subscriptionType,
+            Tatum_TxId:            body.txId,
+            Tatum_ContractAddress: body.contractAddress,
+            Tatum_Asset:           body.asset,
+            Tatum_currency:        body.currency
+        })
 
+        return res.status(200).json({
+            msg: 'Event verified',
+            success: true,
+        });
 
-    
-      return res.status(200).json({
-        msg: 'Event verified',
-        success: true,
-      });
-  
     } catch (error) {
-      console.error('Error verifying webhook:', error);
-      return res.status(500).json({ 
-        error: 'Internal Server Error', 
-        message: (error as Error).message 
-      });
+        console.error('Error verifying webhook:', error);
+        return res.status(500).json({
+            error: 'Internal Server Error',
+            message: (error as Error).message
+        });
     }
   }
 
