@@ -477,6 +477,17 @@ class EventController {
       console.log('body',body)
 
       console.log(`x-payload-hash and base64Hash are equal? ${xPayloadHash !== base64Hash ? 'NO' : 'YES'}`);
+
+      const counterAddress: string | undefined =
+            body.counterAddress ??
+            (Array.isArray(body.counterAddresses) ? body.counterAddresses[0] : undefined);
+
+        if (Array.isArray(body.counterAddresses) && body.counterAddresses.length > 1) {
+            logger.warn('Tatum webhook has multiple counterAddresses — only using the first', {
+                txId: body.txId,
+                counterAddresses: body.counterAddresses,
+            });
+        }
   
   
       // ... (your webhook processing logic here) ...
@@ -484,7 +495,7 @@ class EventController {
         type: 'TATUM', 
 
         Tatum_Address:         body.address, 
-        Tatum_CounterAddress:  body.counterAddress,
+        Tatum_CounterAddress:  counterAddress,
         Tatum_Chain:           body.chain,
         Tatum_Type:            body?.type,
         Tatum_Amount:          body.amount, 

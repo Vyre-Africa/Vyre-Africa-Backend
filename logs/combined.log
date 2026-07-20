@@ -4157,3 +4157,7 @@ Error: Admin wallet not found
 2026-07-19 19:47:08 [info] Tatum subscription created 
 2026-07-19 19:47:08 [info] Moralis subscription created 
 2026-07-19 19:47:09 [info] Wallet created successfully 
+2026-07-20 16:04:39 [info] Server running on port 4000 
+2026-07-20 16:04:40 [info] Connected to Ably! 
+2026-07-20 16:06:14 [info] Server running on port 4000 
+2026-07-20 16:06:15 [info] Connected to Ably! 
