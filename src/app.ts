@@ -45,6 +45,7 @@ app.use(cors(corsOptions));
 app.use('/api/v1/webhook/fern', express.raw({ type: 'application/json', limit: '10mb' }));
 app.use('/api/v1/webhook/clerk', express.raw({ type: 'application/json', limit: '10mb' }));
 app.use('/api/v1/webhook/qorepay', express.raw({ type: 'application/json', limit: '10mb' }));
+app.use('/api/v1/webhook/tatum', express.raw({ type: 'application/json', limit: '10mb' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true }));

@@ -453,14 +453,18 @@ class EventController {
     try {
       const { body } = req;
 
-      // req.rawBody must be captured by raw-body-preserving middleware on
-        // this route, registered before JSON parsing — same requirement as
-        // the Qorepay webhook fix earlier in this project.
-        const rawBody = req.rawBody as Buffer | undefined;
+        const rawBody: Buffer = req.body;
         const xPayloadHash = req.headers['x-payload-hash'] as string;
 
-        if (!rawBody || !xPayloadHash) {
-            logger.warn('Tatum webhook missing rawBody or x-payload-hash header');
+        if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
+            logger.warn('Tatum webhook body is not a raw Buffer — check express.raw() is mounted on this route before any global express.json()');
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+
+        if (!xPayloadHash) {
+            logger.warn('Tatum webhook missing x-payload-hash header', {
+                headersReceived: Object.keys(req.headers),
+            });
             return res.status(401).json({ error: 'Invalid signature' });
         }
 
@@ -472,7 +476,7 @@ class EventController {
             logger.warn('Tatum webhook signature verification failed');
             return res.status(401).json({ error: 'Invalid signature' });
         }
-    
+
       
       console.log('body',body)
 
