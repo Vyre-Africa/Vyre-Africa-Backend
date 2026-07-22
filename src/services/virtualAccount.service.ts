@@ -2040,22 +2040,32 @@ class VirtualAccountService {
               break;
 
           // ── ERC20 (ETHEREUM, POLYGON, BASE, ARBITRUM, OPTIMISM tokens)
+          // FIXED — contractAddress was commented out, meaning this relied
+          // entirely on Tatum's ticker resolution (e.g. 'USDC_MATIC').
+          // Confirmed live in production: that ticker resolved to a
+          // contract with 0 balance while the real address genuinely held
+          // 6.5 USDC on-chain (0xDaa7A8c21CD99E98b8eea7D2d4A2Bb717c59b626,
+          // verified on Polygonscan). Every ERC20 withdrawal on ETH/
+          // POLYGON/BASE/ARBITRUM/OPTIMISM was exposed to this.
           case 'ERC20':
               payload = {
                   to: toAddress,
-                  // contractAddress: config.tokenMint,
+                  contractAddress: config.tokenMint,
                   amount: amount.toString(),
+                  digits: config.decimals ?? 6,
                   currency: config.tokenSymbol,
                   fromPrivateKey: privateKey,
               };
               break;
 
           // ── BEP20 (BSC tokens) ───────────────────────────────────
+          // FIXED — same issue and same fix as ERC20 above.
           case 'BEP20':
               payload = {
                   to: toAddress,
-                  // contractAddress: config.tokenMint,
+                  contractAddress: config.tokenMint,
                   amount: amount.toString(),
+                  digits: config.decimals ?? 6,
                   currency: config.tokenSymbol,
                   fromPrivateKey: privateKey,
               };
@@ -2082,7 +2092,7 @@ class VirtualAccountService {
       if (!txHash) throw new Error(`No txHash returned from Tatum for ${config.tokenSymbol} on ${config.blockchain}`);
 
       return txHash;
-  }
+   }
 
   // ── Derive Private Key On The Go (HD chains only) ────────────
 
