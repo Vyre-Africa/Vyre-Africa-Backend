@@ -1984,12 +1984,12 @@ class VirtualAccountService {
 
   // ── Token Transfer ───────────────────────────────────────────
 
-  private async broadcastTokenToTatum(
+    private async broadcastTokenToTatum(
       config: ChainConfig,
       addressRecord: any,
       toAddress: string,
       amount: Decimal,
-  ): Promise<string> {
+    ): Promise<string> {
 
       if (!config.tatumTransferEndpoint) {
           throw new Error(`No transfer endpoint configured for ${config.blockchain} ${config.tokenSymbol}`);
@@ -2029,7 +2029,7 @@ class VirtualAccountService {
           // ── SPL (Solana tokens - USDC_SOL, USDT_SOL) ────────────
           case 'SPL':
               payload = {
-                  chain: config.tatumChainParam ?? 'SOL', // was: config.blockchain → 'SOLANA', wrong per Tatum's schema
+                  chain: config.tatumChainParam ?? 'SOL',
                   from: addressRecord.address,
                   to: toAddress,
                   contractAddress: config.tokenMint,
@@ -2039,34 +2039,45 @@ class VirtualAccountService {
               };
               break;
 
-          // ── ERC20 (ETHEREUM, POLYGON, BASE, ARBITRUM, OPTIMISM tokens)
-          // FIXED — contractAddress was commented out, meaning this relied
-          // entirely on Tatum's ticker resolution (e.g. 'USDC_MATIC').
-          // Confirmed live in production: that ticker resolved to a
-          // contract with 0 balance while the real address genuinely held
-          // 6.5 USDC on-chain (0xDaa7A8c21CD99E98b8eea7D2d4A2Bb717c59b626,
-          // verified on Polygonscan). Every ERC20 withdrawal on ETH/
-          // POLYGON/BASE/ARBITRUM/OPTIMISM was exposed to this.
+          // ── ERC20 (ETHEREUM, POLYGON tokens routed through the generic
+          // multi-chain endpoint) ──────────────────────────────────
+          // FIXED — this endpoint requires `chain` for every token, not
+          // just Solana. Confirmed live: Tatum's own validator rejected
+          // the request specifically for a missing/empty `chain` field,
+          // while accepting every other field without complaint.
+          // config.tatumChainParam must be set on any ChainConfig entry
+          // that uses this endpoint — it is for USDC_MATIC/USDT_MATIC and
+          // USDC_ETH/USDT_ETH/USDC_BSC/USDT_BSC, but deliberately NOT set
+          // on ARBITRUM/BASE/OPTIMISM token configs (those are still on
+          // their own dedicated endpoints), so if this throws for one of
+          // those, that's the config correctly telling you it hasn't been
+          // moved to this endpoint yet.
           case 'ERC20':
+              if (!config.tatumChainParam) {
+                  throw new Error(`${config.tokenSymbol}: tatumChainParam is required when using the generic token-transfer endpoint`);
+              }
               payload = {
+                  chain: config.tatumChainParam,
                   to: toAddress,
                   contractAddress: config.tokenMint,
                   amount: amount.toString(),
                   digits: config.decimals ?? 6,
-                  currency: config.tokenSymbol,
                   fromPrivateKey: privateKey,
               };
               break;
 
           // ── BEP20 (BSC tokens) ───────────────────────────────────
-          // FIXED — same issue and same fix as ERC20 above.
+          // Same fix as ERC20 above.
           case 'BEP20':
+              if (!config.tatumChainParam) {
+                  throw new Error(`${config.tokenSymbol}: tatumChainParam is required when using the generic token-transfer endpoint`);
+              }
               payload = {
+                  chain: config.tatumChainParam,
                   to: toAddress,
                   contractAddress: config.tokenMint,
                   amount: amount.toString(),
                   digits: config.decimals ?? 6,
-                  currency: config.tokenSymbol,
                   fromPrivateKey: privateKey,
               };
               break;
@@ -2092,7 +2103,7 @@ class VirtualAccountService {
       if (!txHash) throw new Error(`No txHash returned from Tatum for ${config.tokenSymbol} on ${config.blockchain}`);
 
       return txHash;
-   }
+    }
 
   // ── Derive Private Key On The Go (HD chains only) ────────────
 
