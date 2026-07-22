@@ -165,12 +165,19 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     // ── ERC20 Tokens (ETH chain) ─────────────────────────────────
+    // tatumTransferEndpoint switched to the generic multi-chain token
+    // endpoint — the per-chain /ethereum/transaction endpoint resolves
+    // balances off Tatum's internal currency ticker (e.g. 'USDT'), which
+    // was confirmed to misresolve on Polygon (see USDC_MATIC below); Tatum's
+    // docs list Ethereum as supported by the generic endpoint, so this
+    // applies the same fix preemptively here. Verify with a real test
+    // transfer before relying on it in production, same as Polygon was.
 
     USDT_ETH: {
         blockchain: 'ETHEREUM',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/ethereum/address',
-        tatumTransferEndpoint: 'https://api.tatum.io/v3/ethereum/transaction',
+        tatumTransferEndpoint: 'https://api.tatum.io/v3/blockchain/token/transaction',
         mnemonic: config.USDC.ETH_MNEMONIC || '',
         xpub: config.USDC.ETH_XPUB || '',
         xpubEnvKey: 'ETH_XPUB',
@@ -188,7 +195,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         blockchain: 'ETHEREUM',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/ethereum/address',
-        tatumTransferEndpoint: 'https://api.tatum.io/v3/ethereum/transaction',
+        tatumTransferEndpoint: 'https://api.tatum.io/v3/blockchain/token/transaction',
         mnemonic: config.USDC.ETH_MNEMONIC || '',
         xpub: config.USDC.ETH_XPUB || '',
         xpubEnvKey: 'ETH_XPUB',
@@ -203,6 +210,9 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     // ── TRC20 Tokens (TRON chain) ────────────────────────────────
+    // Unchanged — TRC20 transfers already go through their own dedicated
+    // /tron/trc20/transaction endpoint with tokenAddress specified
+    // explicitly, so this doesn't have the ticker-resolution problem.
 
     USDT_TRON: {
         blockchain: 'TRON',
@@ -241,12 +251,14 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     // ── BEP20 Tokens (BSC chain) ─────────────────────────────────
+    // Same endpoint fix as ETH tokens above — BSC is explicitly listed as
+    // supported by Tatum's generic token-transfer endpoint.
 
     USDT_BSC: {
         blockchain: 'BSC',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/bsc/address',
-        tatumTransferEndpoint: 'https://api.tatum.io/v3/bsc/transaction',
+        tatumTransferEndpoint: 'https://api.tatum.io/v3/blockchain/token/transaction',
         mnemonic: config.USDC.BSC_MNEMONIC || '',
         xpub: config.USDC.BSC_XPUB || '',
         xpubEnvKey: 'BSC_XPUB',
@@ -264,7 +276,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         blockchain: 'BSC',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/bsc/address',
-        tatumTransferEndpoint: 'https://api.tatum.io/v3/bsc/transaction',
+        tatumTransferEndpoint: 'https://api.tatum.io/v3/blockchain/token/transaction',
         mnemonic: config.USDC.BSC_MNEMONIC || '',
         xpub: config.USDC.BSC_XPUB || '',
         xpubEnvKey: 'BSC_XPUB',
@@ -311,12 +323,20 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     // ── Polygon Tokens ───────────────────────────────────────────
+    // FIXED — confirmed live: /v3/polygon/transaction with currency:
+    // 'USDC_MATIC' resolved to a contract with 0 balance while the real
+    // deposit address held 6.5 USDC on-chain (verified on Polygonscan).
+    // Even sending contractAddress explicitly to that same endpoint didn't
+    // help — the endpoint itself ignores it and resolves purely off the
+    // ticker. Switched to the generic multi-chain endpoint, which the
+    // manual sweep script already proved works correctly for this exact
+    // token/address.
 
     USDT_MATIC: {
         blockchain: 'POLYGON',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/polygon/address',
-        tatumTransferEndpoint: 'https://api.tatum.io/v3/polygon/transaction',
+        tatumTransferEndpoint: 'https://api.tatum.io/v3/blockchain/token/transaction',
         mnemonic: config.USDC.POLYGON_MNEMONIC || '',
         xpub: config.USDC.POLYGON_XPUB || '',
         xpubEnvKey: 'MATIC_XPUB',
@@ -334,7 +354,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         blockchain: 'POLYGON',
         walletType: 'HD',
         tatumEndpoint: 'https://api.tatum.io/v3/polygon/address',
-        tatumTransferEndpoint: 'https://api.tatum.io/v3/polygon/transaction',
+        tatumTransferEndpoint: 'https://api.tatum.io/v3/blockchain/token/transaction',
         mnemonic: config.USDC.POLYGON_MNEMONIC || '',
         xpub: config.USDC.POLYGON_XPUB || '',
         xpubEnvKey: 'MATIC_XPUB',
@@ -349,6 +369,13 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     // ── Arbitrum Tokens ──────────────────────────────────────────
+    // DELIBERATELY UNCHANGED — Tatum's documented list of chains supported
+    // by the generic /blockchain/token/transaction endpoint does NOT
+    // include Arbitrum (it lists Ethereum, BSC, Polygon, Base, Optimism,
+    // Solana, Avalanche, Fantom, Celo, Algorand, and others — Arbitrum is
+    // conspicuously absent). Switching this to the generic endpoint could
+    // break it entirely rather than fix anything. Leave on the dedicated
+    // /arb/transaction endpoint until specifically tested.
 
     USDT_ARB: {
         blockchain: 'ARBITRUM',
@@ -385,6 +412,13 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     // ── Optimism Tokens ──────────────────────────────────────────
+    // NOT YET CHANGED — Optimism IS listed among Tatum's chains supported
+    // by the generic token-transfer endpoint, so this is very likely
+    // affected by the same bug as Polygon/ETH/BSC above. Left on the
+    // dedicated endpoint for now since it hasn't been live-tested in this
+    // pass — same treatment as Arbitrum's caution, just for a different
+    // reason (untested vs. unsupported). Verify with a real transfer
+    // before switching, the same way Polygon was confirmed.
 
     USDT_OP: {
         blockchain: 'OPTIMISM',
@@ -421,6 +455,9 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
     },
 
     // ── Base Tokens ──────────────────────────────────────────────
+    // NOT YET CHANGED — same situation as Optimism above: Base IS listed
+    // as supported by the generic endpoint, likely affected by the same
+    // bug, but not yet live-tested in this pass. Verify before switching.
 
     USDC_BASE: {
         blockchain: 'BASE',
