@@ -1876,7 +1876,7 @@ class eventService {
         ? contractAddress === expectedContract
         : contractAddress.toLowerCase() === expectedContract.toLowerCase();
         
-        
+
       if (!matches) {
         logger.warn('Ignored — contract mismatch', { received: contractAddress, expected: expectedContract, txId })
         return { status: 'ignored', reason: 'unsupported_token', message: `Token ${contractAddress} not supported` }
