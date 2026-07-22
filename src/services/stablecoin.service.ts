@@ -243,6 +243,7 @@ class stableCoinService
     ): Promise<Wallet> {
 
         let wallet: any = null;
+        const isAdminWallet = userId === config.Admin_Id;
 
         try {
             // ── 1. Validate chain support ────────────────────────────
@@ -252,7 +253,7 @@ class stableCoinService
             const chainKey = getChainKey(chainConfig.blockchain, chainConfig.currency);
             if (!chainKey) throw new Error(`No chain key found for ${chainConfig.blockchain}/${chainConfig.currency}`);
 
-            logger.info(`Creating ${stablecoin} wallet on ${chain}`, { userId, currencyId });
+            logger.info(`Creating ${stablecoin} wallet on ${chain}`, { userId, currencyId, isAdminWallet });
 
             // ── 2. Create virtual account (ledger) ───────────────────
             const account = await virtualAccountService.createAccount({
@@ -280,8 +281,15 @@ class stableCoinService
             // ── 4. Generate deposit address ──────────────────────────
             let gasPumpAddress: string | undefined;
 
-            // Gas pump chains get their address from Tatum gas pump
-            if (gaspumpService.isGasPumpChain(chain)) {
+            // The admin's own wallet must NEVER be a gas-pump address — it's
+            // the custodial OWNER that gas-pump addresses are derived FROM.
+            // Gas-pump address generation itself requires an existing admin
+            // wallet to act as that owner, so routing the admin through this
+            // branch would recreate that exact bootstrapping deadlock (no way
+            // to ever create the first admin wallet on a gas-pump chain). The
+            // admin always falls through to a plain HD-derived address below,
+            // same as any wallet on a non-gas-pump chain.
+            if (gaspumpService.isGasPumpChain(chain) && !isAdminWallet) {
                 const result = await gaspumpService.generateAddress(
                     wallet.id,
                     chain,
@@ -295,7 +303,7 @@ class stableCoinService
             const { address: depositAddress } = await virtualAccountService.generateAndConnectAddress(
                 account.id,
                 chainKey,
-                gasPumpAddress  // undefined for non-gas-pump chains — generates from Tatum
+                gasPumpAddress  // undefined for non-gas-pump chains AND for admin — generates from Tatum
             );
 
             console.log(`address connected and generated ${depositAddress}`)
@@ -324,7 +332,8 @@ class stableCoinService
                 walletId: updatedWallet.id,
                 address:  updatedWallet.depositAddress,
                 chain,
-                stablecoin
+                stablecoin,
+                isAdminWallet
             });
 
             return updatedWallet;

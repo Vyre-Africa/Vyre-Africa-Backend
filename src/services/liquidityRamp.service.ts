@@ -234,6 +234,7 @@ class LiquidityRampService {
         ARBITRUM: 'arbitrum',
         OPTIMISM: 'optimism',
         TRON:     'trc20',
+        SOLANA:   'solana'
     }
     
     // REPLACE the existing getNetwork method with this
