@@ -188,8 +188,9 @@ class stableCoinService
                         {
                             field:    'value',
                             operator: '>=',
-                            value:    '1000000'
+                            value:    '1'
                         }
+                        
                     ];
                 }
 

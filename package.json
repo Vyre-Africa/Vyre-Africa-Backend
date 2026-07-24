@@ -26,7 +26,8 @@
         "sync-ramp-orders": "ts-node --transpile-only -r dotenv/config src/scripts/sync-ramp-orders.ts",
         "sync-buy-orders": "ts-node --transpile-only -r dotenv/config src/scripts/sync-buy-orders.ts",
         "test:solana-wallet": "ts-node --transpile-only -r dotenv/config src/scripts/testSolanaWalletCreation.ts",
-        "sweep:manual": "ts-node --transpile-only -r dotenv/config src/scripts/manualCustodialSweep.ts"
+        "sweep:manual": "ts-node --transpile-only -r dotenv/config src/scripts/manualCustodialSweep.ts",
+        "check:deposit": "ts-node --transpile-only -r dotenv/config src/scripts/checkDeposit.ts"
     },
     "author": "harvey ana",
     "license": "ISC",
