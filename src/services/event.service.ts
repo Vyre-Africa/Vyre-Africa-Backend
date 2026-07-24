@@ -1854,36 +1854,73 @@ class eventService {
   }
 
 
-  private validateContract(
-      contractAddress: string,
-      chain: string,
-      wallet: any,
-      txId: string
-  ): { status: string; reason: string; message: string } | null {
+  // private validateContract(
+  //     contractAddress: string,
+  //     chain: string,
+  //     wallet: any,
+  //     txId: string
+  // ): { status: string; reason: string; message: string } | null {
 
-      const chainKey        = this.WEBHOOK_CHAIN_MAP[chain]
-      const lookupKey       = `${wallet.currency?.ISO}_${chainKey}`
-      const expectedContract = this.SUPPORTED_CONTRACTS[lookupKey]
+  //     const chainKey        = this.WEBHOOK_CHAIN_MAP[chain]
+  //     const lookupKey       = `${wallet.currency?.ISO}_${chainKey}`
+  //     const expectedContract = this.SUPPORTED_CONTRACTS[lookupKey]
 
-      if (!expectedContract) {
-          logger.warn('Ignored — no contract configured', { lookupKey, txId })
-          return { status: 'ignored', reason: 'unsupported_chain_currency', message: `No contract for ${lookupKey}` }
-      }
+  //     if (!expectedContract) {
+  //         logger.warn('Ignored — no contract configured', { lookupKey, txId })
+  //         return { status: 'ignored', reason: 'unsupported_chain_currency', message: `No contract for ${lookupKey}` }
+  //     }
 
-      // Solana mint addresses are case-sensitive — compare exact case.
-      // EVM contract addresses are case-insensitive — compare lowercased.
-      const matches = chainKey === 'SOLANA'
-        ? contractAddress === expectedContract
-        : contractAddress.toLowerCase() === expectedContract.toLowerCase();
+  //     // Solana mint addresses are case-sensitive — compare exact case.
+  //     // EVM contract addresses are case-insensitive — compare lowercased.
+  //     const matches = chainKey === 'SOLANA'
+  //       ? contractAddress === expectedContract
+  //       : contractAddress.toLowerCase() === expectedContract.toLowerCase();
         
 
-      if (!matches) {
+  //     if (!matches) {
+  //       logger.warn('Ignored — contract mismatch', { received: contractAddress, expected: expectedContract, txId })
+  //       return { status: 'ignored', reason: 'unsupported_token', message: `Token ${contractAddress} not supported` }
+  //     }
+
+  //   return null
+
+  // }
+
+  private validateContract(contractAddress: string, chain: string, wallet: any, txId: string) {
+    const chainKey = this.WEBHOOK_CHAIN_MAP[chain]
+    const lookupKey = `${wallet.currency?.ISO}_${chainKey}`
+    const expectedContract = this.SUPPORTED_CONTRACTS[lookupKey]
+
+    if (!expectedContract) {
+        logger.warn('Ignored — no contract configured', { lookupKey, txId })
+        return { status: 'ignored', reason: 'unsupported_chain_currency', message: `No contract for ${lookupKey}` }
+    }
+
+    // TRON's INCOMING_FUNGIBLE_TX webhook delivers contractAddress as a
+    // symbolic ticker label (confirmed live: "USDT_TRON"), NOT the real
+    // on-chain contract address the way EVM and Solana payloads do. Since
+    // our subscription's `conditions` already filter at the Tatum level
+    // to the real contract, anything that reaches us here is already
+    // guaranteed correct — compare against the same label convention
+    // instead of the raw contract hash for this chain specifically.
+    if (chainKey === 'TRON') {
+        if (contractAddress !== lookupKey) {
+            logger.warn('Ignored — unexpected TRON token label', { received: contractAddress, expected: lookupKey, txId })
+            return { status: 'ignored', reason: 'unsupported_token', message: `Unexpected TRON token label ${contractAddress}` }
+        }
+        return null // valid
+    }
+
+    const matches = chainKey === 'SOLANA'
+        ? contractAddress === expectedContract
+        : contractAddress.toLowerCase() === expectedContract.toLowerCase();
+
+    if (!matches) {
         logger.warn('Ignored — contract mismatch', { received: contractAddress, expected: expectedContract, txId })
         return { status: 'ignored', reason: 'unsupported_token', message: `Token ${contractAddress} not supported` }
-      }
+    }
 
     return null
-
   }
 
   private isSweepFeedback(
@@ -2083,7 +2120,42 @@ class eventService {
       })
   }
 
-  private isAboveMinimumAmount(amount: string, contractAddress?: string): boolean {
+  // private isAboveMinimumAmount(amount: string, contractAddress?: string): boolean {
+  //   const STABLECOIN_CONTRACTS = new Set([
+  //       '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC BASE
+  //       '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC ETH
+  //       '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC POLYGON
+  //       '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d', // USDC BSC
+  //       '0xaf88d065e77c8cc2239327c5edb3a432268e5831', // USDC ARBITRUM
+  //       '0x0b2c639c533813f4aa9d7837caf62653d097ff85', // USDC OPTIMISM
+  //       '0xdac17f958d2ee523a2206206994597c13d831ec7', // USDT ETH
+  //       '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2', // USDT BASE
+  //       '0xc2132d05d31c914a87c6611c10748aeb04b58e8f', // USDT POLYGON
+  //       '0x55d398326f99059ff775485246999027b3197955', // USDT BSC
+  //       '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', // USDT ARBITRUM
+  //       '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58', // USDT OPTIMISM
+  //       'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',         // USDT TRON
+  //       'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8',          // USDC TRON
+  //   ]);
+
+  //   // Solana mint addresses are case-sensitive Base58 — never lowercase
+  //   // these, unlike the EVM contracts above.
+  //   const SOLANA_STABLECOIN_MINTS = new Set([
+  //       'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC SOLANA
+  //       'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT SOLANA
+  //   ]);
+
+  //   const isStablecoin = !!contractAddress && (
+  //       STABLECOIN_CONTRACTS.has(contractAddress.toLowerCase()) ||
+  //       SOLANA_STABLECOIN_MINTS.has(contractAddress) // exact case, no .toLowerCase()
+  //   );
+
+  //   const minAmount = isStablecoin ? 1 : 0.0001;
+
+  //   return parseFloat(amount) >= minAmount;
+  // }
+
+  private isAboveMinimumAmount(amount: string, contractAddress?: string, chainKey?: string): boolean {
     const STABLECOIN_CONTRACTS = new Set([
         '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC BASE
         '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC ETH
@@ -2097,20 +2169,27 @@ class eventService {
         '0x55d398326f99059ff775485246999027b3197955', // USDT BSC
         '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', // USDT ARBITRUM
         '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58', // USDT OPTIMISM
-        'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',         // USDT TRON
-        'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8',          // USDC TRON
+        // TRON removed from here — see TRON_STABLECOIN_LABELS below.
+        // These were previously stored mixed-case in a set that gets
+        // lowercase-compared, meaning they could never have matched even
+        // before Tatum's ticker-label quirk was discovered.
     ]);
 
-    // Solana mint addresses are case-sensitive Base58 — never lowercase
-    // these, unlike the EVM contracts above.
+    // Solana mint addresses are case-sensitive Base58 — never lowercase these.
     const SOLANA_STABLECOIN_MINTS = new Set([
         'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC SOLANA
         'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT SOLANA
     ]);
 
+    // TRON's INCOMING_FUNGIBLE_TX webhook delivers contractAddress as a
+    // symbolic ticker label (confirmed live: "USDT_TRON"), not the real
+    // contract hash — see validateContract's identical carve-out.
+    const TRON_STABLECOIN_LABELS = new Set(['USDT_TRON', 'USDC_TRON']);
+
     const isStablecoin = !!contractAddress && (
         STABLECOIN_CONTRACTS.has(contractAddress.toLowerCase()) ||
-        SOLANA_STABLECOIN_MINTS.has(contractAddress) // exact case, no .toLowerCase()
+        SOLANA_STABLECOIN_MINTS.has(contractAddress) ||       // exact case
+        TRON_STABLECOIN_LABELS.has(contractAddress)            // exact case
     );
 
     const minAmount = isStablecoin ? 1 : 0.0001;
