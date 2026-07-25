@@ -194,6 +194,10 @@ class stableCoinService
                     ];
                 }
 
+                if (blockchain !== 'SOLANA') {
+                    attr.templateId = 'enriched';
+                }
+
                 const response = await this.tatumAxiosV4.post('/subscription', {
                     type: 'INCOMING_FUNGIBLE_TX',
                     attr
