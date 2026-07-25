@@ -56,7 +56,7 @@ class LiquidityRampService {
             customer: {
                 email:      payload.customerEmail,
                 first_name: payload.customerFirstName,
-                last_name:  payload.customerLastName,
+                last_name:  payload.customerLastName, 
             },
             wallet_address: {
                 address: payload.walletAddress,
