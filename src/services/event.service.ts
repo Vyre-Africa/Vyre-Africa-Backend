@@ -481,7 +481,7 @@ class eventService {
       if (ignored) return ignored
 
       // ── Step 4: Ignore our own sweep transactions ─────────────────────
-      if (this.isSweepFeedback(address, counterAddress, wallet, adminWallet)) {
+      if (this.isSweepFeedback(address, counterAddress, wallet, adminWallet, chain)) {
         logger.info('Ignored — sweep feedback', { txId, chain })
         return { status: 'ignored', reason: 'sweep_feedback' }
       }
@@ -1923,17 +1923,47 @@ class eventService {
     return null
   }
 
+  // private isSweepFeedback(
+  //   address:      string,
+  //   counterAddress: string,
+  //   wallet:       any,
+  //   adminWallet:  any
+  // ): boolean {
+  //     if (!adminWallet?.depositAddress) return false
+
+  //     const masterAddress  = adminWallet.depositAddress.toLowerCase()
+  //     const isInvolved     = counterAddress?.toLowerCase() === masterAddress || address?.toLowerCase() === masterAddress
+  //     const isNotMaster    = wallet.depositAddress?.toLowerCase() !== masterAddress
+
+  //     return isInvolved && isNotMaster
+  // }
+
   private isSweepFeedback(
-    address:      string,
-    counterAddress: string,
-    wallet:       any,
-    adminWallet:  any
+      address:        string,
+      counterAddress: string,
+      wallet:         any,
+      adminWallet:    any,
+      chain?:      string  // pass this in from the caller — needed to know when NOT to lowercase
   ): boolean {
+
+      const chainKey = this.WEBHOOK_CHAIN_MAP[chain!]
+     
       if (!adminWallet?.depositAddress) return false
 
-      const masterAddress  = adminWallet.depositAddress.toLowerCase()
-      const isInvolved     = counterAddress?.toLowerCase() === masterAddress || address?.toLowerCase() === masterAddress
-      const isNotMaster    = wallet.depositAddress?.toLowerCase() !== masterAddress
+      const caseSensitive = chainKey === 'TRON' || chainKey === 'SOLANA'
+
+      const masterAddress = caseSensitive
+          ? adminWallet.depositAddress
+          : adminWallet.depositAddress.toLowerCase()
+
+      const normalizedCounter = caseSensitive ? counterAddress : counterAddress?.toLowerCase()
+      const normalizedAddress = caseSensitive ? address : address?.toLowerCase()
+      const normalizedWalletDeposit = caseSensitive
+          ? wallet.depositAddress
+          : wallet.depositAddress?.toLowerCase()
+
+      const isInvolved  = normalizedCounter === masterAddress || normalizedAddress === masterAddress
+      const isNotMaster = normalizedWalletDeposit !== masterAddress
 
       return isInvolved && isNotMaster
   }
@@ -2197,7 +2227,10 @@ class eventService {
   //   return parseFloat(amount) >= minAmount;
   // }
 
-  private async isKnownUserAddress(address: string): Promise<boolean> {
+  private async isKnownUserAddress(address: string | undefined): Promise<boolean> {
+
+      if (!address) return false; // fail closed, never silently match on undefined
+
       const knownAddress = await prisma.virtualAccountAddress.findFirst({
           where: {
               address: { equals: address, mode: 'insensitive' },
