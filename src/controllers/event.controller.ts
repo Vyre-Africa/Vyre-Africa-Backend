@@ -483,8 +483,24 @@ class EventController {
         console.log('body', body);
         console.log(`x-payload-hash and base64Hash are equal? ${xPayloadHash !== base64Hash ? 'NO' : 'YES'}`);
 
+        // Tatum's 'enriched' template (now used for TRON, and possibly
+        // other newly-recreated subscriptions) uses a DIFFERENT field
+        // shape than the legacy template every other chain has been
+        // sending so far: to/from/value/kind instead of
+        // address/counterAddress/amount/type. Normalize both here so
+        // legacy subscriptions (not yet recreated) and enriched ones
+        // (TRON, going forward) both work correctly.
+
+        const address = body.address ?? body.to;
+        const amount = body.amount ?? body.value;
+        const type = body?.type ?? body?.kind;
+
+        // Solana sends counterAddresses (plural, array). Enriched TRON
+        // sends `from`. Legacy sends counterAddress (singular). Cover
+        // all three.
         const counterAddress: string | undefined =
             body.counterAddress ??
+            body.from ??
             (Array.isArray(body.counterAddresses) ? body.counterAddresses[0] : undefined);
 
         if (Array.isArray(body.counterAddresses) && body.counterAddresses.length > 1) {
@@ -494,18 +510,19 @@ class EventController {
             });
         }
 
+
         await eventService.queue({
             type: 'TATUM',
-            Tatum_Address:         body.address,
+            Tatum_Address:         address,
             Tatum_CounterAddress:  counterAddress,
             Tatum_Chain:           body.chain,
-            Tatum_Type:            body?.type,
-            Tatum_Amount:          body.amount,
+            Tatum_Type:            type,
+            Tatum_Amount:          amount,
             Tatum_SubscriptionId:  body.subscriptionId,
             Tatum_EventType:       body.subscriptionType,
             Tatum_TxId:            body.txId,
             Tatum_ContractAddress: body.contractAddress,
-            Tatum_Asset:           body.asset,
+            Tatum_Asset:           body.asset ?? body.tokenMetadata?.symbol,
             Tatum_currency:        body.currency
         })
 
