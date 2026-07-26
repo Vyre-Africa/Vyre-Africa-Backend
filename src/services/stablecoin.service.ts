@@ -194,7 +194,7 @@ class stableCoinService
                     ];
                 }
 
-                if (blockchain !== 'SOLANA') {
+                if (blockchain === 'TRON') {
                     attr.templateId = 'enriched';
                 }
 
