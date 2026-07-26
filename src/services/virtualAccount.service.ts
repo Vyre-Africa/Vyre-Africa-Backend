@@ -2088,7 +2088,7 @@ class VirtualAccountService {
                   to: toAddress,
                   tokenAddress: config.tokenMint,
                   amount: amount.toString(),
-                  feeLimit: '0.5',
+                  feeLimit: 100,
                   fromPrivateKey: privateKey,
               };
               break;
