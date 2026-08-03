@@ -430,7 +430,7 @@ export async function verifyTier2({
     const res = await dojahClient.post('/api/v1/kyc/photoid/verify', {
       selfie_image: selfieImageBase64,
       photoid_image: idImageBase64,
-    });
+    },{ timeout: 45000 });
     const data = res.data?.entity?.selfie;
     return {
       success: true,
@@ -576,3 +576,117 @@ export async function screenUser({
     return { success: false, error: msg };
   }
 }
+
+export interface DocumentAnalysisField {
+  field_name: string;
+  field_key: string;
+  status: 0 | 1 | 2; // 0 = not found, 1 = extracted, 2 = uncertain
+  value: string;
+}
+ 
+export interface DocumentAnalysisResult {
+  success: boolean;
+  isValid: boolean;          // entity.status.overall_status === 1
+  reason?: string;           // entity.status.reason
+  documentName?: string;     // entity.document_type.document_name
+  documentCountry?: string;  // entity.document_type.document_country_code
+  fields: DocumentAnalysisField[];
+  portraitImage?: string;    // base64, if extracted
+  rawData?: any;
+  error?: string;
+}
+
+export async function analyzeDocument({
+  imageFrontBase64,
+  imageBackBase64,
+}: {
+  imageFrontBase64: string;
+  imageBackBase64?: string;
+}): Promise<DocumentAnalysisResult> {
+  try {
+    const res = await dojahClient.post('/api/v1/document/analysis', {
+      input_type: 'base64',
+      imagefrontside: imageFrontBase64,
+      ...(imageBackBase64 ? { imagebackside: imageBackBase64 } : {}),
+    }, {
+      timeout: 55000, // document analysis is heavier than typical Dojah calls — 15s default was too tight
+    });
+ 
+    const entity = res.data?.entity;
+    if (!entity) {
+      return { success: false, isValid: false, fields: [], error: 'No entity in response', rawData: res.data };
+    }
+ 
+    return {
+      success: true,
+      isValid: entity.status?.overall_status === 1,
+      reason: entity.status?.reason,
+      documentName: entity.document_type?.document_name,
+      documentCountry: entity.document_type?.document_country_code,
+      fields: entity.text_data ?? [],
+      portraitImage: entity.document_images?.portrait,
+      rawData: res.data,
+    };
+  } catch (error: any) {
+    const { error: msg, rawData } = handleDojahError('analyzeDocument', error);
+    return { success: false, isValid: false, fields: [], error: msg, rawData };
+  }
+}
+
+export interface UtilityBillResult {
+  success: boolean;
+  fullName?: string;
+  meterNumber?: string;
+  addressStreet?: string;
+  addressCity?: string;
+  addressState?: string;
+  addressCountry?: string;
+  providerName?: string;
+  billIssueDate?: string;
+  amountPaid?: string;
+  isRecent?: boolean;
+  rawData?: any;
+  error?: string;
+}
+ 
+export async function analyzeUtilityBill({
+  imageUrl,
+}: {
+  imageUrl: string; // must be a real, publicly-fetchable URL (e.g. a short-lived signed GCS URL) — base64 is rejected by this endpoint
+}): Promise<UtilityBillResult> {
+  try {
+    const res = await dojahClient.post(
+      '/api/v1/document/analysis/utility_bill',
+      {
+        input_type: 'url',
+        input_value: imageUrl,
+      },
+      { timeout: 45000 }
+    );
+ 
+    const entity = res.data?.entity;
+    if (!entity) {
+      return { success: false, error: 'No entity in response', rawData: res.data };
+    }
+ 
+    return {
+      success: entity.result?.status === 'success',
+      fullName: entity.identity_info?.full_name,
+      meterNumber: entity.identity_info?.meter_number,
+      addressStreet: entity.address_info?.street,
+      addressCity: entity.address_info?.city,
+      addressState: entity.address_info?.state,
+      addressCountry: entity.address_info?.country,
+      providerName: entity.provider_name,
+      billIssueDate: entity.bill_issue_date,
+      amountPaid: entity.amount_paid,
+      isRecent: entity.metadata?.is_recent,
+      rawData: res.data,
+    };
+  } catch (error: any) {
+    const { error: msg, rawData } = handleDojahError('analyzeUtilityBill', error);
+    return { success: false, error: msg, rawData };
+  }
+}
+ 
+ 

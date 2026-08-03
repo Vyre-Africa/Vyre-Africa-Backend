@@ -4165,3 +4165,29 @@ Error: Admin wallet not found
 2026-07-25 21:18:20 [info] Connected to Ably! 
 2026-07-25 21:18:34 [info] Server running on port 4000 
 2026-07-25 21:18:35 [info] Connected to Ably! 
+2026-08-02 04:26:13 [error] GCS upload failed 
+2026-08-02 04:26:51 [error] GCS upload failed 
+2026-08-02 04:29:41 [info] Uploaded to GCS 
+2026-08-02 04:40:01 [info] Uploaded to GCS 
+2026-08-02 04:42:17 [info] Uploaded to GCS 
+2026-08-02 04:47:05 [info] Uploaded to GCS 
+2026-08-02 04:50:27 [info] Uploaded to GCS 
+2026-08-02 04:51:48 [info] Uploaded to GCS 
+2026-08-02 04:51:52 [info] Deleted from GCS 
+2026-08-02 05:00:40 [info] Uploaded to GCS 
+2026-08-02 05:01:02 [info] Deleted from GCS 
+2026-08-02 09:05:44 [error] getaddrinfo ENOTFOUND api.nuvion.io 
+2026-08-02 09:10:20 [error] Request failed with status code 401 
+2026-08-02 09:17:09 [error] Request failed with status code 422 
+2026-08-02 13:16:32 [error] Request failed with status code 422 
+2026-08-02 13:24:16 [error]  
+2026-08-02 13:30:04 [error] Request failed with status code 422 
+2026-08-02 13:39:45 [info] Nuvion entity created — raw response 
+2026-08-02 13:39:45 [error] Nuvion entity creation succeeded but no id found in response — check raw response above 
+2026-08-03 02:04:48 [error] Request failed with status code 409 
+2026-08-03 02:19:17 [error] Request failed with status code 400 
+2026-08-03 02:26:52 [error] Request failed with status code 400 
+2026-08-03 02:36:20 [info] Nuvion document uploaded [identity] — raw response 
+2026-08-03 02:41:17 [info] Nuvion document uploaded [address] — raw response 
+2026-08-03 12:03:45 [info] Server running on port 4000 
+2026-08-03 12:03:45 [info] Connected to Ably! 

@@ -356,6 +356,9 @@ model User {
   legalFirstName  String?
   legalLastName   String?
   legalNameVerifiedAt DateTime?
+  legalDateOfBirth DateTime?
+  legalGender      String?   // 'Male' | 'Female' — as Dojah returns it
+  nationality      String?   // ISO alpha-2, e.g. 'NG'
 
   BusinessName String?
   referralId   String?
@@ -439,7 +442,31 @@ model User {
   dojahNinRef      String?
   dojahIdRef       String?
   dojahLivenessRef String?
+
+  // Residential address 
+  addressLine1       String?
+  addressLine2       String?
+  addressCity         String?
+  addressState        String?
+  addressPostalCode   String?
+  addressCountryCode  String? // ISO alpha-2
  
+  // Identity document metadata — confirmed via Dojah's Document Analysis
+  // endpoint (POST /api/v1/document/analysis), NOT collected at Tier 1/2.
+  idDocumentType           String?   // 'passport' | 'drivers_license' | 'national_id'
+  idDocumentNumber         String?
+  idDocumentIssueDate      DateTime?
+  idDocumentExpiryDate     DateTime?
+  idDocumentIssuingCountry String?
+ 
+  // Nuvion entity tracking
+  nuvionEntityId     String?
+  nuvionPersonId     String?
+  nuvionEntityStatus String?   // incomplete | pending | approved | rejected | suspended
+  nuvionSubmittedAt  DateTime?
+
+  kycDocuments KycDocument[]
+  nuvionAccounts NuvionAccount[]
   kycUsages        KycUsage[]
   kycVerifications KycVerification[]
 
@@ -547,6 +574,19 @@ model Documents {
 
   // UserKyc relation (one-to-one)
   userKyc UserKyc? @relation("UserKycToDocuments")
+}
+
+model KycDocument {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  type             String   // 'identity_front' | 'identity_back' | 'proof_of_address'
+  storageUrl       String   // wherever this actually persists — S3/GCS/etc.
+  dojahImageUrl    String?  // Dojah's own hosted copy, when applicable (time-limited)
+  nuvionDocumentId String?
+  createdAt        DateTime @default(now())
+ 
+  @@index([userId])
 }
 
 model Identity {
@@ -1450,6 +1490,35 @@ model KycVerification {
   @@index([userId])
   @@index([status])
   @@index([type])
+}
+
+model NuvionWebhookEvent {
+  id         String   @id @default(cuid())
+  eventId    String   @unique // from x-nuvion-event-id header — the idempotency key
+  event      String   // e.g. 'accounts.created', 'entities.updated'
+  rawPayload Json
+  receivedAt DateTime @default(now())
+ 
+  @@index([event])
+}
+ 
+model NuvionAccount {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  nuvionAccountId String   @unique
+  currency        String
+  accountType     String
+  displayName     String?
+  accountNumber   String?
+  routingNumber   String?
+  issuerName      String?
+  issuerCode      String?
+  status          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+ 
+  @@index([userId])
 }
 
 model UnreconciledDeposit {
