@@ -32,6 +32,7 @@ import otcValidator from '../validators/otc.validator';
 import otcController from '../controllers/otc.controller';
 import vendorController from '../controllers/vendor.controller';
 import kycController from '../controllers/kyc.controller';
+import nuvionController from '../controllers/nuvion.controller';
 
 const router = Router();
 
@@ -80,6 +81,8 @@ router.post(
   '/webhook/ramp', 
   eventController.ramp_WebHook
 );
+
+router.post('/webhook/nuvion', nuvionController.nuvionWebhook);
 
 router.post(
   '/user/upload_kyc',

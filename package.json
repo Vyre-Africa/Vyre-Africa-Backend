@@ -27,7 +27,14 @@
         "sync-buy-orders": "ts-node --transpile-only -r dotenv/config src/scripts/sync-buy-orders.ts",
         "test:solana-wallet": "ts-node --transpile-only -r dotenv/config src/scripts/testSolanaWalletCreation.ts",
         "sweep:manual": "ts-node --transpile-only -r dotenv/config src/scripts/manualCustodialSweep.ts",
-        "check:deposit": "ts-node --transpile-only -r dotenv/config src/scripts/checkDeposit.ts"
+        "check:deposit": "ts-node --transpile-only -r dotenv/config src/scripts/checkDeposit.ts",
+        "test:doc-analysis": "ts-node --transpile-only -r dotenv/config src/scripts/testDocumentAnalysis.ts",
+        "test:photoid-verify": "ts-node --transpile-only -r dotenv/config src/scripts/testPhotoIdVerify.ts",
+        "test:utility-bill": "ts-node --transpile-only -r dotenv/config src/scripts/testUtilityBillAnalysis.ts",
+        "test:tier2-full": "ts-node --transpile-only -r dotenv/config src/scripts/testFullTier2.ts",
+        "test:nuvion-entity": "ts-node --transpile-only -r dotenv/config src/scripts/testNuvionEntity.ts",
+        "test:nuvion-document": "ts-node --transpile-only -r dotenv/config src/scripts/testNuvionDocument.ts",
+        "test:nuvion-submit": "ts-node --transpile-only -r dotenv/config src/scripts/testNuvionSubmit.ts"
     },
     "author": "harvey ana",
     "license": "ISC",
@@ -35,6 +42,7 @@
         "@casl/ability": "^6.7.1",
         "@casl/prisma": "^1.4.1",
         "@clerk/express": "^1.7.60",
+        "@google-cloud/storage": "^7.21.0",
         "@prisma/adapter-pg": "^7.8.0",
         "@prisma/client": "^7.8.0",
         "@supabase/supabase-js": "^2.43.4",
