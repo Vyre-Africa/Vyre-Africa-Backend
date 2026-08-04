@@ -31,10 +31,7 @@
         "test:doc-analysis": "ts-node --transpile-only -r dotenv/config src/scripts/testDocumentAnalysis.ts",
         "test:photoid-verify": "ts-node --transpile-only -r dotenv/config src/scripts/testPhotoIdVerify.ts",
         "test:utility-bill": "ts-node --transpile-only -r dotenv/config src/scripts/testUtilityBillAnalysis.ts",
-        "test:tier2-full": "ts-node --transpile-only -r dotenv/config src/scripts/testFullTier2.ts",
-        "test:nuvion-entity": "ts-node --transpile-only -r dotenv/config src/scripts/testNuvionEntity.ts",
-        "test:nuvion-document": "ts-node --transpile-only -r dotenv/config src/scripts/testNuvionDocument.ts",
-        "test:nuvion-submit": "ts-node --transpile-only -r dotenv/config src/scripts/testNuvionSubmit.ts"
+        "test:tier2-full": "ts-node --transpile-only -r dotenv/config src/scripts/testFullTier2.ts"
     },
     "author": "harvey ana",
     "license": "ISC",

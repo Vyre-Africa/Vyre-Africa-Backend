@@ -4191,3 +4191,20 @@ Error: Admin wallet not found
 2026-08-03 02:41:17 [info] Nuvion document uploaded [address] — raw response 
 2026-08-03 12:03:45 [info] Server running on port 4000 
 2026-08-03 12:03:45 [info] Connected to Ably! 
+2026-08-03 13:19:51 [error] Request failed with status code 404 
+2026-08-03 13:19:51 [error] Request failed with status code 422 
+2026-08-03 13:51:46 [error] Request failed with status code 404 
+2026-08-03 13:51:46 [error] Request failed with status code 422 
+2026-08-03 15:46:52 [error]  
+2026-08-03 15:49:09 [error]  
+2026-08-03 15:55:26 [info] Nuvion document uploaded [proof_of_address] — raw response 
+2026-08-03 16:16:47 [info] Nuvion entity status fetched — raw response 
+2026-08-03 16:16:47 [info] Nuvion onboarding submitted — raw response 
+2026-08-03 16:16:47 [info] Nuvion entity status fetched — raw response 
+2026-08-03 18:18:16 [error]  
+2026-08-03 18:18:49 [error]  
+2026-08-03 18:19:45 [info] Nuvion entity status fetched — raw response 
+2026-08-04 02:20:02 [info] Server running on port 4000 
+2026-08-04 02:20:03 [info] Connected to Ably! 
+2026-08-04 02:20:18 [info] Server running on port 4000 
+2026-08-04 02:20:19 [info] Connected to Ably! 

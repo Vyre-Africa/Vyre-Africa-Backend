@@ -19,13 +19,6 @@ const config = {
     GCP_PROJECT_ID: process.env.GCP_PROJECT_ID || '',
     KYC_DOCUMENTS_BUCKET: process.env.KYC_DOCUMENTS_BUCKET || '',
 
-    NUVION_BASE_URL: process.env.NUVION_BASE_URL || 'https://api.nuvion.co',
-    NUVION_API_KEY: process.env.NUVION_API_KEY || '',
-    NUVION_WEBHOOK_SECRET: process.env.NUVION_WEBHOOK_SECRET || '',
-
-
-
-
     dialect: process.env.DB_DIALECT || 'postgres',
     dbCreds: {
         username: process.env.DB_USER,
