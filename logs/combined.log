@@ -4204,3 +4204,7 @@ Error: Admin wallet not found
 2026-08-03 18:18:16 [error]  
 2026-08-03 18:18:49 [error]  
 2026-08-03 18:19:45 [info] Nuvion entity status fetched — raw response 
+2026-08-04 02:20:02 [info] Server running on port 4000 
+2026-08-04 02:20:03 [info] Connected to Ably! 
+2026-08-04 02:20:18 [info] Server running on port 4000 
+2026-08-04 02:20:19 [info] Connected to Ably! 
