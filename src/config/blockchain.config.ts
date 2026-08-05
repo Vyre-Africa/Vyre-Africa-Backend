@@ -3,21 +3,34 @@ import config from '../config/env.config';
 export type ChainConfig = {
     blockchain: string;
     walletType: 'HD' | 'KEYPAIR';
-    tatumEndpoint?: string;           // HD chains - address generation endpoint
-    tatumWalletEndpoint?: string;     // KEYPAIR chains - wallet generation endpoint
-    tatumTransferEndpoint?: string;   // token/native transfer endpoint
+    tatumEndpoint?: string;
+    tatumWalletEndpoint?: string;
+    tatumTransferEndpoint?: string;
     mnemonic?: string;
     xpub?: string;
-    xpubEnvKey?: string;              // env key for xpub
+    xpubEnvKey?: string;
     currency: string;
-    decimals?: number;                // token decimal places
+    decimals?: number;
     isToken?: boolean;
-    tokenMint?: string;               // contract address / mint address
+    tokenMint?: string;
     tokenSymbol?: string;
-    tokenStandard?: string;           // ERC20, TRC20, SPL, BEP20
+    tokenStandard?: string;
     webhookChain?: string;
     tatumChainParam?: string;
-    
+
+    // Explicit, declared per entry — true ONLY for token configs whose
+    // tatumTransferEndpoint points at Tatum's generic multi-chain endpoint
+    // (/blockchain/token/transaction), which requires a `chain` field in
+    // the request body (confirmed via Tatum's own validator). Chains still
+    // on their own dedicated endpoint (e.g. /base/transaction) must leave
+    // this unset/false — that endpoint doesn't take a `chain` field at all,
+    // since the URL itself identifies the chain.
+    //
+    // Deliberately explicit rather than inferred from the endpoint URL at
+    // call time — a URL substring check is fragile and silent; a missing
+    // or wrong boolean here is a one-line, obvious thing to check when
+    // adding or migrating a chain.
+    usesGenericTokenEndpoint?: boolean;
 };
 
 export const CHAIN_CONFIG: Record<string, ChainConfig> = {
@@ -164,14 +177,8 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         webhookChain: 'xrp-mainnet',
     },
 
-    // ── ERC20 Tokens (ETH chain) ─────────────────────────────────
-    // tatumTransferEndpoint switched to the generic multi-chain token
-    // endpoint — the per-chain /ethereum/transaction endpoint resolves
-    // balances off Tatum's internal currency ticker (e.g. 'USDT'), which
-    // was confirmed to misresolve on Polygon (see USDC_MATIC below); Tatum's
-    // docs list Ethereum as supported by the generic endpoint, so this
-    // applies the same fix preemptively here. Verify with a real test
-    // transfer before relying on it in production, same as Polygon was.
+    // ── ERC20 Tokens (ETH chain) — on the GENERIC endpoint ──────────
+    // usesGenericTokenEndpoint: true — confirmed via live Tatum testing.
 
     USDT_ETH: {
         blockchain: 'ETHEREUM',
@@ -189,6 +196,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenStandard: 'ERC20',
         webhookChain: 'ethereum-mainnet',
         tatumChainParam: 'ETH',
+        usesGenericTokenEndpoint: true,
     },
 
     USDC_ETH: {
@@ -207,12 +215,11 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenStandard: 'ERC20',
         webhookChain: 'ethereum-mainnet',
         tatumChainParam: 'ETH',
+        usesGenericTokenEndpoint: true,
     },
 
-    // ── TRC20 Tokens (TRON chain) ────────────────────────────────
-    // Unchanged — TRC20 transfers already go through their own dedicated
-    // /tron/trc20/transaction endpoint with tokenAddress specified
-    // explicitly, so this doesn't have the ticker-resolution problem.
+    // ── TRC20 Tokens (TRON chain) — own dedicated endpoint, no flag needed
+    // (TRC20 has its own case in broadcastTokenToTatum, unaffected by this flag)
 
     USDT_TRON: {
         blockchain: 'TRON',
@@ -250,9 +257,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tatumChainParam: 'TRON',
     },
 
-    // ── BEP20 Tokens (BSC chain) ─────────────────────────────────
-    // Same endpoint fix as ETH tokens above — BSC is explicitly listed as
-    // supported by Tatum's generic token-transfer endpoint.
+    // ── BEP20 Tokens (BSC chain) — on the GENERIC endpoint ──────────
 
     USDT_BSC: {
         blockchain: 'BSC',
@@ -270,6 +275,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenStandard: 'BEP20',
         webhookChain: 'bsc-mainnet',
         tatumChainParam: 'BSC',
+        usesGenericTokenEndpoint: true,
     },
 
     USDC_BSC: {
@@ -288,9 +294,11 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenStandard: 'BEP20',
         webhookChain: 'bsc-mainnet',
         tatumChainParam: 'BSC',
+        usesGenericTokenEndpoint: true,
     },
 
-    // ── SPL Tokens (Solana chain) ────────────────────────────────
+    // ── SPL Tokens (Solana chain) — own case in broadcastTokenToTatum,
+    // flag not applicable
 
     USDC_SOL: {
         blockchain: 'SOLANA',
@@ -322,15 +330,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tatumChainParam: 'SOL',
     },
 
-    // ── Polygon Tokens ───────────────────────────────────────────
-    // FIXED — confirmed live: /v3/polygon/transaction with currency:
-    // 'USDC_MATIC' resolved to a contract with 0 balance while the real
-    // deposit address held 6.5 USDC on-chain (verified on Polygonscan).
-    // Even sending contractAddress explicitly to that same endpoint didn't
-    // help — the endpoint itself ignores it and resolves purely off the
-    // ticker. Switched to the generic multi-chain endpoint, which the
-    // manual sweep script already proved works correctly for this exact
-    // token/address.
+    // ── Polygon Tokens — on the GENERIC endpoint ──────────
 
     USDT_MATIC: {
         blockchain: 'POLYGON',
@@ -348,6 +348,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenStandard: 'ERC20',
         webhookChain: 'polygon-mainnet',
         tatumChainParam: 'MATIC',
+        usesGenericTokenEndpoint: true,
     },
 
     USDC_MATIC: {
@@ -366,16 +367,11 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         tokenStandard: 'ERC20',
         webhookChain: 'polygon-mainnet',
         tatumChainParam: 'MATIC',
+        usesGenericTokenEndpoint: true,
     },
 
-    // ── Arbitrum Tokens ──────────────────────────────────────────
-    // DELIBERATELY UNCHANGED — Tatum's documented list of chains supported
-    // by the generic /blockchain/token/transaction endpoint does NOT
-    // include Arbitrum (it lists Ethereum, BSC, Polygon, Base, Optimism,
-    // Solana, Avalanche, Fantom, Celo, Algorand, and others — Arbitrum is
-    // conspicuously absent). Switching this to the generic endpoint could
-    // break it entirely rather than fix anything. Leave on the dedicated
-    // /arb/transaction endpoint until specifically tested.
+    // ── Arbitrum Tokens — DEDICATED endpoint, not migrated ──────────
+    // usesGenericTokenEndpoint intentionally omitted (= false).
 
     USDT_ARB: {
         blockchain: 'ARBITRUM',
@@ -411,14 +407,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         webhookChain: 'arb-one-mainnet',
     },
 
-    // ── Optimism Tokens ──────────────────────────────────────────
-    // NOT YET CHANGED — Optimism IS listed among Tatum's chains supported
-    // by the generic token-transfer endpoint, so this is very likely
-    // affected by the same bug as Polygon/ETH/BSC above. Left on the
-    // dedicated endpoint for now since it hasn't been live-tested in this
-    // pass — same treatment as Arbitrum's caution, just for a different
-    // reason (untested vs. unsupported). Verify with a real transfer
-    // before switching, the same way Polygon was confirmed.
+    // ── Optimism Tokens — DEDICATED endpoint, not migrated ──────────
 
     USDT_OP: {
         blockchain: 'OPTIMISM',
@@ -454,10 +443,7 @@ export const CHAIN_CONFIG: Record<string, ChainConfig> = {
         webhookChain: 'optimism-mainnet',
     },
 
-    // ── Base Tokens ──────────────────────────────────────────────
-    // NOT YET CHANGED — same situation as Optimism above: Base IS listed
-    // as supported by the generic endpoint, likely affected by the same
-    // bug, but not yet live-tested in this pass. Verify before switching.
+    // ── Base Tokens — DEDICATED endpoint, not migrated ──────────
 
     USDC_BASE: {
         blockchain: 'BASE',
@@ -546,13 +532,22 @@ export function getChainKey(
 }
 
 // Returns Tatum's required `chain` enum value for a blockchain/currency pair
-// — only meaningful for the generic multi-chain endpoints (e.g.
-// /blockchain/token/transaction, /blockchain/sc/custodial/transfer).
-// Falls back to the raw blockchain string if no override is set, which is
-// correct for chains that never needed one — the dedicated per-chain
-// endpoints (/base/transaction, /arb/transaction etc.) don't take a `chain`
-// field at all, so nothing reads this fallback value for them.
 export function getTatumChainParam(blockchain: string, currency: string): string {
     const config = getChainConfigByCurrency(blockchain, currency);
     return config?.tatumChainParam ?? blockchain;
+}
+
+// Reverse lookup: CHAIN_CONFIG is keyed by short chain codes but
+// config.blockchain holds the full name. Always resolve via this when you
+// only have a `blockchain` string.
+export function getChainConfigKeyByBlockchain(blockchain: string): string | undefined {
+    const upper = blockchain.toUpperCase();
+    return Object.entries(CHAIN_CONFIG).find(
+        ([key, config]) => config.blockchain.toUpperCase() === upper && !config.isToken
+    )?.[0];
+}
+
+export function getBaseChainConfig(blockchain: string): ChainConfig | undefined {
+    const key = getChainConfigKeyByBlockchain(blockchain);
+    return key ? CHAIN_CONFIG[key] : undefined;
 }

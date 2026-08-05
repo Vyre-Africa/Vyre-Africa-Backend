@@ -2020,8 +2020,6 @@ class VirtualAccountService {
           'Content-Type': 'application/json'
       };
 
-      // Derive private key on the go for HD chains
-      // For KEYPAIR chains (SOL tokens) use stored encrypted key
       let privateKey: string;
 
       if (config.walletType === 'HD') {
@@ -2031,7 +2029,6 @@ class VirtualAccountService {
               addressRecord.index!
           );
       } else {
-          // KEYPAIR chain (SOL SPL tokens) - still need stored key
           if (!addressRecord.encryptedPrivateKey) {
               throw new Error('No private key found for this keypair address');
           }
@@ -2055,47 +2052,58 @@ class VirtualAccountService {
               };
               break;
 
-          // ── ERC20 (ETHEREUM, POLYGON tokens routed through the generic
-          // multi-chain endpoint) ──────────────────────────────────
-          // FIXED — this endpoint requires `chain` for every token, not
-          // just Solana. Confirmed live: Tatum's own validator rejected
-          // the request specifically for a missing/empty `chain` field,
-          // while accepting every other field without complaint.
-          // config.tatumChainParam must be set on any ChainConfig entry
-          // that uses this endpoint — it is for USDC_MATIC/USDT_MATIC and
-          // USDC_ETH/USDT_ETH/USDC_BSC/USDT_BSC, but deliberately NOT set
-          // on ARBITRUM/BASE/OPTIMISM token configs (those are still on
-          // their own dedicated endpoints), so if this throws for one of
-          // those, that's the config correctly telling you it hasn't been
-          // moved to this endpoint yet.
+          // ── ERC20 (ETHEREUM, POLYGON on the generic endpoint;
+          // BASE, ARBITRUM, OPTIMISM still on their own dedicated
+          // endpoint — see config.usesGenericTokenEndpoint) ───────
           case 'ERC20':
-              if (!config.tatumChainParam) {
-                  throw new Error(`${config.tokenSymbol}: tatumChainParam is required when using the generic token-transfer endpoint`);
+              if (config.usesGenericTokenEndpoint) {
+                  if (!config.tatumChainParam) {
+                      throw new Error(`${config.tokenSymbol}: tatumChainParam is required when usesGenericTokenEndpoint is true`);
+                  }
+                  payload = {
+                      chain: config.tatumChainParam,
+                      to: toAddress,
+                      contractAddress: config.tokenMint,
+                      amount: amount.toString(),
+                      digits: config.decimals ?? 6,
+                      fromPrivateKey: privateKey,
+                  };
+              } else {
+                  // Dedicated per-chain endpoint — no `chain` field, the
+                  // URL itself identifies the chain.
+                  payload = {
+                      to: toAddress,
+                      contractAddress: config.tokenMint,
+                      amount: amount.toString(),
+                      digits: config.decimals ?? 6,
+                      fromPrivateKey: privateKey,
+                  };
               }
-              payload = {
-                  chain: config.tatumChainParam,
-                  to: toAddress,
-                  contractAddress: config.tokenMint,
-                  amount: amount.toString(),
-                  digits: config.decimals ?? 6,
-                  fromPrivateKey: privateKey,
-              };
               break;
 
           // ── BEP20 (BSC tokens) ───────────────────────────────────
-          // Same fix as ERC20 above.
           case 'BEP20':
-              if (!config.tatumChainParam) {
-                  throw new Error(`${config.tokenSymbol}: tatumChainParam is required when using the generic token-transfer endpoint`);
+              if (config.usesGenericTokenEndpoint) {
+                  if (!config.tatumChainParam) {
+                      throw new Error(`${config.tokenSymbol}: tatumChainParam is required when usesGenericTokenEndpoint is true`);
+                  }
+                  payload = {
+                      chain: config.tatumChainParam,
+                      to: toAddress,
+                      contractAddress: config.tokenMint,
+                      amount: amount.toString(),
+                      digits: config.decimals ?? 6,
+                      fromPrivateKey: privateKey,
+                  };
+              } else {
+                  payload = {
+                      to: toAddress,
+                      contractAddress: config.tokenMint,
+                      amount: amount.toString(),
+                      digits: config.decimals ?? 6,
+                      fromPrivateKey: privateKey,
+                  };
               }
-              payload = {
-                  chain: config.tatumChainParam,
-                  to: toAddress,
-                  contractAddress: config.tokenMint,
-                  amount: amount.toString(),
-                  digits: config.decimals ?? 6,
-                  fromPrivateKey: privateKey,
-              };
               break;
 
           // ── TRC20 (TRON tokens - USDT_TRON, USDC_TRON) ──────────
