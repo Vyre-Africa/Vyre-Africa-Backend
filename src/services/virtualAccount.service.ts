@@ -2071,11 +2071,14 @@ class VirtualAccountService {
               } else {
                   // Dedicated per-chain endpoint — no `chain` field, the
                   // URL itself identifies the chain.
+                    if (!config.tokenSymbol) {
+                        throw new Error(`${config.blockchain}: tokenSymbol is required for the dedicated transfer endpoint`);
+                    }
                   payload = {
                       to: toAddress,
-                      contractAddress: config.tokenMint,
+                    //   contractAddress: config.tokenMint,
                       amount: amount.toString(),
-                      digits: config.decimals ?? 6,
+                      currency: config.tokenSymbol,
                       fromPrivateKey: privateKey,
                   };
               }
@@ -2098,9 +2101,9 @@ class VirtualAccountService {
               } else {
                   payload = {
                       to: toAddress,
-                      contractAddress: config.tokenMint,
+                    //   contractAddress: config.tokenMint,
                       amount: amount.toString(),
-                      digits: config.decimals ?? 6,
+                      currency: config.tokenSymbol,
                       fromPrivateKey: privateKey,
                   };
               }
