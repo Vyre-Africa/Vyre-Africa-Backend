@@ -1883,7 +1883,7 @@ class VirtualAccountService {
 
       if (config.walletType === 'HD') {
           privateKey = await this.derivePrivateKey(
-              config.blockchain,
+              config,
               config.mnemonic!,
               addressRecord.index!
           );
@@ -2010,7 +2010,7 @@ class VirtualAccountService {
 
       if (config.walletType === 'HD') {
           privateKey = await this.derivePrivateKey(
-              config.blockchain,
+              config,
               config.mnemonic!,
               addressRecord.index!
           );
@@ -2108,14 +2108,15 @@ class VirtualAccountService {
   // ── Derive Private Key On The Go (HD chains only) ────────────
 
   private async derivePrivateKey(
-      blockchain: string,
+    //   blockchain: string,
+      config: ChainConfig,
       mnemonic: string,
       index: number
   ): Promise<string> {
 
-      const config = CHAIN_CONFIG[blockchain.toUpperCase()];
-      if (!config) throw new Error(`Unsupported blockchain: ${blockchain}`);
-      if (config.walletType !== 'HD') throw new Error(`${blockchain} is not an HD wallet chain — use stored private key instead`);
+    //   const config = CHAIN_CONFIG[blockchain.toUpperCase()];
+    //   if (!config) throw new Error(`Unsupported blockchain: ${config.blockchain}`);
+      if (config.walletType !== 'HD') throw new Error(`${config.blockchain} is not an HD wallet chain — use stored private key instead`);
 
       // Tatum endpoint per chain
       const endpoints: Record<string, string> = {
@@ -2130,8 +2131,8 @@ class VirtualAccountService {
           OPTIMISM: 'optimism',
       };
 
-      const endpoint = endpoints[blockchain.toUpperCase()];
-      if (!endpoint) throw new Error(`No private key derivation endpoint for ${blockchain}`);
+      const endpoint = endpoints[config.blockchain.toUpperCase()];
+      if (!endpoint) throw new Error(`No private key derivation endpoint for ${config.blockchain}`);
 
       const response = await axios.post(
           `https://api.tatum.io/v3/${endpoint}/wallet/priv`,
@@ -2145,7 +2146,7 @@ class VirtualAccountService {
       );
 
       const privateKey = response.data?.key;
-      if (!privateKey) throw new Error(`Failed to derive private key for ${blockchain} at index ${index}`);
+      if (!privateKey) throw new Error(`Failed to derive private key for ${config.blockchain} at index ${index}`);
 
       return privateKey;
   }
