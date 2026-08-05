@@ -1493,15 +1493,31 @@ class VirtualAccountService {
         if (!account) throw new Error('Virtual account not found');
         if (account.status !== 'ACTIVE') throw new Error('Account is not active');
 
-        // Get the blockchain address for this account
+        const wallet = await prisma.wallet.findUnique({
+            where: { id: virtualAccountId },
+            select: { depositAddress: true }
+        });
+        if (!wallet?.depositAddress) throw new Error('No deposit address found for this wallet');
+
+
         const addressRecord = await prisma.virtualAccountAddress.findFirst({
             where: {
-                virtualAccountId,
-                blockchain: config.blockchain,
+                address: wallet.depositAddress,
                 isActive: true
             }
         });
-        if (!addressRecord) throw new Error(`No ${config.blockchain} address found for this account`);
+        if (!addressRecord) throw new Error(`No active address record found for ${wallet.depositAddress}`);
+
+
+
+        // const addressRecord = await prisma.virtualAccountAddress.findFirst({
+        //     where: {
+        //         virtualAccountId,
+        //         blockchain: config.blockchain,
+        //         isActive: true
+        //     }
+        // });
+        // if (!addressRecord) throw new Error(`No ${config.blockchain} address found for this account`);
 
         // Calculate fee
         const fee = await this.calculateFee('CRYPTO_WITHDRAWAL', decimalAmount, account.currency);
