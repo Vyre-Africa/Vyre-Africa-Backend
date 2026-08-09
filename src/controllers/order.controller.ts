@@ -690,10 +690,10 @@ class OrderController {
 
 
   async fetchOrders(req: Request | any, res: Response) {
-    const { cursor, type, pairId, priceMin, priceMax } = req.query;
-
+    const { cursor, type, pairId, priceMin, priceMax, chain } = req.query;
+ 
     console.log(req.query)
-
+ 
     try {
       // Build the where clause dynamically
       const whereClause: any = {
@@ -705,13 +705,26 @@ class OrderController {
             ...(priceMax && { lte: parseFloat(priceMax) })
           }
         }),
+        // Chain filter — matches if EITHER side of the pair is on the
+        // requested chain. Fiat currencies don't have a meaningful chain
+        // value, so this naturally only matches the crypto side of a
+        // crypto/fiat pair; for a crypto/crypto pair (if any exist) it'd
+        // match if either leg is on that chain.
+        ...(chain && {
+          pair: {
+            OR: [
+              { baseCurrency:  { chain: chain.toUpperCase() } },
+              { quoteCurrency: { chain: chain.toUpperCase() } }
+            ]
+          }
+        }),
         status: 'OPEN'
       };
-
+ 
       const totalCount = await prisma.order.count({
         where: whereClause
       });
-
+ 
       const orders = await prisma.order.findMany({
         where: whereClause,
         select: {
@@ -769,13 +782,14 @@ class OrderController {
             id: cursor
           }
         }),
-        orderBy: {
-          createdAt: 'desc'  // Assuming you want newest orders first
-        }
+        orderBy: [
+          { createdAt: 'desc' },
+          { id: 'desc' }  // tie-breaker — stable ordering across pages when createdAt collides (e.g. batch-created ramp orders)
+        ]
       });
-
+ 
       const newCursor = orders.length > 0 ? orders[orders.length - 1].id : null;
-
+ 
       return res.status(200).json({
         msg: 'Successful',
         success: true,
@@ -783,7 +797,7 @@ class OrderController {
         cursor: newCursor,
         orders
       });
-
+ 
     } catch (error) {
       console.error(error);
       return res.status(500).send({ 

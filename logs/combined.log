@@ -4214,3 +4214,134 @@ Error: Admin wallet not found
 2026-08-05 08:42:05 [info] Connected to Ably! 
 2026-08-05 10:37:08 [info] Server running on port 4000 
 2026-08-05 10:37:09 [info] Connected to Ably! 
+2026-08-08 23:21:46 [info] 🛑 Dry run — nothing will be written. Re-run with --confirm to apply. 
+2026-08-08 23:21:46 [info] [RampSync] Starting... [DRY RUN] 
+2026-08-08 23:21:54 [error] [RampSync] Failed syncing USDC/BASE:  
+2026-08-08 23:21:54 [error] [RampSync] Failed syncing USDC/SOLANA:  
+2026-08-08 23:21:55 [error] [RampSync] Failed syncing USDC/POLYGON:  
+2026-08-08 23:21:55 [error] [RampSync] Failed syncing USDC/ETHEREUM:  
+2026-08-08 23:21:56 [error] [RampSync] Failed syncing USDT/SOLANA:  
+2026-08-08 23:21:56 [error] [RampSync] Failed syncing USDT/POLYGON:  
+2026-08-08 23:21:57 [error] [RampSync] Failed syncing USDT/TRON:  
+2026-08-08 23:21:57 [error] [RampSync] Failed syncing USDT/ETHEREUM:  
+2026-08-08 23:22:00 [info] [RampSync] Done. created=0 updated=0 closed=10 errors=8 
+2026-08-08 23:22:00 [error] Script failed: 
+2026-08-08 23:22:00 [error] Error: All 8 pairs failed to sync: Failed syncing USDC/BASE: ; Failed syncing USDC/SOLANA: ; Failed syncing USDC/POLYGON: ; Failed syncing USDC/ETHEREUM: ; Failed syncing USDT/SOLANA: ; Failed syncing USDT/POLYGON: ; Failed syncing USDT/TRON: ; Failed syncing USDT/ETHEREUM: 
+    at syncRampOrders (/Users/user/Vyre-Africa-Backend/src/services/rampOrderSync.service.ts:177:15)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async main (/Users/user/Vyre-Africa-Backend/src/scripts/sync-ramp-orders.ts:21:20) 
+2026-08-08 23:29:28 [info] 🛑 Dry run — nothing will be written. Re-run with --confirm to apply. 
+2026-08-08 23:29:28 [info] [RampSync] Starting... [DRY RUN] 
+2026-08-08 23:29:35 [info] Rate fetched 
+2026-08-08 23:29:41 [info] Rate fetched 
+2026-08-08 23:29:46 [info] Rate fetched 
+2026-08-08 23:29:54 [info] Rate fetched 
+2026-08-08 23:30:00 [info] Rate fetched 
+2026-08-08 23:30:06 [info] Rate fetched 
+2026-08-08 23:30:12 [info] Rate fetched 
+2026-08-08 23:30:18 [info] Rate fetched 
+2026-08-08 23:30:24 [info] [RampSync] Done. created=80 updated=0 closed=10 errors=0 
+2026-08-08 23:30:24 [info] ───────────────────────────────────────── 
+2026-08-08 23:30:24 [info] DRY RUN PREVIEW 
+2026-08-08 23:30:24 [info]   Created: 80 
+2026-08-08 23:30:24 [info]   Updated: 0 
+2026-08-08 23:30:24 [info]   Closed:  10 
+2026-08-08 23:30:24 [info] Re-run with --confirm to apply these changes. 
+2026-08-08 23:34:55 [info] [RampSync] Starting... [LIVE] 
+2026-08-08 23:35:04 [info] Rate fetched 
+2026-08-08 23:35:30 [error] [RampSync] Failed syncing USDC/SOLANA:  
+2026-08-08 23:35:31 [error] [RampSync] Failed syncing USDC/POLYGON:  
+2026-08-08 23:35:31 [error] [RampSync] Failed syncing USDC/ETHEREUM:  
+2026-08-08 23:35:32 [error] [RampSync] Failed syncing USDT/SOLANA:  
+2026-08-08 23:35:32 [error] [RampSync] Failed syncing USDT/POLYGON:  
+2026-08-08 23:35:33 [error] [RampSync] Failed syncing USDT/TRON:  
+2026-08-08 23:35:33 [error] [RampSync] Failed syncing USDT/ETHEREUM:  
+2026-08-08 23:35:35 [info] [RampSync] Done. created=10 updated=0 closed=10 errors=7 
+2026-08-08 23:35:35 [info] ───────────────────────────────────────── 
+2026-08-08 23:35:35 [info] RESULT 
+2026-08-08 23:35:35 [info]   Created: 10 
+2026-08-08 23:35:35 [info]   Updated: 0 
+2026-08-08 23:35:35 [info]   Closed:  10 
+2026-08-08 23:35:35 [error]   Errors:  7 
+2026-08-08 23:35:35 [error]     - Failed syncing USDC/SOLANA:  
+2026-08-08 23:35:35 [error]     - Failed syncing USDC/POLYGON:  
+2026-08-08 23:35:35 [error]     - Failed syncing USDC/ETHEREUM:  
+2026-08-08 23:35:35 [error]     - Failed syncing USDT/SOLANA:  
+2026-08-08 23:35:35 [error]     - Failed syncing USDT/POLYGON:  
+2026-08-08 23:35:35 [error]     - Failed syncing USDT/TRON:  
+2026-08-08 23:35:35 [error]     - Failed syncing USDT/ETHEREUM:  
+2026-08-08 23:40:43 [info] [RampSync] Starting... [LIVE] 
+2026-08-08 23:40:55 [error] [RampSync] Failed syncing USDC/BASE:  
+2026-08-08 23:40:56 [error] [RampSync] Failed syncing USDC/SOLANA:  
+2026-08-08 23:40:57 [error] [RampSync] Failed syncing USDC/POLYGON:  
+2026-08-08 23:40:59 [error] [RampSync] Failed syncing USDC/ETHEREUM:  
+2026-08-08 23:41:00 [error] [RampSync] Failed syncing USDT/SOLANA:  
+2026-08-08 23:41:01 [error] [RampSync] Failed syncing USDT/POLYGON:  
+2026-08-08 23:41:02 [error] [RampSync] Failed syncing USDT/TRON:  
+2026-08-08 23:41:04 [error] [RampSync] Failed syncing USDT/ETHEREUM:  
+2026-08-08 23:41:14 [info] [RampSync] Done. created=0 updated=0 closed=10 errors=8 
+2026-08-08 23:41:14 [error] Script failed: 
+2026-08-08 23:41:14 [error] Error: All 8 pairs failed to sync: Failed syncing USDC/BASE: ; Failed syncing USDC/SOLANA: ; Failed syncing USDC/POLYGON: ; Failed syncing USDC/ETHEREUM: ; Failed syncing USDT/SOLANA: ; Failed syncing USDT/POLYGON: ; Failed syncing USDT/TRON: ; Failed syncing USDT/ETHEREUM: 
+    at syncRampOrders (/Users/user/Vyre-Africa-Backend/src/services/rampOrderSync.service.ts:181:15)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async main (/Users/user/Vyre-Africa-Backend/src/scripts/sync-ramp-orders.ts:21:20) 
+2026-08-08 23:42:28 [info] [RampSync] Starting... [LIVE] 
+2026-08-08 23:42:43 [error] [RampSync] Failed syncing USDC/BASE:  
+2026-08-08 23:42:45 [error] [RampSync] Failed syncing USDC/SOLANA:  
+2026-08-08 23:42:46 [error] [RampSync] Failed syncing USDC/POLYGON:  
+2026-08-08 23:42:47 [error] [RampSync] Failed syncing USDC/ETHEREUM:  
+2026-08-08 23:42:48 [error] [RampSync] Failed syncing USDT/SOLANA:  
+2026-08-08 23:42:50 [error] [RampSync] Failed syncing USDT/POLYGON:  
+2026-08-08 23:42:51 [error] [RampSync] Failed syncing USDT/TRON:  
+2026-08-08 23:42:52 [error] [RampSync] Failed syncing USDT/ETHEREUM:  
+2026-08-08 23:43:00 [info] [RampSync] Done. created=0 updated=0 closed=0 errors=8 
+2026-08-08 23:43:00 [error] Script failed: 
+2026-08-08 23:43:00 [error] Error: All 8 pairs failed to sync: Failed syncing USDC/BASE: ; Failed syncing USDC/SOLANA: ; Failed syncing USDC/POLYGON: ; Failed syncing USDC/ETHEREUM: ; Failed syncing USDT/SOLANA: ; Failed syncing USDT/POLYGON: ; Failed syncing USDT/TRON: ; Failed syncing USDT/ETHEREUM: 
+    at syncRampOrders (/Users/user/Vyre-Africa-Backend/src/services/rampOrderSync.service.ts:181:15)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async main (/Users/user/Vyre-Africa-Backend/src/scripts/sync-ramp-orders.ts:21:20) 
+2026-08-09 02:02:51 [info] [RampSync] Starting... [LIVE] 
+2026-08-09 02:02:55 [error] [RampSync] Failed syncing USDC/BASE:  
+2026-08-09 02:02:56 [info] Rate fetched 
+2026-08-09 02:03:07 [info] Rate fetched 
+2026-08-09 02:03:36 [info] [RampSync] Starting... [LIVE] 
+2026-08-09 02:03:40 [info] Rate fetched 
+2026-08-09 02:03:51 [info] Rate fetched 
+2026-08-09 02:04:01 [info] Rate fetched 
+2026-08-09 02:04:10 [info] Rate fetched 
+2026-08-09 02:04:20 [info] Rate fetched 
+2026-08-09 02:04:29 [info] Rate fetched 
+2026-08-09 02:04:38 [info] Rate fetched 
+2026-08-09 02:04:48 [info] Rate fetched 
+2026-08-09 02:04:57 [info] [RampSync] Done. created=58 updated=22 closed=0 errors=0 
+2026-08-09 02:04:57 [info] ───────────────────────────────────────── 
+2026-08-09 02:04:57 [info] RESULT 
+2026-08-09 02:04:57 [info]   Created: 58 
+2026-08-09 02:04:57 [info]   Updated: 22 
+2026-08-09 02:04:57 [info]   Closed:  0 
+2026-08-09 02:44:26 [info] [RampSync] Starting... [LIVE] 
+2026-08-09 02:44:32 [info] Rate fetched 
+2026-08-09 02:44:41 [info] Rate fetched 
+2026-08-09 02:44:51 [info] Rate fetched 
+2026-08-09 02:45:02 [info] Rate fetched 
+2026-08-09 02:45:11 [error] [RampSync] Failed syncing USDT/SOLANA:  
+2026-08-09 02:45:13 [info] Rate fetched 
+2026-08-09 02:45:22 [info] [RampSync] Starting... [LIVE] 
+2026-08-09 02:45:25 [info] Rate fetched 
+2026-08-09 02:45:35 [info] Rate fetched 
+2026-08-09 02:45:43 [info] Rate fetched 
+2026-08-09 02:45:52 [info] Rate fetched 
+2026-08-09 02:46:03 [info] Rate fetched 
+2026-08-09 02:46:11 [info] Rate fetched 
+2026-08-09 02:46:21 [info] Rate fetched 
+2026-08-09 02:46:30 [info] Rate fetched 
+2026-08-09 02:46:37 [info] [RampSync] Done. created=0 updated=80 closed=0 errors=0 
+2026-08-09 02:46:37 [info] ───────────────────────────────────────── 
+2026-08-09 02:46:37 [info] RESULT 
+2026-08-09 02:46:37 [info]   Created: 0 
+2026-08-09 02:46:37 [info]   Updated: 80 
+2026-08-09 02:46:37 [info]   Closed:  0 
+2026-08-09 03:28:04 [info] Server running on port 4000 
+2026-08-09 03:28:07 [info] Connected to Ably! 
+2026-08-09 03:28:15 [info] Server running on port 4000 
+2026-08-09 03:28:16 [info] Connected to Ably! 
