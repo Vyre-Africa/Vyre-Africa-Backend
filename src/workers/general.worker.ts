@@ -1,4 +1,4 @@
-import { Worker } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 // import logger from '../config/logger';
 import notificationService from '../services/notification.service';
@@ -12,13 +12,14 @@ import anonService from '../services/anon.service';
 import prisma from '../config/prisma.client';
 import sweepService from '../services/sweep.service';
 import walletpoolService from '../services/walletpool.service';
+import { syncRampOrders } from '../services/rampOrderSync.service';
+import logger from '../config/logger';
 
 // const SWEEP_CHAINS = ['ETH', 'MATIC', 'BSC', 'BASE', 'ARB', 'OPTIMISM', 'TRON']
 const SWEEP_CHAINS = [
   'ETHEREUM', 'POLYGON', 'BSC', 'TRON',   // gas pump
   'BASE', 'ARBITRUM', 'OPTIMISM'  // nonce chain
 ]
-
 export function startSweepWorkers() {
   return SWEEP_CHAINS.map((chain) => {
     const sweepWorker = new Worker(
@@ -84,6 +85,13 @@ export function startGeneralWorker() {
                     case 'cleanup-trade-wallets':
                         return await walletpoolService.cleanupTradeWallets(job.data.awaitingId);
 
+                    // Scheduled ramp order pricing sync. Always runs live
+                    // (confirm: true) — dry-run is a CLI-only debugging
+                    // concept, never appropriate for an automated
+                    // recurring job.
+                    case 'ramp-sync':
+                        return await syncRampOrders({ confirm: true });
+
                     default:
                         throw new Error(`Unknown job type: ${job.name}`);
                 }
@@ -116,4 +124,28 @@ export function startGeneralWorker() {
     return worker;
 }
 
-// export default worker;
+// ── Recurring job scheduling ────────────────────────────────────────────
+// Registers onto the SAME 'general-process' queue the worker above
+// consumes — this Queue instance was previously missing entirely, which
+// is why scheduleRecurringJobs() referenced an undefined `generalQueue`.
+const generalQueue = new Queue('general-process', { connection });
+
+// Judgment call, not a measured requirement — the synced price is a
+// listing estimate, not an execution price (real fills always re-quote
+// against Quidax fresh), so this only needs to stay "reasonably fresh."
+// Adjust freely.
+const RAMP_SYNC_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+
+export async function scheduleRecurringJobs() {
+    await generalQueue.add(
+        'ramp-sync',
+        {},
+        {
+            repeat:  { every: RAMP_SYNC_INTERVAL_MS },
+            jobId:   'ramp-sync-recurring', // stable id — BullMQ won't duplicate the schedule on every server restart as long as this stays the same
+            removeOnComplete: { count: 20 },
+            removeOnFail:     { count: 50 },
+        }
+    );
+    logger.info(`[Schedule] ramp-sync registered — every ${RAMP_SYNC_INTERVAL_MS / 60000} minutes`);
+}
