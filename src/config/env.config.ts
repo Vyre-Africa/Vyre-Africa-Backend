@@ -19,6 +19,10 @@ const config = {
     GCP_PROJECT_ID: process.env.GCP_PROJECT_ID || '',
     KYC_DOCUMENTS_BUCKET: process.env.KYC_DOCUMENTS_BUCKET || '',
 
+    CONTRO_ENV: process.env.CONTRO_ENV || 'sandbox',
+    CONTRO_API_KEY: process.env.CONTRO_API_KEY || '',
+    CONTRO_WEBHOOK_SECRET: process.env.CONTRO_WEBHOOK_SECRET || '',
+
     dialect: process.env.DB_DIALECT || 'postgres',
     dbCreds: {
         username: process.env.DB_USER,

@@ -441,8 +441,14 @@ model User {
   dojahNinRef      String?
   dojahIdRef       String?
   dojahLivenessRef String?
- 
 
+  controCardholderId String?
+  controKycStatus     String?   // pending | approved | rejected — account-level, from cardholder.kycStatus
+  controProgramKycStatus String? // pending | approved | rejected — PROGRAM-level, a genuinely separate status (confirmed via live test: took ~6s to flip even in sandbox "auto-approve")
+  controKycSessionId String?
+  controCardApprovalEmailSentAt DateTime?
+ 
+  controCards      ControCard[]
   kycUsages        KycUsage[]
   kycVerifications KycVerification[]
 
@@ -1467,6 +1473,48 @@ model UnreconciledDeposit {
 
   @@index([dvaId])
   @@index([resolved])
+}
+
+model ControCard {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id])
+  controCardId      String    @unique // Contro's card id, e.g. "card_def456"
+  programId         String
+  status            String    // created | pending | active | frozen | cancelled
+                              // NOTE: "pending" observed live but NOT in Contro's
+                              // documented OpenAPI enum (created|active|frozen|
+                              // cancelled) — kept as a plain string rather than a
+                              // strict enum specifically so an undocumented real
+                              // value doesn't break persistence.
+  type              String?   // virtual | physical
+  brand             String?   // Visa | Mastercard
+  last4             String?
+ 
+  // The actual ledger boundary — see spend control note below. This is
+  // VYRE's OWN record of what cap we last told Contro to apply, kept in
+  // sync with the user's real Vyre wallet balance. Separate from
+  // Contro's own spendControl.spent (accrued spend), which is
+  // confirmed only present "where the card program supports it" — not
+  // guaranteed, so don't rely on it as the sole source of truth.
+  lastSyncedCapUsd  Decimal?  @db.Decimal(12, 2)
+  lastCapSyncedAt   DateTime?
+  lastCapSyncError  String?   // set if the last spend-control PATCH failed — confirmed this CAN fail (sandbox: "Provider sandbox does not implement spend-control updates")
+ 
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+ 
+  @@index([userId])
+}
+ 
+model ControWebhookEvent {
+  id         String   @id @default(cuid())
+  eventId    String   @unique // Contro doesn't document an explicit event-id field in payloads yet — using a derived/generated key until confirmed; see controWebhook.controller.ts note
+  eventType  String   // e.g. 'card.transaction', 'cardholder.kyc.updated'
+  rawPayload Json
+  receivedAt DateTime @default(now())
+ 
+  @@index([eventType])
 }
 
 
