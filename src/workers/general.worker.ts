@@ -134,7 +134,8 @@ const generalQueue = new Queue('general-process', { connection });
 // listing estimate, not an execution price (real fills always re-quote
 // against Quidax fresh), so this only needs to stay "reasonably fresh."
 // Adjust freely.
-const RAMP_SYNC_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+
+const RAMP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export async function scheduleRecurringJobs() {
     await generalQueue.add(

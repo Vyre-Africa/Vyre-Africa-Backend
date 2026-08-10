@@ -32,6 +32,7 @@ import otcValidator from '../validators/otc.validator';
 import otcController from '../controllers/otc.controller';
 import vendorController from '../controllers/vendor.controller';
 import kycController from '../controllers/kyc.controller';
+import controController from '../controllers/contro.controller';
 
 const router = Router();
 
@@ -79,6 +80,11 @@ router.post(
 router.post(
   '/webhook/ramp', 
   eventController.ramp_WebHook
+);
+
+router.post(
+  '/webhook/contro', 
+  controController.controWebhook
 );
 
 
