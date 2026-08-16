@@ -33,6 +33,8 @@ import otcController from '../controllers/otc.controller';
 import vendorController from '../controllers/vendor.controller';
 import kycController from '../controllers/kyc.controller';
 import controController from '../controllers/contro.controller';
+import nuvionController from '../controllers/nuvion.controller';
+
 
 const router = Router();
 
@@ -86,6 +88,14 @@ router.post(
   '/webhook/contro', 
   controController.controWebhook
 );
+
+router.post(
+  '/webhook/nuvion', 
+  nuvionController.nuvionWebhook)
+;
+
+
+router.post('/payouts/nuvion', authMiddleware, nuvionController.initiatePayout);
 
 
 router.post(

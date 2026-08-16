@@ -3,7 +3,8 @@ import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import logger from '../config/logger';
 import { verifyControWebhookSignature } from '../services/contro.service';
-import { handleKycSessionCompleted } from '../services/controOnboarding.service';
+import { handleKycSessionCompleted, checkProgramKycAndNotify } from '../services/controOnboarding.service';
+import notificationService from '../services/notification.service';
 
 class ControController {
 
@@ -94,91 +95,41 @@ class ControController {
             });
 
             switch (resolvedEventType) {
-
-                case 'cardholder.kyc.updated':
-                case 'cardholder.approved': {
-                    const cardholderId = body?.data?.cardholderId ?? body?.cardholderId ?? body?.data?.id;
-                    const kycStatus = body?.data?.kycStatus ?? body?.kycStatus;
-
-                    if (!cardholderId) {
-                        logger.warn(`${resolvedEventType} webhook — could not determine cardholderId, check raw payload above`);
+ 
+                case 'cardholder.created': {
+                    const cardholderId = body?.cardholderId;
+                    const externalUserId = body?.externalUserId;
+            
+                    if (!cardholderId || !externalUserId) {
+                        logger.warn('cardholder.created webhook missing cardholderId or externalUserId', { body });
                         break;
                     }
-
-                    const user = await prisma.user.findFirst({ where: { controCardholderId: cardholderId } });
+            
+                    const user = await prisma.user.findUnique({ where: { id: externalUserId } });
                     if (!user) {
-                        logger.warn(`No user found for Contro cardholder ${cardholderId}`);
+                        logger.warn(`cardholder.created — externalUserId ${externalUserId} does not match any real Vyre user`);
                         break;
                     }
-
-                    await prisma.user.update({
-                        where: { id: user.id },
-                        data: { controKycStatus: kycStatus },
-                    });
-                    logger.info(`Updated controKycStatus for user ${user.id}`, { kycStatus });
-                    break;
-                }
-
-                case 'card.issued':
-                case 'card.status.changed': {
-                    const cardId = body?.data?.cardId ?? body?.data?.id ?? body?.cardId;
-                    const status = body?.data?.status ?? body?.status;
-
-                    if (!cardId) {
-                        logger.warn(`${resolvedEventType} webhook — could not determine cardId, check raw payload above`);
-                        break;
+            
+                    if (user.controCardholderId !== cardholderId) {
+                        await prisma.user.update({
+                            where: { id: user.id },
+                            data: { controCardholderId: cardholderId },
+                        });
+                        logger.info(`Linked/reconciled controCardholderId for user ${user.id} via cardholder.created webhook`);
                     }
-
-                    const card = await prisma.controCard.findUnique({ where: { controCardId: cardId } });
-                    if (!card) {
-                        logger.warn(`No local ControCard record for Contro card ${cardId} — was it issued outside our normal flow?`);
-                        break;
-                    }
-
-                    await prisma.controCard.update({
-                        where: { id: card.id },
-                        data: { status: status ?? card.status },
-                    });
-                    logger.info(`Updated ControCard ${card.id} status`, { status });
                     break;
                 }
-
-                case 'card.transaction': {
-                    logger.info('card.transaction event received — see raw payload above. Ledger update logic intentionally not yet wired in pending confirmed payload shape.');
-                    break;
-                }
-
-                case 'card.3ds_otp': {
-                    logger.warn('card.3ds_otp received — NOT YET WIRED to a real-time delivery channel. 60-second delivery window per Contro docs.');
-                    break;
-                }
-
-                case 'balance.low':
-                case 'balance.alert':
-                    logger.warn(`Contro ${resolvedEventType} — partner balance running low, needs a top-up. Wire this into a real alert (Slack/PagerDuty) once confirmed working.`);
-                    break;
-
-                case 'balance.top_up':
-                    logger.info('Contro balance topped up', { body });
-                    break;
-
+            
                 case 'kyc_session.completed': {
-                    const sessionId = body?.data?.sessionId ?? body?.data?.id ?? body?.sessionId;
-                
-                    // Trying several reasonable nesting paths — real shape unconfirmed.
-                    // This is the field we're now betting on as the primary lookup
-                    // (see controCardOnboarding.service.ts header comment for why).
-                    const externalUserId = body?.data?.externalUserId ?? body?.externalUserId ?? body?.data?.vendorData;
-                
+                    const sessionId = body?.sessionId ?? body?.id;
+                    const externalUserId = body?.externalUserId;
+            
                     if (!sessionId) {
                         logger.warn('kyc_session.completed webhook — could not determine sessionId, check raw payload above');
                         break;
                     }
-                
-                    if (!externalUserId) {
-                        logger.warn('kyc_session.completed webhook — externalUserId NOT found in payload at any expected path. Falling back to sessionId bridge. Worth checking the raw payload logged above to find where it actually lives, if anywhere.');
-                    }
-                
+            
                     const result = await handleKycSessionCompleted(sessionId, externalUserId);
                     if (!result.success) {
                         logger.error(`Failed to handle KYC session completion for ${sessionId}`, { error: result.error });
@@ -186,12 +137,135 @@ class ControController {
                     }
                     break;
                 }
+            
                 case 'kyc_session.failed':
-                    logger.info(`${resolvedEventType} received`, { body });
+                    logger.info('kyc_session.failed received', { body });
+                    // TODO: user-facing UX for this — retry prompt? support link?
                     break;
-
+            
+                // ── Program-level KYC approval — CONFIRMED real event name, no
+                // longer guessing between multiple candidates.
+                case 'cardholder.kyc.approved': {
+                    const cardholderId = body?.cardholderId; // NEVER body.userId — confirmed Contro's own internal id, not ours
+            
+                    if (!cardholderId) {
+                        logger.warn('cardholder.kyc.approved webhook — no cardholderId in payload, check raw payload above');
+                        break;
+                    }
+            
+                    const user = await prisma.user.findFirst({ where: { controCardholderId: cardholderId } });
+                    if (!user) {
+                        logger.warn(`No user found for Contro cardholder ${cardholderId} (cardholder.kyc.approved)`);
+                        break;
+                    }
+            
+                    const result = await checkProgramKycAndNotify(user.id);
+                    logger.info('Program KYC approval confirmed', { userId: user.id, approved: result.approved });
+                    break;
+                }
+            
+                // ── NEW — the rejection counterpart, previously completely
+                // unhandled (would have silently fallen to default and done
+                // nothing user-facing). A rejected verification is a real dead-end
+                // for the user — they need to know, not be left wondering why
+                // nothing's happening.
+                case 'cardholder.kyc.rejected': {
+                    const cardholderId = body?.cardholderId;
+                
+                    if (!cardholderId) {
+                        logger.warn('cardholder.kyc.rejected webhook — no cardholderId in payload, check raw payload above');
+                        break;
+                    }
+                
+                    const user = await prisma.user.findFirst({ where: { controCardholderId: cardholderId } });
+                    if (!user) {
+                        logger.warn(`No user found for Contro cardholder ${cardholderId} (cardholder.kyc.rejected)`);
+                        break;
+                    }
+                
+                    // Idempotency mirrors the approval-email guard — reuse the same
+                    // field family rather than inventing a parallel one. If a user
+                    // somehow gets rejected, retries, and gets approved later,
+                    // controCardApprovalEmailSentAt naturally guards THAT path
+                    // separately, so no cross-contamination between the two states.
+                    if (user.controProgramKycStatus === 'rejected') {
+                        logger.info(`Rejection already recorded for user ${user.id} — skipping duplicate notification`);
+                        break;
+                    }
+                
+                    await prisma.user.update({
+                        where: { id: user.id },
+                        data: { controProgramKycStatus: 'rejected' },
+                    });
+                
+                    await notificationService.queue({
+                        userId: user.id,
+                        title: 'Card verification unsuccessful',
+                        type: 'GENERAL',
+                        content: 'We were unable to verify your identity for card issuance. Please contact support or try again.',
+                    });
+                
+                    logger.info(`Rejection notification queued for user ${user.id}`);
+                    break;
+                }
+            
+                case 'card.issued':
+                case 'card.status.changed': {
+                    const cardId = body?.cardId;
+                    const newStatus = body?.newStatus;
+            
+                    if (!cardId) {
+                        logger.warn(`${resolvedEventType} webhook — no cardId in payload, check raw payload above`);
+                        break;
+                    }
+            
+                    const card = await prisma.controCard.findUnique({ where: { controCardId: cardId } });
+                    if (!card) {
+                        logger.warn(`No local ControCard record for Contro card ${cardId} — was it issued outside our normal flow?`);
+                        break;
+                    }
+            
+                    if (newStatus) {
+                        await prisma.controCard.update({
+                            where: { id: card.id },
+                            data: { status: newStatus },
+                        });
+                        logger.info(`Updated ControCard ${card.id} status`, { previousStatus: body?.previousStatus, newStatus });
+                    } else {
+                        logger.info(`${resolvedEventType} received with no status change info — likely the issuance confirmation itself`, { body });
+                    }
+                    break;
+                }
+            
+                case 'card.transaction': {
+                    logger.info('card.transaction event received — see raw payload above. Ledger update logic intentionally not yet wired in pending a real delivery to confirm the transaction-detail field names.');
+                    break;
+                }
+            
+                case 'card.3ds_otp': {
+                    logger.warn('card.3ds_otp received — NOT YET WIRED to a real-time delivery channel. 60-second delivery window per Contro docs.');
+                    break;
+                }
+            
+                case 'balance.low':
+                    logger.warn('Contro balance.low — partner balance running low. Wire into a real alert (Slack/PagerDuty) once confirmed working.');
+                    break;
+            
+                case 'balance.top_up':
+                    logger.info('Contro balance topped up', { body });
+                    break;
+            
+                // ── NEW, genuinely unknown — never mentioned in any Contro
+                // documentation seen so far. Don't guess at what triggers this or
+                // what to do with it — log in full and ask Contro directly what a
+                // "rebate" represents in their system before building anything on
+                // top of it.
+                case 'rebate.awarded':
+                    logger.info('rebate.awarded received — UNKNOWN business logic, never documented anywhere seen so far. Full payload logged above. Ask Contro what this represents before building any handling.', { body });
+                    break;
+            
                 default:
-                    logger.info(`Contro webhook event "${resolvedEventType}" received but not yet handled`);
+                    logger.info(`Contro webhook event "${resolvedEventType}" received but not yet handled`, { body });
             }
 
             return res.status(200).json({ received: true });
