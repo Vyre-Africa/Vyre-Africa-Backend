@@ -2468,6 +2468,138 @@ class eventService {
     logger.error(`${type} failed`, { awaitingId: awaiting.id });
   }
 
+  async handleNuvionEvent(jobData: { eventType: string; data: any; rawBody: any }) {
+    const { eventType, data, rawBody } = jobData;
+ 
+    logger.info('Processing Nuvion event (async)', { eventType });
+    logger.info('Nuvion webhook raw payload', { eventType, body: rawBody });
+ 
+    switch (eventType) {
+ 
+        // CONFIRMED payload shape, directly from Nuvion's docs. Feature A
+        // territory (inbound funds via account-details) — genuinely
+        // blocked on the still-open account-details attribution
+        // question. Logging and storing in full regardless, since real
+        // historical payloads help answer that question ourselves once
+        // unblocked — deliberately NOT crediting any specific user's
+        // VirtualAccount yet, since we can't reliably attribute it to one.
+        case 'inflows.completed': {
+            logger.info('inflows.completed received — Feature A territory, not yet actioned pending the account-details attribution question', {
+                accountId: data?.account_id,
+                amount: data?.amount,
+                currency: data?.currency,
+                uniqueReference: data?.unique_reference,
+            });
+            break;
+        }
+ 
+        // Field names CONFIRMED real for status/id/unique_reference —
+        // seen in the real accounts.created/account_details.created
+        // payloads following the same object conventions. Still treat
+        // this specific event's shape as provisional until an actual
+        // transfers.updated delivery is seen.
+        case 'transfers.updated': {
+            const nuvionTransferId = data?.id;
+            const newStatus = data?.status;
+            const uniqueReference = data?.unique_reference;
+ 
+            if (!nuvionTransferId && !uniqueReference) {
+                logger.warn('transfers.updated webhook — could not identify the transfer (no id or unique_reference in payload), check raw payload above');
+                break;
+            }
+ 
+            const transferRequest = uniqueReference
+                ? await prisma.transferRequest.findUnique({ where: { idempotencyKey: uniqueReference } })
+                : await prisma.transferRequest.findFirst({ where: { reference: nuvionTransferId } });
+ 
+            if (!transferRequest) {
+                logger.warn(`No matching TransferRequest found for Nuvion transfer (id=${nuvionTransferId}, ref=${uniqueReference})`);
+                break;
+            }
+ 
+            if (!newStatus) {
+                logger.warn('transfers.updated webhook — no status field found in payload, check raw payload above for the real field name');
+                break;
+            }
+ 
+            const statusMap: Record<string, string> = {
+                pending: 'PENDING',
+                processing: 'PROCESSING',
+                completed: 'COMPLETED',
+                failed: 'FAILED',
+                reversed: 'FAILED', // TODO: consider a real REVERSED status if this distinction matters for reporting/support
+            };
+            const mappedStatus = statusMap[newStatus] ?? newStatus;
+ 
+            await prisma.transferRequest.update({
+                where: { id: transferRequest.id },
+                data: {
+                    status: mappedStatus,
+                    ...(mappedStatus === 'COMPLETED' && { completedAt: new Date() }),
+                    ...(mappedStatus === 'FAILED' && { failedAt: new Date(), errorMessage: data?.status_reason ?? undefined }),
+                },
+            });
+ 
+            logger.info(`TransferRequest ${transferRequest.id} updated to ${mappedStatus} via transfers.updated webhook`, { nuvionStatus: newStatus });
+ 
+            if (newStatus === 'reversed') {
+                logger.error(`[NUVION REVERSAL — MANUAL ACTION NEEDED] TransferRequest ${transferRequest.id} was reversed by Nuvion. The original VirtualAccount debit has NOT been automatically reversed — needs manual reconciliation until this payload shape is confirmed and automated handling is built.`);
+            }
+            break;
+        }
+ 
+        // CONFIRMED real shape from live payload.
+        case 'accounts.created': {
+            const account = data?.account;
+            if (!account?.id) {
+                logger.warn('accounts.created webhook — no account.id in payload, check raw payload above');
+                break;
+            }
+ 
+            const existing = await prisma.nuvionTreasuryAccount.findUnique({
+                where: { nuvionAccountId: account.id },
+            });
+ 
+            if (!existing) {
+                await prisma.nuvionTreasuryAccount.create({
+                    data: {
+                        currency: account.currency,
+                        nuvionAccountId: account.id,
+                        accountType: account.type,
+                        displayName: account.display_name,
+                        lastKnownAvailable: account.balance?.available ?? 0,
+                        lastSyncedAt: new Date(),
+                    },
+                });
+                logger.info(`Registered new Nuvion account ${account.id} (${account.currency}) via webhook`);
+            }
+            break;
+        }
+ 
+        // CONFIRMED real shape from live payload.
+        case 'account_details.created': {
+            const accountDetails = data?.account_details;
+            if (!accountDetails?.id) {
+                logger.warn('account_details.created webhook — no account_details.id in payload, check raw payload above');
+                break;
+            }
+ 
+            logger.info('account_details.created received', {
+                accountDetailsId: accountDetails.id,
+                accountId: accountDetails.account_id,
+                accountNumber: accountDetails.account_number,
+                currency: accountDetails.currency,
+                status: accountDetails.status,
+                inflowAllowedCounterparties: accountDetails.config?.inflow_allowed_counterparties,
+            });
+            break;
+        }
+ 
+        default:
+          logger.info(`Nuvion webhook event "${eventType}" received but not yet handled`, { body: rawBody });
+    }
+  }
+
 
 
 
