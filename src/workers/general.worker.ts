@@ -92,6 +92,9 @@ export function startGeneralWorker() {
                     case 'ramp-sync':
                         return await syncRampOrders({ confirm: true });
 
+                    case 'Nuvion_Event':
+                        return await eventService.handleNuvionEvent(job.data);
+
                     default:
                         throw new Error(`Unknown job type: ${job.name}`);
                 }
@@ -128,7 +131,7 @@ export function startGeneralWorker() {
 // Registers onto the SAME 'general-process' queue the worker above
 // consumes — this Queue instance was previously missing entirely, which
 // is why scheduleRecurringJobs() referenced an undefined `generalQueue`.
-const generalQueue = new Queue('general-process', { connection });
+export const generalQueue = new Queue('general-process', { connection });
 
 // Judgment call, not a measured requirement — the synced price is a
 // listing estimate, not an execution price (real fills always re-quote
