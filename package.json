@@ -32,7 +32,8 @@
         "test:photoid-verify": "ts-node --transpile-only -r dotenv/config src/scripts/testPhotoIdVerify.ts",
         "test:utility-bill": "ts-node --transpile-only -r dotenv/config src/scripts/testUtilityBillAnalysis.ts",
         "test:tier2-full": "ts-node --transpile-only -r dotenv/config src/scripts/testFullTier2.ts",
-        "test:contro-flow": "ts-node --transpile-only -r dotenv/config src/scripts/test-contro-flow.ts"
+        "test:contro-flow": "ts-node --transpile-only -r dotenv/config src/scripts/test-contro-flow.ts",
+        "test:contro-e2e": "ts-node --transpile-only -r dotenv/config src/scripts/test-contro-onboarding-e2e.ts"
     },
     "author": "harvey ana",
     "license": "ISC",

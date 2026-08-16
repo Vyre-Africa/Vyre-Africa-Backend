@@ -19,6 +19,11 @@ const config = {
     GCP_PROJECT_ID: process.env.GCP_PROJECT_ID || '',
     KYC_DOCUMENTS_BUCKET: process.env.KYC_DOCUMENTS_BUCKET || '',
 
+    NUVION_BASE_URL: process.env.NUVION_BASE_URL || '',
+    NUVION_API_KEY: process.env.NUVION_API_KEY || '',
+    NUVION_WEBHOOK_SECRET: process.env.NUVION_WEBHOOK_SECRET || '',
+    NUVION_ENTITY_ID: process.env.NUVION_ENTITY_ID || '',
+
     CONTRO_ENV: process.env.CONTRO_ENV || 'sandbox',
     CONTRO_API_KEY: process.env.CONTRO_API_KEY || '',
     CONTRO_WEBHOOK_SECRET: process.env.CONTRO_WEBHOOK_SECRET || '',

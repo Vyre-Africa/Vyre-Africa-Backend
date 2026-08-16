@@ -626,6 +626,11 @@ model beneficiary {
 
   userData  User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
+
+  nuvionCounterpartyId  String?
+  nuvionPaymentDetailId String?
+  nuvionRecipientCountry String? // cached after first collection — see nuvionPayout.service.ts
+  nuvionRecipientEmail   String?
 }
 
 model TransferRequest {
@@ -651,8 +656,43 @@ model TransferRequest {
   failedAt     DateTime?
   errorMessage String?
 
+  payoutProvider String?  // 'QOREPAY' | 'NUVION' — data-value only, same
+                          // pattern as Order.liquiditySource elsewhere in
+                          // this schema, kept a plain string rather than
+                          // a strict enum for provider flexibility.
+
+  // Cross-currency only — null for same-currency transfers. Stores the
+  // FX quote actually used, for audit/dispute purposes, since the quote
+  // itself expires (valid_for seconds, per Nuvion's docs) and won't be
+  // separately retrievable forever.
+
+  nuvionFxQuoteId String?
+  nuvionFxRate    Decimal? @db.Decimal(20, 8)
+
   @@index([userId, createdAt])
   @@index([status])
+}
+
+model NuvionTreasuryAccount {
+  id              String   @id @default(cuid())
+  currency        String   // ISO 4217, or 'USC'/'UST' for USDC/USDT
+  nuvionAccountId String   @unique
+  accountType     String   // checking | operational | safeguard — see note below
+  displayName     String?
+ 
+  // Cached for quick display only — NEVER trust this as the source of
+  // truth for whether a payout can actually proceed. Always re-fetch the
+  // real balance via getAccount() immediately before debiting, the same
+  // "re-check real state, don't trust a cached webhook-driven value"
+  // discipline already used for Contro's program-KYC status.
+  lastKnownAvailable Decimal? @db.Decimal(20, 8)
+  lastSyncedAt       DateTime?
+ 
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+ 
+  @@index([currency])
 }
 
 model fiatAccount {
@@ -1511,6 +1551,16 @@ model ControWebhookEvent {
   id         String   @id @default(cuid())
   eventId    String   @unique // Contro doesn't document an explicit event-id field in payloads yet — using a derived/generated key until confirmed; see controWebhook.controller.ts note
   eventType  String   // e.g. 'card.transaction', 'cardholder.kyc.updated'
+  rawPayload Json
+  receivedAt DateTime @default(now())
+ 
+  @@index([eventType])
+}
+
+model NuvionWebhookEvent {
+  id         String   @id @default(cuid())
+  eventId    String   @unique
+  eventType  String
   rawPayload Json
   receivedAt DateTime @default(now())
  
