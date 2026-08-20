@@ -34,6 +34,7 @@ import vendorController from '../controllers/vendor.controller';
 import kycController from '../controllers/kyc.controller';
 import controController from '../controllers/contro.controller';
 import nuvionController from '../controllers/nuvion.controller';
+import diditController from '../controllers/didit.controller';
 
 
 const router = Router();
@@ -93,6 +94,11 @@ router.post(
   '/webhook/nuvion', 
   nuvionController.nuvionWebhook)
 ;
+
+router.post(
+  '/webhook/didit', 
+  diditController.diditWebhook
+);
 
 
 router.post('/payouts/nuvion', authMiddleware, nuvionController.initiatePayout);
@@ -805,6 +811,12 @@ router.post(
   kycController.upgradeTier2
 );
 
+router.get(
+  '/kyc/tier2/status', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  kycController.getTier2Status
+);
 // router.get(
 //   '/user/two-factor-authentication',
 //   authMiddleware,

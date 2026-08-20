@@ -257,7 +257,7 @@ class NuvionController {
     async initiatePayout(req: Request & Record<string, any>, res: Response) {
         const { user } = req; // adjust to however this codebase's auth middleware actually attaches the authenticated user
         try {
-            const { beneficiaryId, fromCurrency, toCurrency, amount, narration, recipientCountry, recipientEmail } = req.body;
+            const { beneficiaryId, fromCurrency, toCurrency, amount, narration, recipientCountry, recipientEmail, recipientAddress } = req.body;
  
             if (!beneficiaryId || !fromCurrency || !toCurrency || !amount || !narration) {
                 return res.status(400).json({
@@ -275,6 +275,7 @@ class NuvionController {
                 narration,
                 recipientCountry,
                 recipientEmail,
+                recipientAddress
             });
  
             return res.status(200).json({

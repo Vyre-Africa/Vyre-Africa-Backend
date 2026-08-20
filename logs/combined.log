@@ -4355,3 +4355,26 @@ Error: Admin wallet not found
 2026-08-16 14:56:06 [info] Connected to Ably! 
 2026-08-16 14:56:17 [info] Server running on port 4000 
 2026-08-16 14:56:20 [info] Connected to Ably! 
+2026-08-16 18:11:12 [error] Nuvion call failed [createCounterparty]: 
+2026-08-16 18:19:27 [error] Nuvion call failed [createCounterparty]: 
+2026-08-16 18:33:51 [error] Nuvion call failed [createCounterparty]: 
+2026-08-16 21:46:27 [info] Nuvion counterparty created 
+2026-08-16 22:27:48 [info] Nuvion counterparty created 
+2026-08-16 22:38:39 [info] Nuvion counterparty created 
+2026-08-16 22:38:40 [error] Nuvion call failed [createPaymentDetail]: 
+2026-08-16 22:48:45 [info] Nuvion counterparty created 
+2026-08-16 22:48:45 [error] Nuvion call failed [createPaymentDetail]: 
+2026-08-17 00:01:41 [info] Nuvion counterparty created 
+2026-08-17 00:01:42 [info] Nuvion payment detail created 
+2026-08-17 00:05:59 [info] Nuvion counterparty created 
+2026-08-17 00:05:59 [info] Nuvion payment detail created 
+2026-08-17 00:06:02 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-08-17 00:06:02 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
+2026-08-17 00:06:03 [error] [NuvionPayout] Transfer 62067893-9a3c-49ac-b4dc-6d5e5c9b313f failed, block released 
+2026-08-17 00:15:57 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-08-17 00:15:57 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
+2026-08-17 00:15:59 [error] [NuvionPayout] Transfer 676b5387-d9e3-42aa-a852-f682669ff2e9 failed, block released 
+2026-08-20 02:56:13 [info] Server running on port 4000 
+2026-08-20 02:56:14 [info] Connected to Ably! 
+2026-08-20 02:56:32 [info] Server running on port 4000 
+2026-08-20 02:56:33 [info] Connected to Ably! 

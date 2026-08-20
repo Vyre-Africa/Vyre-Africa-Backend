@@ -5,6 +5,7 @@ const config = {
     host: process.env.HOST || '',
     port: process.env.PORT || 5000,
     nodeEnv: process.env.NODE_ENV || '',
+    FRONTEND_URL: process.env.FRONTEND_URL || '',
     
     redisHost: process.env.REDIS_HOST || 'redis',
     redisPort: process.env.REDIS_PORT || '6379',
@@ -27,6 +28,10 @@ const config = {
     CONTRO_ENV: process.env.CONTRO_ENV || 'sandbox',
     CONTRO_API_KEY: process.env.CONTRO_API_KEY || '',
     CONTRO_WEBHOOK_SECRET: process.env.CONTRO_WEBHOOK_SECRET || '',
+
+    DIDIT_API_KEY: process.env.DIDIT_API_KEY || '',
+    DIDIT_WEBHOOK_SECRET: process.env.DIDIT_WEBHOOK_SECRET || '',
+    DIDIT_WORKFLOW_ID: process.env.DIDIT_WORKFLOW_ID || '',
 
     dialect: process.env.DB_DIALECT || 'postgres',
     dbCreds: {

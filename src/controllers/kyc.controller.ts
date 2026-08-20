@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
+import config from '../config/env.config';
 import {
   verifyTier1,
   verifyTier2,
@@ -10,6 +11,7 @@ import {
 import { getUsageSummary, getMonthlyUsage } from '../services/kycLimits.service';
 import type { KycCountry, Tier1IdType } from '../services/dojah.service';
 import type { KycTier } from '../services/kycLimits.service';
+import { createDiditSession, getDiditDecision } from '../services/didit.service';
 
 class KycController {
 
@@ -292,6 +294,83 @@ class KycController {
   }
 
   // POST /kyc/upgrade/tier2
+  // async upgradeTier2(req: Request & Record<string, any>, res: Response) {
+  //   const { user } = req;
+  //   try {
+  //     if (user.kycTier < 1) {
+  //       return res.status(403).json({
+  //         success: false,
+  //         msg: 'Complete Tier 1 verification before proceeding to Tier 2.',
+  //       });
+  //     }
+
+  //     if (user.kycTier >= 2) {
+  //       return res.status(200).json({
+  //         success: true,
+  //         msg: 'Already verified at Tier 2 or above',
+  //         kycTier: user.kycTier,
+  //       });
+  //     }
+
+  //     const { selfieImageBase64, idImageBase64 } = req.body as {
+  //       selfieImageBase64: string;
+  //       idImageBase64: string;
+  //     };
+
+  //     if (!selfieImageBase64 || !idImageBase64) {
+  //       return res.status(400).json({
+  //         success: false,
+  //         msg: 'selfieImageBase64 and idImageBase64 are required',
+  //       });
+  //     }
+
+  //     const verificationRecord = await prisma.kycVerification.create({
+  //       data: {
+  //         userId: user.id,
+  //         type: 'PHOTO_ID_SELFIE',
+  //         country: user.country ?? 'GLOBAL',
+  //         status: 'PENDING',
+  //       },
+  //     });
+
+  //     const result = await verifyTier2({ selfieImageBase64, idImageBase64 });
+
+  //     if (!result.success || !result.match) {
+  //       await prisma.kycVerification.update({
+  //         where: { id: verificationRecord.id },
+  //         data: { status: 'FAILED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
+  //       });
+  //       // Dojah's confidence_value is already on a 0-100 scale — do not
+  //       // multiply by 100 again (that previously showed e.g. "8500%").
+  //       return res.status(422).json({
+  //         success: false,
+  //         msg: result.error ??
+  //           `Face match failed (confidence: ${(result.confidence ?? 0).toFixed(0)}%). Please ensure your face is clearly visible and matches your ID photo.`,
+  //       });
+  //     }
+
+  //     await prisma.kycVerification.update({
+  //       where: { id: verificationRecord.id },
+  //       data: { status: 'APPROVED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
+  //     });
+
+  //     await prisma.user.update({
+  //       where: { id: user.id },
+  //       data: { kycTier: 2, kycTier2At: new Date(), dojahLivenessRef: `tier2_${Date.now()}` },
+  //     });
+
+  //     return res.status(200).json({
+  //       success: true,
+  //       msg: 'Identity fully verified. You now have access to $50,000/month in trading volume.',
+  //       kycTier: 2,
+  //     });
+
+  //   } catch (error) {
+  //     console.log(error);
+  //     return res.status(500).json({ msg: 'Internal Server Error', success: false });
+  //   }
+  // }
+
   async upgradeTier2(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     try {
@@ -301,7 +380,7 @@ class KycController {
           msg: 'Complete Tier 1 verification before proceeding to Tier 2.',
         });
       }
-
+  
       if (user.kycTier >= 2) {
         return res.status(200).json({
           success: true,
@@ -309,60 +388,95 @@ class KycController {
           kycTier: user.kycTier,
         });
       }
-
-      const { selfieImageBase64, idImageBase64 } = req.body as {
-        selfieImageBase64: string;
-        idImageBase64: string;
-      };
-
-      if (!selfieImageBase64 || !idImageBase64) {
-        return res.status(400).json({
-          success: false,
-          msg: 'selfieImageBase64 and idImageBase64 are required',
-        });
-      }
-
-      const verificationRecord = await prisma.kycVerification.create({
-        data: {
-          userId: user.id,
-          type: 'PHOTO_ID_SELFIE',
-          country: user.country ?? 'GLOBAL',
-          status: 'PENDING',
-        },
+  
+      // CONFIRMED idempotent: if this user already has an unfinished
+      // session on the current workflow version, Didit returns the SAME
+      // session rather than creating a duplicate — safe to call this
+      // endpoint again if a user navigates away and comes back.
+      const session = await createDiditSession({
+        vendorData: user.id, // the link back to this exact Vyre user — CONFIRMED echoed in every webhook payload
+        callback: `${config.FRONTEND_URL}/kyc/tier2/callback`, // adjust to wherever the frontend actually wants the user redirected back to
+        metadata: { purpose: 'tier2_upgrade' },
       });
-
-      const result = await verifyTier2({ selfieImageBase64, idImageBase64 });
-
-      if (!result.success || !result.match) {
-        await prisma.kycVerification.update({
-          where: { id: verificationRecord.id },
-          data: { status: 'FAILED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
-        });
-        // Dojah's confidence_value is already on a 0-100 scale — do not
-        // multiply by 100 again (that previously showed e.g. "8500%").
+  
+      if (!session.success || !session.url || !session.session_id) {
+        console.log('Didit session creation failed:', session.error);
         return res.status(422).json({
           success: false,
-          msg: result.error ??
-            `Face match failed (confidence: ${(result.confidence ?? 0).toFixed(0)}%). Please ensure your face is clearly visible and matches your ID photo.`,
+          msg: session.error ?? 'Failed to start identity verification. Please try again.',
         });
       }
-
-      await prisma.kycVerification.update({
-        where: { id: verificationRecord.id },
-        data: { status: 'APPROVED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
-      });
-
+  
       await prisma.user.update({
         where: { id: user.id },
-        data: { kycTier: 2, kycTier2At: new Date(), dojahLivenessRef: `tier2_${Date.now()}` },
+        data: {
+          diditSessionId: session.session_id,
+          diditKycStatus: session.status, // "Not Started" on a fresh session
+        },
       });
-
+  
       return res.status(200).json({
         success: true,
-        msg: 'Identity fully verified. You now have access to $50,000/month in trading volume.',
-        kycTier: 2,
+        msg: 'Verification session created — complete it to be upgraded to Tier 2',
+        sessionUrl: session.url,
+        sessionId: session.session_id,
       });
+  
+    } catch (error) {
+      console.log(error);
+      return res.status(500).json({ msg: 'Internal Server Error', success: false });
+    }
+  }
 
+  // GET /kyc/tier2/status
+  async getTier2Status(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+    try {
+      const fresh = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { kycTier: true, diditSessionId: true, diditKycStatus: true },
+      });
+  
+      if (!fresh) {
+        return res.status(404).json({ success: false, msg: 'User not found' });
+      }
+  
+      if (!fresh.diditSessionId) {
+        return res.status(200).json({
+          success: true,
+          hasSession: false,
+          kycTier: fresh.kycTier,
+        });
+      }
+  
+      // Re-check real state directly for any non-terminal status, rather
+      // than trust a possibly-stale cached value — same "webhook is a
+      // trigger, not a guaranteed-arrived source of truth" discipline
+      // already used for Contro's checkProgramKycAndNotify. Covers the
+      // case where a user finished verification, closed the tab, and the
+      // webhook hasn't landed yet (or was missed) by the time they check.
+      const nonTerminal = ['Not Started', 'In Progress'].includes(fresh.diditKycStatus ?? '');
+      let currentStatus = fresh.diditKycStatus;
+  
+      if (nonTerminal) {
+        const decision = await getDiditDecision(fresh.diditSessionId);
+        if (decision.success && decision.status && decision.status !== currentStatus) {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { diditKycStatus: decision.status },
+          });
+          currentStatus = decision.status;
+        }
+      }
+  
+      return res.status(200).json({
+        success: true,
+        hasSession: true,
+        sessionId: fresh.diditSessionId,
+        diditStatus: currentStatus,
+        kycTier: fresh.kycTier, // NOTE: only reflects 2 once the webhook has actually processed an Approved status — this status check does NOT itself upgrade the tier, it only surfaces where things stand
+      });
+  
     } catch (error) {
       console.log(error);
       return res.status(500).json({ msg: 'Internal Server Error', success: false });

@@ -2600,6 +2600,69 @@ class eventService {
     }
   }
 
+  async handleDiditEvent(jobData: { body: any }) {
+    const { body } = jobData;
+    const { session_id, status, vendor_data, decision } = body;
+ 
+    logger.info('Processing Didit event (async)', { session_id, status, vendor_data });
+    logger.info('Didit webhook raw payload', { body });
+ 
+    if (!vendor_data) {
+        logger.warn('Didit webhook has no vendor_data — cannot identify which Vyre user this belongs to', { session_id });
+        return;
+    }
+ 
+    const user = await prisma.user.findUnique({ where: { id: vendor_data } });
+    if (!user) {
+        logger.warn(`No Vyre user found for Didit vendor_data ${vendor_data}`);
+        return;
+    }
+
+    await prisma.kycVerification.create({
+        data: {
+            userId: user.id,
+            type: 'PHOTO_ID_SELFIE', // reusing the existing Tier 2 type value — same concept, different engine, consistent with how dojahLivenessRef is being reused rather than replaced
+            country: user.country ?? 'GLOBAL',
+            status: status === 'Approved' ? 'APPROVED' : status === 'Declined' ? 'FAILED' : 'PENDING',
+            dojahRef: session_id, // reusing this generic external-reference field for the Didit session id — same flexible-string pattern already used for BVN/NIN elsewhere
+            dojahData: decision ?? undefined,
+            resolvedAt: ['Approved', 'Declined'].includes(status) ? new Date() : null,
+        },
+    });
+ 
+    await prisma.user.update({
+        where: { id: user.id },
+        data: { diditSessionId: session_id, diditKycStatus: status },
+    });
+ 
+    // CONFIRMED real status vocabulary: Not Started | In Progress |
+    // Approved | Declined | In Review | Abandoned | Expired | Kyc Expired.
+    // Only "Approved" should ever set the existing kycTier gate.
+    if (status !== 'Approved') {
+        logger.info(`Didit session ${session_id} status "${status}" — not upgrading kycTier`);
+        return;
+    }
+ 
+    // CONFIRMED plural-array decision structure — id_verifications[0],
+    // never a singular id_verification key.
+    const idVerification = decision?.id_verifications?.[0];
+ 
+    await prisma.user.update({
+        where: { id: user.id },
+        data: {
+            kycTier: 2,
+            kycTier2At: new Date(),
+            legalFirstName: idVerification?.first_name ?? user.legalFirstName,
+            legalLastName: idVerification?.last_name ?? user.legalLastName,
+            legalNameVerifiedAt: new Date(),
+            dojahLivenessRef: `didit_${session_id}`, // legacy field name, reused deliberately — same concept, different engine
+        },
+    });
+ 
+    logger.info(`User ${user.id} upgraded to kycTier 2 via Didit session ${session_id}`);
+}
+ 
+
 
 
 
