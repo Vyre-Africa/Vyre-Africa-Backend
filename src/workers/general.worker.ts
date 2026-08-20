@@ -95,6 +95,9 @@ export function startGeneralWorker() {
                     case 'Nuvion_Event':
                         return await eventService.handleNuvionEvent(job.data);
 
+                    case 'Didit_Event':
+                        return await eventService.handleDiditEvent(job.data);
+
                     default:
                         throw new Error(`Unknown job type: ${job.name}`);
                 }
