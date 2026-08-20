@@ -194,3 +194,14 @@ Error: Admin wallet not found
     at async main (/Users/user/Vyre-Africa-Backend/src/scripts/sync-ramp-orders.ts:21:20) 
 2026-08-09 02:02:55 [error] [RampSync] Failed syncing USDC/BASE:  
 2026-08-09 02:45:11 [error] [RampSync] Failed syncing USDT/SOLANA:  
+2026-08-16 18:11:12 [error] Nuvion call failed [createCounterparty]: 
+2026-08-16 18:19:27 [error] Nuvion call failed [createCounterparty]: 
+2026-08-16 18:33:51 [error] Nuvion call failed [createCounterparty]: 
+2026-08-16 22:38:40 [error] Nuvion call failed [createPaymentDetail]: 
+2026-08-16 22:48:45 [error] Nuvion call failed [createPaymentDetail]: 
+2026-08-17 00:06:02 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-08-17 00:06:02 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
+2026-08-17 00:06:03 [error] [NuvionPayout] Transfer 62067893-9a3c-49ac-b4dc-6d5e5c9b313f failed, block released 
+2026-08-17 00:15:57 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-08-17 00:15:57 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
+2026-08-17 00:15:59 [error] [NuvionPayout] Transfer 676b5387-d9e3-42aa-a852-f682669ff2e9 failed, block released 

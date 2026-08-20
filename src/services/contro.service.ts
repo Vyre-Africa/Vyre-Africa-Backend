@@ -104,42 +104,36 @@ export interface CardholderResult {
     rawData?: any;
 }
 
-export async function createCardholder({
-    externalUserId,
-    kycSessionId,
-    email,
-    phoneNumber,
-}: {
-    externalUserId: string;
-    kycSessionId: string;
-    email: string;
-    phoneNumber: string; // must be E.164 — confirmed required format
-}): Promise<CardholderResult> {
+export async function createCardholder(payload:
+    | {
+        externalUserId: string;
+        kycSource: 'web';
+        kycSessionId: string;
+        email: string;
+        phoneNumber: string;
+      }
+    | {
+        externalUserId: string;
+        kycSource: 'didit';
+        diditShareToken: string;
+        email: string;
+        phoneNumber: string;
+      }
+): Promise<CardholderResult> {
     try {
-        const res = await controAxios.post('/partner/cardholders', {
-            externalUserId,
-            kycSource: 'web',
-            kycSessionId,
-            email,
-            phoneNumber,
-        });
-        logger.info('Contro cardholder created', { externalUserId, rawData: res.data });
+        const res = await controAxios.post('/partner/cardholders', payload);
+        logger.info('Contro cardholder created', { externalUserId: payload.externalUserId, kycSource: payload.kycSource, rawData: res.data });
         return { success: true, ...res.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, code, existingCardholderId, rawData } = handleControError('createCardholder', error);
-
-        // CONFIRMED self-healing behavior — on duplicate email, Contro
-        // hands back the existing cardholder id directly. Treat this as
-        // success, not failure, same idempotent-on-conflict pattern used
-        // for Qorepay/Nuvion elsewhere in this project.
         if (code === 'EMAIL_ALREADY_REGISTERED' && existingCardholderId) {
             logger.warn('Cardholder already exists — self-healing', { existingCardholderId });
             return getCardholder(existingCardholderId);
         }
-
         return { success: false, error: msg, rawData };
     }
 }
+ 
 
 export async function getCardholder(cardholderId: string): Promise<CardholderResult> {
     try {

@@ -11,16 +11,18 @@ const nuvionApi: AxiosInstance = axios.create({
     timeout: 30000,
 });
 
-// FIXED: renamed `status` -> `httpStatus`. The original name collided
-// with Nuvion's own business-status fields (e.g. TransferResult.status:
-// "pending"|"completed"|... — a real field on their response objects,
-// spread directly into our return type via `...res.data`). Having both
-// concepts share one field name made the retry logic's type
-// (expecting a numeric HTTP status) incompatible with TransferResult's
-// type (a string status enum) — exactly the TS2322 error this caused.
 function handleNuvionError(context: string, error: any) {
     const httpStatus = error?.response?.status;
     const data = error?.response?.data;
+ 
+    // TEMPORARY — raw dump. Remove once createPaymentDetail (and anything
+    // else) is confirmed working — same technique that found the missing
+    // address field and the res.data.data unwrapping bug.
+    console.error(`\n=== RAW NUVION ERROR [${context}] ===`);
+    console.error('httpStatus:', httpStatus);
+    console.error('data:', JSON.stringify(data, null, 2));
+    console.error('=== END RAW NUVION ERROR ===\n');
+ 
     logger.error(`Nuvion call failed [${context}]:`, { httpStatus, data });
     return {
         error: data?.error?.message ?? data?.message ?? data?.error ?? error?.message ?? 'Unknown error',
@@ -38,7 +40,7 @@ export interface CounterpartyResult {
     id?: string;
     type?: 'individual' | 'business';
     nickname?: string;
-    status?: 'active' | 'inactive'; // Nuvion's own business status — never conflated with httpStatus
+    status?: 'active' | 'inactive';
     error?: string;
     httpStatus?: number;
     rawData?: any;
@@ -46,7 +48,19 @@ export interface CounterpartyResult {
 
 export async function createCounterparty(payload: {
     type: 'individual' | 'business';
-    profile: Record<string, any>;
+    profile: {
+        first_name: string;
+        last_name: string;
+        relationship?: string;
+        email: string;
+        address: {
+            line1: string;
+            city: string;
+            state_or_province: string;
+            postal_code: string;
+            country: string;
+        };
+    };
     nickname?: string;
     meta?: Record<string, string>;
 }): Promise<CounterpartyResult> {
@@ -56,12 +70,15 @@ export async function createCounterparty(payload: {
             ...payload,
         });
         logger.info('Nuvion counterparty created', { rawData: res.data });
-        return { success: true, ...res.data, rawData: res.data };
+        // FIXED — was `...res.data` (undefined id). Now correctly
+        // unwraps the confirmed real shape.
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('createCounterparty', error);
         return { success: false, error: msg, httpStatus, rawData };
     }
 }
+
 
 export async function getCounterparty(counterpartyId: string): Promise<CounterpartyResult> {
     try {
@@ -121,7 +138,10 @@ export async function createPaymentDetail(payload: {
             ...payload,
         });
         logger.info('Nuvion payment detail created', { rawData: res.data });
-        return { success: true, ...res.data, rawData: res.data };
+        // FIXED — was `...res.data` (undefined id, same bug as
+        // createCounterparty had). Nuvion wraps the real object in a
+        // `data` key on every successful response — confirmed twice now.
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('createPaymentDetail', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -200,6 +220,7 @@ export interface TransferResult {
 export async function initiateSameCurrencyTransfer(payload: {
     account_id: string;
     payment_detail_id: string;
+    counterparty_id: string; // NEW — confirmed required, undocumented
     amount: number;
     currency: string;
     narration: string;
@@ -210,7 +231,7 @@ export async function initiateSameCurrencyTransfer(payload: {
     try {
         const res = await nuvionApi.post('/transfers', payload);
         logger.info('Nuvion transfer initiated (same-currency)', { rawData: res.data });
-        return { success: true, ...res.data, rawData: res.data };
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('initiateSameCurrencyTransfer', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -220,6 +241,7 @@ export async function initiateSameCurrencyTransfer(payload: {
 export async function initiateCrossCurrencyTransfer(payload: {
     account_id: string;
     payment_detail_id: string;
+    counterparty_id: string; // NEW — same fix, this call was missing it too
     fx_quote_id: string;
     narration: string;
     payment_type: 'bank-transfer' | 'momo-transfer' | 'stablecoin-transfer' | 'book-transfer';
@@ -229,7 +251,7 @@ export async function initiateCrossCurrencyTransfer(payload: {
     try {
         const res = await nuvionApi.post('/transfers', payload);
         logger.info('Nuvion transfer initiated (cross-currency)', { rawData: res.data });
-        return { success: true, ...res.data, rawData: res.data };
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('initiateCrossCurrencyTransfer', error);
         return { success: false, error: msg, httpStatus, rawData };

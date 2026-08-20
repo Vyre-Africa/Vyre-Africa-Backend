@@ -442,6 +442,9 @@ model User {
   dojahIdRef       String?
   dojahLivenessRef String?
 
+  diditSessionId  String?
+  diditKycStatus  String? // mirrors Didit's real status vocabulary directly:
+
   controCardholderId String?
   controKycStatus     String?   // pending | approved | rejected — account-level, from cardholder.kycStatus
   controProgramKycStatus String? // pending | approved | rejected — PROGRAM-level, a genuinely separate status (confirmed via live test: took ~6s to flip even in sandbox "auto-approve")
@@ -631,6 +634,12 @@ model beneficiary {
   nuvionPaymentDetailId String?
   nuvionRecipientCountry String? // cached after first collection — see nuvionPayout.service.ts
   nuvionRecipientEmail   String?
+
+  nuvionRecipientAddressLine1  String?
+  nuvionRecipientAddressCity   String?
+  nuvionRecipientAddressState  String?
+  nuvionRecipientAddressPostal String?
+  
 }
 
 model TransferRequest {
@@ -1561,6 +1570,16 @@ model NuvionWebhookEvent {
   id         String   @id @default(cuid())
   eventId    String   @unique
   eventType  String
+  rawPayload Json
+  receivedAt DateTime @default(now())
+ 
+  @@index([eventType])
+}
+
+model DiditWebhookEvent {
+  id         String   @id @default(cuid())
+  eventId    String   @unique
+  eventType  String   // e.g. 'status.updated'
   rawPayload Json
   receivedAt DateTime @default(now())
  
