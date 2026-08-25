@@ -35,6 +35,7 @@ import kycController from '../controllers/kyc.controller';
 import controController from '../controllers/contro.controller';
 import nuvionController from '../controllers/nuvion.controller';
 import diditController from '../controllers/didit.controller';
+import beneficiaryController from '../controllers/beneficiary.controller';
 
 
 const router = Router();
@@ -101,7 +102,7 @@ router.post(
 );
 
 
-router.post('/payouts/nuvion', authMiddleware, nuvionController.initiatePayout);
+
 
 
 router.post(
@@ -817,6 +818,114 @@ router.get(
   authMiddleware, 
   kycController.getTier2Status
 );
+
+router.post(
+  '/cards/contro/start',  
+  requireAuthWithCORS(),
+  authMiddleware,
+  controController.startCardOnboarding
+);
+
+router.get(
+  '/cards/contro/status',  
+  requireAuthWithCORS(),
+  authMiddleware, 
+  controController.getCardStatus
+);
+
+router.post(
+  '/cards/contro/issue', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  controController.issueCard
+);
+
+router.post(
+  '/cards/contro/reveal',
+  requireAuthWithCORS(), 
+  authMiddleware, 
+  controController.revealCard
+);
+
+router.post(
+  '/payouts/nuvion',  
+  requireAuthWithCORS(),    
+  authMiddleware, 
+  requireTransactionPin,
+  nuvionController.initiatePayout
+);
+
+router.post(
+  '/payouts/nuvion/crypto',
+  requireAuthWithCORS(),
+  authMiddleware,
+  requireTransactionPin,
+  nuvionController.initiateCryptoPayout
+);
+ 
+router.get(
+  '/payouts/nuvion/:id',   
+  requireAuthWithCORS(),
+  authMiddleware, 
+  nuvionController.getPayoutStatus
+);
+
+router.get(
+  '/payouts/nuvion',
+  requireAuthWithCORS(),       
+  authMiddleware, 
+  nuvionController.listPayouts
+);
+
+router.get(
+  '/payouts/nuvion/supported-currencies', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  nuvionController.getSupportedCurrencies
+);
+
+router.post(
+  '/beneficiaries',
+  requireAuthWithCORS(),                                          
+  authMiddleware, 
+  beneficiaryController.createBeneficiary
+);
+
+router.post(
+  '/beneficiaries/:id/payment-details',  
+  requireAuthWithCORS(),                    
+  authMiddleware, 
+  beneficiaryController.addPaymentDetail
+);
+
+router.get(
+  '/beneficiaries/:id/payment-details',
+  requireAuthWithCORS(),                       
+  authMiddleware, 
+  beneficiaryController.listPaymentDetails
+);
+
+router.delete(
+  '/beneficiaries/:id/payment-details/:paymentDetailId',
+  requireAuthWithCORS(),  
+  authMiddleware, 
+  beneficiaryController.deletePaymentDetail
+);
+
+router.get(
+  '/beneficiaries', 
+  requireAuthWithCORS(),                                          
+  authMiddleware, 
+  beneficiaryController.listBeneficiaries
+);
+
+router.get(
+  '/beneficiaries/:id',    
+  requireAuthWithCORS(),  
+  authMiddleware, 
+  beneficiaryController.getBeneficiary
+);
+
 // router.get(
 //   '/user/two-factor-authentication',
 //   authMiddleware,

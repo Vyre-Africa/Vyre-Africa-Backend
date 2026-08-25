@@ -14,15 +14,6 @@ const nuvionApi: AxiosInstance = axios.create({
 function handleNuvionError(context: string, error: any) {
     const httpStatus = error?.response?.status;
     const data = error?.response?.data;
- 
-    // TEMPORARY — raw dump. Remove once createPaymentDetail (and anything
-    // else) is confirmed working — same technique that found the missing
-    // address field and the res.data.data unwrapping bug.
-    console.error(`\n=== RAW NUVION ERROR [${context}] ===`);
-    console.error('httpStatus:', httpStatus);
-    console.error('data:', JSON.stringify(data, null, 2));
-    console.error('=== END RAW NUVION ERROR ===\n');
- 
     logger.error(`Nuvion call failed [${context}]:`, { httpStatus, data });
     return {
         error: data?.error?.message ?? data?.message ?? data?.error ?? error?.message ?? 'Unknown error',
@@ -49,29 +40,14 @@ export interface CounterpartyResult {
 export async function createCounterparty(payload: {
     type: 'individual' | 'business';
     profile: {
-        first_name: string;
-        last_name: string;
-        relationship?: string;
-        email: string;
-        address: {
-            line1: string;
-            city: string;
-            state_or_province: string;
-            postal_code: string;
-            country: string;
-        };
+        first_name: string; last_name: string; relationship?: string; email: string;
+        address: { line1: string; city: string; state_or_province: string; postal_code: string; country: string };
     };
-    nickname?: string;
-    meta?: Record<string, string>;
+    nickname?: string; meta?: Record<string, string>;
 }): Promise<CounterpartyResult> {
     try {
-        const res = await nuvionApi.post('/counterparties', {
-            entity_id: VYRE_ENTITY_ID,
-            ...payload,
-        });
+        const res = await nuvionApi.post('/counterparties', { entity_id: VYRE_ENTITY_ID, ...payload });
         logger.info('Nuvion counterparty created', { rawData: res.data });
-        // FIXED — was `...res.data` (undefined id). Now correctly
-        // unwraps the confirmed real shape.
         return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('createCounterparty', error);
@@ -79,13 +55,10 @@ export async function createCounterparty(payload: {
     }
 }
 
-
 export async function getCounterparty(counterpartyId: string): Promise<CounterpartyResult> {
     try {
-        const res = await nuvionApi.get(`/counterparties/${counterpartyId}`, {
-            params: { entity_id: VYRE_ENTITY_ID },
-        });
-        return { success: true, ...res.data, rawData: res.data };
+        const res = await nuvionApi.get(`/counterparties/${counterpartyId}`, { params: { entity_id: VYRE_ENTITY_ID } });
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('getCounterparty', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -94,11 +67,9 @@ export async function getCounterparty(counterpartyId: string): Promise<Counterpa
 
 export async function deactivateCounterparty(counterpartyId: string) {
     try {
-        const res = await nuvionApi.post(`/counterparties/${counterpartyId}/deactivate`, {
-            entity_id: VYRE_ENTITY_ID,
-        });
+        const res = await nuvionApi.post(`/counterparties/${counterpartyId}/deactivate`, { entity_id: VYRE_ENTITY_ID });
         logger.info('Nuvion counterparty deactivated', { counterpartyId });
-        return { success: true, ...res.data, rawData: res.data };
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         if (error?.response?.status === 409) {
             logger.info(`Counterparty ${counterpartyId} was already inactive`);
@@ -112,35 +83,19 @@ export async function deactivateCounterparty(counterpartyId: string) {
 // ─── Payment Details ────────────────────────────────────────────────────
 
 export interface PaymentDetailResult {
-    success: boolean;
-    id?: string;
-    payment_method?: string;
-    currency?: string;
-    scheme?: string;
-    error?: string;
-    httpStatus?: number;
-    rawData?: any;
+    success: boolean; id?: string; payment_method?: string; currency?: string;
+    scheme?: string; error?: string; httpStatus?: number; rawData?: any;
 }
 
 export async function createPaymentDetail(payload: {
     payment_method: 'bank-transfer' | 'momo-transfer' | 'stablecoin-transfer' | 'book-transfer';
-    currency: string;
-    account_holder_name: string;
-    counterparty_id: string;
-    country?: string;
-    scheme?: string;
-    bank_address?: Record<string, any>;
+    currency: string; account_holder_name: string; counterparty_id: string;
+    country?: string; scheme?: string; bank_address?: Record<string, any>;
     [railSpecificField: string]: any;
 }): Promise<PaymentDetailResult> {
     try {
-        const res = await nuvionApi.post('/payment-details', {
-            entity_id: VYRE_ENTITY_ID,
-            ...payload,
-        });
+        const res = await nuvionApi.post('/payment-details', { entity_id: VYRE_ENTITY_ID, ...payload });
         logger.info('Nuvion payment detail created', { rawData: res.data });
-        // FIXED — was `...res.data` (undefined id, same bug as
-        // createCounterparty had). Nuvion wraps the real object in a
-        // `data` key on every successful response — confirmed twice now.
         return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('createPaymentDetail', error);
@@ -151,7 +106,7 @@ export async function createPaymentDetail(payload: {
 export async function getPaymentDetail(paymentDetailId: string): Promise<PaymentDetailResult> {
     try {
         const res = await nuvionApi.get(`/payment-details/${paymentDetailId}`);
-        return { success: true, ...res.data, rawData: res.data };
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('getPaymentDetail', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -161,43 +116,23 @@ export async function getPaymentDetail(paymentDetailId: string): Promise<Payment
 // ─── FX Quotes ──────────────────────────────────────────────────────────
 
 export interface FxQuoteResult {
-    success: boolean;
-    id?: string;
-    to?: string;
-    from?: string;
-    rate?: number;
-    quote?: {
-        used_at: number | null;
-        expires_at: number;
-        used_in_payment_id: string | null;
-        valid_for: number;
-        status: string; // the QUOTE's own status (e.g. "active") — a third, separate status concept from both httpStatus and TransferResult.status
-    };
-    error?: string;
-    httpStatus?: number;
-    rawData?: any;
+    success: boolean; id?: string; to?: string; from?: string; rate?: number;
+    error?: string; httpStatus?: number; rawData?: any;
 }
 
 export async function createFxQuote(payload: {
-    to_currency: string;
-    from_currency: string;
-    amount_to?: number;
-    amount_from?: number;
-    account_id: string;
-    counterparty_id: string;
-    payment_detail_id: string;
+    to_currency: string; from_currency: string; amount_to?: number; amount_from?: number;
+    account_id: string; counterparty_id: string; payment_detail_id: string;
 }): Promise<FxQuoteResult> {
     const hasTo = payload.amount_to !== undefined;
     const hasFrom = payload.amount_from !== undefined;
-
     if (hasTo === hasFrom) {
         return { success: false, error: 'Exactly one of amount_to or amount_from must be provided, not both or neither' };
     }
-
     try {
         const res = await nuvionApi.post('/fx-quotes', payload);
         logger.info('Nuvion FX quote created', { rawData: res.data });
-        return { success: true, ...res.data, rawData: res.data };
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('createFxQuote', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -207,26 +142,15 @@ export async function createFxQuote(payload: {
 // ─── Transfers ──────────────────────────────────────────────────────────
 
 export interface TransferResult {
-    success: boolean;
-    id?: string;
-    status?: 'pending' | 'processing' | 'completed' | 'failed' | 'reversed'; // Nuvion's own business status
-    status_reason?: string;
-    applicable_fee?: number;
-    error?: string;
-    httpStatus?: number; // separate field, no collision
-    rawData?: any;
+    success: boolean; id?: string; status?: 'pending' | 'processing' | 'completed' | 'failed' | 'reversed';
+    status_reason?: string; applicable_fee?: number; error?: string; httpStatus?: number; rawData?: any;
 }
 
 export async function initiateSameCurrencyTransfer(payload: {
-    account_id: string;
-    payment_detail_id: string;
-    counterparty_id: string; // NEW — confirmed required, undocumented
-    amount: number;
-    currency: string;
-    narration: string;
+    account_id: string; payment_detail_id: string; counterparty_id: string;
+    amount: number; currency: string; narration: string;
     payment_type: 'bank-transfer' | 'momo-transfer' | 'stablecoin-transfer' | 'book-transfer';
-    unique_reference: string;
-    meta?: Record<string, any>;
+    unique_reference: string; meta?: Record<string, any>;
 }): Promise<TransferResult> {
     try {
         const res = await nuvionApi.post('/transfers', payload);
@@ -238,15 +162,11 @@ export async function initiateSameCurrencyTransfer(payload: {
     }
 }
 
+
 export async function initiateCrossCurrencyTransfer(payload: {
-    account_id: string;
-    payment_detail_id: string;
-    counterparty_id: string; // NEW — same fix, this call was missing it too
-    fx_quote_id: string;
-    narration: string;
-    payment_type: 'bank-transfer' | 'momo-transfer' | 'stablecoin-transfer' | 'book-transfer';
-    unique_reference: string;
-    meta?: Record<string, any>;
+    account_id: string; payment_detail_id: string; counterparty_id: string; fx_quote_id: string;
+    narration: string; payment_type: 'bank-transfer' | 'momo-transfer' | 'stablecoin-transfer' | 'book-transfer';
+    unique_reference: string; meta?: Record<string, any>;
 }): Promise<TransferResult> {
     try {
         const res = await nuvionApi.post('/transfers', payload);
@@ -261,7 +181,7 @@ export async function initiateCrossCurrencyTransfer(payload: {
 export async function getTransfer(transferId: string): Promise<TransferResult> {
     try {
         const res = await nuvionApi.get(`/transfers/${transferId}`);
-        return { success: true, ...res.data, rawData: res.data };
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('getTransfer', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -271,26 +191,17 @@ export async function getTransfer(transferId: string): Promise<TransferResult> {
 // ─── Pooled Treasury Accounts ───────────────────────────────────────────
 
 export interface AccountResult {
-    success: boolean;
-    id?: string;
-    type?: string;
-    currency?: string;
-    balance?: { available: number; current: number };
-    error?: string;
-    httpStatus?: number;
-    rawData?: any;
+    success: boolean; id?: string; type?: string; currency?: string;
+    balance?: { available: number; current: number }; error?: string; httpStatus?: number; rawData?: any;
 }
 
 export async function createTreasuryAccount(payload: {
-    type: 'checking' | 'operational' | 'safeguard';
-    currency: string;
-    display_name: string;
-    meta?: Record<string, string>;
+    type: 'checking' | 'operational' | 'safeguard'; currency: string; display_name: string; meta?: Record<string, string>;
 }): Promise<AccountResult> {
     try {
-        const res = await nuvionApi.post('/accounts', payload);
+        const res = await nuvionApi.post('/accounts', { entity_id: VYRE_ENTITY_ID, ...payload });
         logger.info('Nuvion treasury account created', { rawData: res.data });
-        return { success: true, ...res.data, rawData: res.data };
+        return { success: true, ...res.data.data.account, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('createTreasuryAccount', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -300,9 +211,35 @@ export async function createTreasuryAccount(payload: {
 export async function getAccount(accountId: string): Promise<AccountResult> {
     try {
         const res = await nuvionApi.get(`/accounts/${accountId}`);
-        return { success: true, ...res.data, rawData: res.data };
+        return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('getAccount', error);
+        return { success: false, error: msg, httpStatus, rawData };
+    }
+}
+
+// ─── Stablecoin Wallets ─────────────────────────────────────────────────
+ 
+export interface TreasuryWalletResult {
+    success: boolean; id?: string; account_number?: string; status?: 'pending' | 'active';
+    chain?: string; error?: string; httpStatus?: number; rawData?: any;
+}
+ 
+export async function createTreasuryWallet(payload: {
+    account_id: string; chain: 'eth' | 'base' | 'matic' | 'sol'; terminate_after?: number;
+}): Promise<TreasuryWalletResult> {
+    try {
+        const res = await nuvionApi.post('/account-details', {
+            entity_id: VYRE_ENTITY_ID,
+            account_id: payload.account_id,
+            chain: payload.chain,
+            config: { outflow_enabled: true, inflow_enabled: true, outflow_allowed_counterparties: [], inflow_allowed_counterparties: [] },
+            ...(payload.terminate_after && { terminate_after: payload.terminate_after }),
+        });
+        logger.info('Nuvion stablecoin wallet issuance requested', { rawData: res.data });
+        return { success: true, ...res.data.data.account_details, rawData: res.data };
+    } catch (error: any) {
+        const { error: msg, httpStatus, rawData } = handleNuvionError('createTreasuryWallet', error);
         return { success: false, error: msg, httpStatus, rawData };
     }
 }

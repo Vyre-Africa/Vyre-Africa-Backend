@@ -2468,137 +2468,242 @@ class eventService {
     logger.error(`${type} failed`, { awaitingId: awaiting.id });
   }
 
-  async handleNuvionEvent(jobData: { eventType: string; data: any; rawBody: any }) {
-    const { eventType, data, rawBody } = jobData;
+  async handleNuvionEvent(jobData: { body: any }) {
+      const { body } = jobData;
+      const eventType = body?.event;
+      const data = body?.data;
  
-    logger.info('Processing Nuvion event (async)', { eventType });
-    logger.info('Nuvion webhook raw payload', { eventType, body: rawBody });
+      logger.info('Processing Nuvion event (async)', { eventType });
+      logger.info('Nuvion webhook raw payload', { eventType, body });
  
-    switch (eventType) {
+      switch (eventType) {
  
-        // CONFIRMED payload shape, directly from Nuvion's docs. Feature A
-        // territory (inbound funds via account-details) — genuinely
-        // blocked on the still-open account-details attribution
-        // question. Logging and storing in full regardless, since real
-        // historical payloads help answer that question ourselves once
-        // unblocked — deliberately NOT crediting any specific user's
-        // VirtualAccount yet, since we can't reliably attribute it to one.
-        case 'inflows.completed': {
-            logger.info('inflows.completed received — Feature A territory, not yet actioned pending the account-details attribution question', {
-                accountId: data?.account_id,
-                amount: data?.amount,
-                currency: data?.currency,
-                uniqueReference: data?.unique_reference,
-            });
-            break;
-        }
+          case 'accounts.created': {
+              const account = data?.account;
+              if (!account?.id) {
+                  logger.warn('accounts.created — no account.id in payload, check raw payload above');
+                  break;
+              }
+              const existing = await prisma.nuvionTreasuryAccount.findUnique({ where: { nuvionAccountId: account.id } });
+              if (existing) {
+                  logger.info(`NuvionTreasuryAccount for ${account.id} already exists — skipping`);
+                  break;
+              }
+              const chain = account.meta?.asset_type === 'stablecoin' ? account.meta?.network : null;
+              await prisma.nuvionTreasuryAccount.create({
+                  data: {
+                      currency: account.currency,
+                      nuvionAccountId: account.id,
+                      accountType: account.type,
+                      displayName: account.display_name,
+                      chain,
+                      isActive: true,
+                  },
+              });
+              logger.info(`NuvionTreasuryAccount created for ${account.currency}${chain ? ` (${chain})` : ''}: ${account.id}`);
+              break;
+          }
  
-        // Field names CONFIRMED real for status/id/unique_reference —
-        // seen in the real accounts.created/account_details.created
-        // payloads following the same object conventions. Still treat
-        // this specific event's shape as provisional until an actual
-        // transfers.updated delivery is seen.
-        case 'transfers.updated': {
-            const nuvionTransferId = data?.id;
-            const newStatus = data?.status;
-            const uniqueReference = data?.unique_reference;
+          case 'account_details.created': {
+              const accountDetails = data?.account_details;
+              if (!accountDetails?.id) {
+                  logger.warn('account_details.created — no account_details.id in payload, check raw payload above');
+                  break;
+              }
+              if (accountDetails.asset_type !== 'stablecoin') {
+                  logger.info('account_details.created for a non-stablecoin account — no treasury action needed', { accountDetailsId: accountDetails.id });
+                  break;
+              }
+              const treasuryAccount = await prisma.nuvionTreasuryAccount.findFirst({ where: { nuvionAccountId: accountDetails.account_id } });
+              if (!treasuryAccount) {
+                  logger.warn(`account_details.created for stablecoin wallet ${accountDetails.id} — no matching NuvionTreasuryAccount for account_id ${accountDetails.account_id}`);
+                  break;
+              }
+              if (treasuryAccount.nuvionAccountDetailsId) {
+                  logger.info(`NuvionTreasuryAccount ${treasuryAccount.id} already has a wallet recorded — skipping`);
+                  break;
+              }
+              await prisma.nuvionTreasuryAccount.update({
+                  where: { id: treasuryAccount.id },
+                  data: {
+                      chain: accountDetails.chain,
+                      walletAddress: accountDetails.account_number,
+                      nuvionAccountDetailsId: accountDetails.id,
+                      walletStatus: accountDetails.status,
+                  },
+              });
+              logger.info(`Wallet recorded (pending) on NuvionTreasuryAccount ${treasuryAccount.id} — ${accountDetails.chain}: ${accountDetails.account_number}`);
+              break;
+          }
  
-            if (!nuvionTransferId && !uniqueReference) {
-                logger.warn('transfers.updated webhook — could not identify the transfer (no id or unique_reference in payload), check raw payload above');
-                break;
-            }
+          case 'account_details.updated': {
+              const detailsId = data?.id;
+              const newStatus = data?.status;
+              if (!detailsId) {
+                  logger.warn('account_details.updated — no id in payload, check raw payload above');
+                  break;
+              }
+              const treasuryAccount = await prisma.nuvionTreasuryAccount.findUnique({ where: { nuvionAccountDetailsId: detailsId } });
+              if (!treasuryAccount) {
+                  logger.warn(`account_details.updated for ${detailsId} — no matching NuvionTreasuryAccount found`);
+                  break;
+              }
+              if (treasuryAccount.walletStatus === newStatus) {
+                  logger.info(`NuvionTreasuryAccount ${treasuryAccount.id} wallet already "${newStatus}" — skipping duplicate update`);
+                  break;
+              }
+              await prisma.nuvionTreasuryAccount.update({
+                  where: { id: treasuryAccount.id },
+                  data: { walletStatus: newStatus, walletAddress: data?.account_number ?? treasuryAccount.walletAddress },
+              });
+              if (newStatus === 'active') {
+                  logger.info(`✅ Wallet on NuvionTreasuryAccount ${treasuryAccount.id} (${treasuryAccount.chain}) is now ACTIVE: ${treasuryAccount.walletAddress}`);
+              } else {
+                  logger.info(`NuvionTreasuryAccount ${treasuryAccount.id} wallet status updated to "${newStatus}"`);
+              }
+              break;
+          }
  
-            const transferRequest = uniqueReference
-                ? await prisma.transferRequest.findUnique({ where: { idempotencyKey: uniqueReference } })
-                : await prisma.transferRequest.findFirst({ where: { reference: nuvionTransferId } });
+          case 'outflows.created': {
+              logger.info('outflows.created received — informational only, no action needed', {
+                  nuvionOutflowId: data?.id, uniqueReference: data?.unique_reference,
+              });
+              break;
+          }
  
-            if (!transferRequest) {
-                logger.warn(`No matching TransferRequest found for Nuvion transfer (id=${nuvionTransferId}, ref=${uniqueReference})`);
-                break;
-            }
+          case 'outflows.completed': {
+              const nuvionOutflowId = data?.id;
+              const uniqueReference = data?.unique_reference;
+              if (!uniqueReference && !nuvionOutflowId) {
+                  logger.warn('outflows.completed — could not identify the transfer, check raw payload above');
+                  break;
+              }
+              const transferRequest = uniqueReference
+                  ? await prisma.transferRequest.findUnique({ where: { idempotencyKey: uniqueReference } })
+                  : await prisma.transferRequest.findFirst({ where: { reference: nuvionOutflowId } });
+              if (!transferRequest) {
+                  logger.warn(`No matching TransferRequest for outflows.completed (id=${nuvionOutflowId}, ref=${uniqueReference})`);
+                  break;
+              }
+              if (transferRequest.status !== 'PROCESSING') {
+                  logger.info(`TransferRequest ${transferRequest.id} is "${transferRequest.status}", not PROCESSING — skipping outflows.completed`);
+                  break;
+              }
  
-            if (!newStatus) {
-                logger.warn('transfers.updated webhook — no status field found in payload, check raw payload above for the real field name');
-                break;
-            }
+              // Crypto-sourced payouts never created a VirtualTransaction/
+              // Block on the user side, so there's nothing to complete
+              // there — just mark the TransferRequest COMPLETED directly.
+              if (transferRequest.type === 'CRYPTO') {
+                  await prisma.transferRequest.update({ where: { id: transferRequest.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
+                  await notificationService.queue({
+                      userId: transferRequest.userId, title: 'Transfer complete', type: 'GENERAL',
+                      content: `Your ${transferRequest.currencyId} ${transferRequest.amount} transfer has been delivered successfully.`,
+                  });
+                  logger.info(`TransferRequest ${transferRequest.id} (crypto-sourced) completed via outflows.completed webhook`);
+                  break;
+              }
  
-            const statusMap: Record<string, string> = {
-                pending: 'PENDING',
-                processing: 'PROCESSING',
-                completed: 'COMPLETED',
-                failed: 'FAILED',
-                reversed: 'FAILED', // TODO: consider a real REVERSED status if this distinction matters for reporting/support
-            };
-            const mappedStatus = statusMap[newStatus] ?? newStatus;
+              const transaction = await prisma.virtualTransaction.findFirst({ where: { reference: transferRequest.idempotencyKey } });
+              if (!transaction || !transaction.blockId) {
+                  logger.error(`[NUVION OUTFLOW — MANUAL ACTION NEEDED] TransferRequest ${transferRequest.id} has no matching VirtualTransaction/Block`);
+                  break;
+              }
  
-            await prisma.transferRequest.update({
-                where: { id: transferRequest.id },
-                data: {
-                    status: mappedStatus,
-                    ...(mappedStatus === 'COMPLETED' && { completedAt: new Date() }),
-                    ...(mappedStatus === 'FAILED' && { failedAt: new Date(), errorMessage: data?.status_reason ?? undefined }),
-                },
-            });
+              await virtualAccountService.completeBankWithdrawal({ transactionId: transaction.id, blockId: transaction.blockId, externalRef: nuvionOutflowId });
+              await prisma.transferRequest.update({ where: { id: transferRequest.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
  
-            logger.info(`TransferRequest ${transferRequest.id} updated to ${mappedStatus} via transfers.updated webhook`, { nuvionStatus: newStatus });
+              const completedAccount = await prisma.virtualAccount.findUnique({ where: { id: transaction.fromAccountId! } });
+              if (completedAccount) {
+                  await notificationService.queue({
+                      userId: completedAccount.userId, title: 'Transfer complete', type: 'GENERAL',
+                      content: `Your ${transferRequest.currencyId} ${transferRequest.amount} transfer has been delivered successfully.`,
+                  });
+              }
+              logger.info(`TransferRequest ${transferRequest.id} completed via outflows.completed webhook`);
+              break;
+          }
  
-            if (newStatus === 'reversed') {
-                logger.error(`[NUVION REVERSAL — MANUAL ACTION NEEDED] TransferRequest ${transferRequest.id} was reversed by Nuvion. The original VirtualAccount debit has NOT been automatically reversed — needs manual reconciliation until this payload shape is confirmed and automated handling is built.`);
-            }
-            break;
-        }
+          case 'outflows.failed':
+          case 'outflows.cancelled':
+          case 'outflows.refunded': {
+              const nuvionOutflowId = data?.id;
+              const uniqueReference = data?.unique_reference;
+              const statusReason = data?.status_reason;
+              if (!uniqueReference && !nuvionOutflowId) {
+                  logger.warn(`${eventType} — could not identify the transfer, check raw payload above`);
+                  break;
+              }
+              const transferRequest = uniqueReference
+                  ? await prisma.transferRequest.findUnique({ where: { idempotencyKey: uniqueReference } })
+                  : await prisma.transferRequest.findFirst({ where: { reference: nuvionOutflowId } });
+              if (!transferRequest) {
+                  logger.warn(`No matching TransferRequest for ${eventType} (id=${nuvionOutflowId}, ref=${uniqueReference})`);
+                  break;
+              }
+              if (transferRequest.status !== 'PROCESSING') {
+                  logger.info(`TransferRequest ${transferRequest.id} is "${transferRequest.status}", not PROCESSING — skipping ${eventType}`);
+                  break;
+              }
  
-        // CONFIRMED real shape from live payload.
-        case 'accounts.created': {
-            const account = data?.account;
-            if (!account?.id) {
-                logger.warn('accounts.created webhook — no account.id in payload, check raw payload above');
-                break;
-            }
+              // Crypto-sourced — no VirtualAccount/Block to reverse
+              // (nothing was ever debited from the user at this point).
+              // Just restore treasury float and mark failed.
+              if (transferRequest.type === 'CRYPTO') {
+                  const treasury = await prisma.nuvionTreasuryAccount.findFirst({ where: { currency: transferRequest.currencyId! } });
+                  if (treasury) {
+                      await prisma.nuvionTreasuryAccount.update({
+                          where: { id: treasury.id },
+                          data: { lastKnownAvailable: { increment: transferRequest.amount } as any },
+                      });
+                  }
+                  await prisma.transferRequest.update({
+                      where: { id: transferRequest.id },
+                      data: { status: 'FAILED', errorMessage: statusReason ?? eventType, failedAt: new Date() },
+                  });
+                  await notificationService.queue({
+                      userId: transferRequest.userId, title: 'Transfer unsuccessful', type: 'GENERAL',
+                      content: `Your transfer could not be completed. No funds were debited.`,
+                  });
+                  logger.info(`TransferRequest ${transferRequest.id} (crypto-sourced) failed via ${eventType} webhook`);
+                  break;
+              }
  
-            const existing = await prisma.nuvionTreasuryAccount.findUnique({
-                where: { nuvionAccountId: account.id },
-            });
+              const transaction = await prisma.virtualTransaction.findFirst({ where: { reference: transferRequest.idempotencyKey } });
+              if (!transaction || !transaction.blockId) {
+                  logger.error(`[NUVION OUTFLOW — MANUAL ACTION NEEDED] TransferRequest ${transferRequest.id} has no matching VirtualTransaction/Block`);
+                  break;
+              }
  
-            if (!existing) {
-                await prisma.nuvionTreasuryAccount.create({
-                    data: {
-                        currency: account.currency,
-                        nuvionAccountId: account.id,
-                        accountType: account.type,
-                        displayName: account.display_name,
-                        lastKnownAvailable: account.balance?.available ?? 0,
-                        lastSyncedAt: new Date(),
-                    },
-                });
-                logger.info(`Registered new Nuvion account ${account.id} (${account.currency}) via webhook`);
-            }
-            break;
-        }
+              const failed = await virtualAccountService.failBankWithdrawal({ transactionId: transaction.id, blockId: transaction.blockId, reason: statusReason ?? `Nuvion reported ${eventType}` });
+              await prisma.transferRequest.update({
+                  where: { id: transferRequest.id },
+                  data: { status: 'FAILED', errorMessage: statusReason ?? eventType, failedAt: new Date() },
+              });
  
-        // CONFIRMED real shape from live payload.
-        case 'account_details.created': {
-            const accountDetails = data?.account_details;
-            if (!accountDetails?.id) {
-                logger.warn('account_details.created webhook — no account_details.id in payload, check raw payload above');
-                break;
-            }
+              const failedAccount = await prisma.virtualAccount.findUnique({ where: { id: failed.fromAccountId! } });
+              if (failedAccount) {
+                  await notificationService.queue({
+                      userId: failedAccount.userId, title: 'Transfer unsuccessful', type: 'GENERAL',
+                      content: `Your ${failed.currency} ${failed.amount} transfer could not be completed. The funds have been returned to your balance.`,
+                  });
+              }
+              logger.info(`TransferRequest ${transferRequest.id} failed via ${eventType} webhook — funds released`);
+              break;
+          }
  
-            logger.info('account_details.created received', {
-                accountDetailsId: accountDetails.id,
-                accountId: accountDetails.account_id,
-                accountNumber: accountDetails.account_number,
-                currency: accountDetails.currency,
-                status: accountDetails.status,
-                inflowAllowedCounterparties: accountDetails.config?.inflow_allowed_counterparties,
-            });
-            break;
-        }
+          // ── Genuinely unknown event families — logged only ─────────
+          // accounts.updated / accounts.deleted / account_details.deleted
+          // inflows.completed / inflows.failed (Feature A — still blocked)
+          // funding_sessions.updated
+          // payment_intent.completed / failed / cancelled
+          // payment_dispute.created / completed
+          // payment_refund.completed / failed
  
-        default:
-          logger.info(`Nuvion webhook event "${eventType}" received but not yet handled`, { body: rawBody });
-    }
+          default:
+              logger.info(`Nuvion webhook event "${eventType}" received but not yet handled`, { body });
+      }
   }
+ 
 
   async handleDiditEvent(jobData: { body: any }) {
     const { body } = jobData;
@@ -2660,7 +2765,17 @@ class eventService {
     });
  
     logger.info(`User ${user.id} upgraded to kycTier 2 via Didit session ${session_id}`);
-}
+
+    // NEW — approval notification
+    await notificationService.queue({
+      userId: user.id,
+      title: "You're now Tier 2 verified",
+      type: 'GENERAL',
+      content: 'Your identity verification is complete — you now have access to higher trading limits.',
+    });
+
+
+  }
  
 
 

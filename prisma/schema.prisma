@@ -630,16 +630,45 @@ model beneficiary {
   userData  User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
 
-  nuvionCounterpartyId  String?
-  nuvionPaymentDetailId String?
-  nuvionRecipientCountry String? // cached after first collection — see nuvionPayout.service.ts
+  nuvionCounterpartyId   String? // ONE per beneficiary — this is genuinely per-PERSON, not per-payment-method
+  nuvionRecipientCountry String?
   nuvionRecipientEmail   String?
-
   nuvionRecipientAddressLine1  String?
   nuvionRecipientAddressCity   String?
   nuvionRecipientAddressState  String?
   nuvionRecipientAddressPostal String?
+ 
+  paymentDetails BeneficiaryPaymentDetail[] // NEW
   
+}
+
+model BeneficiaryPaymentDetail {
+  id            String      @id @default(cuid())
+  beneficiaryId String
+  beneficiary   beneficiary @relation(fields: [beneficiaryId], references: [id])
+ 
+  currency String  // e.g. "NGN", "GBP", "USD" — this IS the payout's toCurrency once selected, no separate input needed
+  label    String? // optional user-facing label, e.g. "Main GTBank account", "US checking" — helps distinguish multiple accounts in the same currency
+ 
+  accountNumber  String
+  accountName    String? // usually matches the beneficiary's own name, but allows override (e.g. a joint account under a different name)
+  bankName       String?
+  bankCode       String?
+  swiftCode      String?
+  iban           String?
+  routingNumber  String?
+  sortCode       String?
+ 
+  // nuvionPaymentDetailId now lives HERE, not on beneficiary — moved
+  // down since each payment-detail record is its own distinct Nuvion
+  // object, potentially in a different currency/rail than any other
+  // payment method the same beneficiary has.
+  nuvionPaymentDetailId String?
+ 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+ 
+  @@index([beneficiaryId])
 }
 
 model TransferRequest {
@@ -678,23 +707,28 @@ model TransferRequest {
   nuvionFxQuoteId String?
   nuvionFxRate    Decimal? @db.Decimal(20, 8)
 
+  beneficiaryId              String?
+  beneficiaryPaymentDetailId String?
+
   @@index([userId, createdAt])
   @@index([status])
 }
 
 model NuvionTreasuryAccount {
   id              String   @id @default(cuid())
-  currency        String   // ISO 4217, or 'USC'/'UST' for USDC/USDT
+  currency        String
   nuvionAccountId String   @unique
-  accountType     String   // checking | operational | safeguard — see note below
+  accountType     String
   displayName     String?
+  chain           String?  // 'eth' | 'base' | 'matic' | 'sol' — null for fiat accounts. One account per chain, matching the real "Master-{Chain}" naming pattern already in use.
  
-  // Cached for quick display only — NEVER trust this as the source of
-  // truth for whether a payout can actually proceed. Always re-fetch the
-  // real balance via getAccount() immediately before debiting, the same
-  // "re-check real state, don't trust a cached webhook-driven value"
-  // discipline already used for Contro's program-KYC status.
-  lastKnownAvailable Decimal? @db.Decimal(20, 8)
+  // Wallet fields — one wallet per account in practice, so folded in
+  // directly rather than a separate child table.
+  walletAddress          String?
+  nuvionAccountDetailsId String? @unique
+  walletStatus            String? // 'pending' | 'active'
+ 
+  lastKnownAvailable Decimal?  @db.Decimal(20, 8)
   lastSyncedAt       DateTime?
  
   isActive  Boolean  @default(true)
@@ -702,6 +736,7 @@ model NuvionTreasuryAccount {
   updatedAt DateTime @updatedAt
  
   @@index([currency])
+  @@index([chain])
 }
 
 model fiatAccount {

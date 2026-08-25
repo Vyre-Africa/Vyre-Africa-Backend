@@ -13,6 +13,7 @@ import prisma from '../config/prisma.client';
 import sweepService from '../services/sweep.service';
 import walletpoolService from '../services/walletpool.service';
 import { syncRampOrders } from '../services/rampOrderSync.service';
+import { processNuvionPayoutJob, handleTreasuryReplenishment } from '../services/nuvionpayout.service';
 import logger from '../config/logger';
 
 // const SWEEP_CHAINS = ['ETH', 'MATIC', 'BSC', 'BASE', 'ARB', 'OPTIMISM', 'TRON']
@@ -94,6 +95,12 @@ export function startGeneralWorker() {
 
                     case 'Nuvion_Event':
                         return await eventService.handleNuvionEvent(job.data);
+
+                    case 'Nuvion_Payout_Process':
+                        return await processNuvionPayoutJob(job.data);
+                    
+                    case 'Nuvion_Treasury_Replenish':
+                        return await handleTreasuryReplenishment(job.data);
 
                     case 'Didit_Event':
                         return await eventService.handleDiditEvent(job.data);

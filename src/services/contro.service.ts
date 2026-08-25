@@ -341,3 +341,20 @@ export function verifyControWebhookSignature(rawBody: string, signatureHeader: s
         return false;
     }
 }
+
+export async function revealHtml(cardId: string, options?: { stylesheetUrl?: string; copyPan?: boolean }) {
+    try {
+        const res = await controAxios.post(`/partner/cards/${cardId}/reveal-html`, {
+            stylesheetUrl: options?.stylesheetUrl,
+            copyPan: options?.copyPan ?? true,
+        });
+        // CONFIRMED flat response shape from Contro's docs: { accessUrl: "..." }
+        // — Contro's responses are flat throughout (unlike Nuvion's nested
+        // { data: {...} } wrapper), consistent with every other Contro
+        // function in this file.
+        return { success: true, accessUrl: res.data.accessUrl, rawData: res.data };
+    } catch (error: any) {
+        const { error: msg, rawData } = handleControError('revealHtml', error);
+        return { success: false, error: msg, rawData };
+    }
+}
