@@ -307,7 +307,7 @@ class UserValidator {
 
     verifyAccountDetail() {
         return [
-            body('bankId').notEmpty().withMessage('bank ID is required'),
+            // body('bankId').notEmpty().withMessage('bank ID is required'),
             body('accountNumber').notEmpty().withMessage('account number is required').isString(),
         ];
     }
