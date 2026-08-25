@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
 import logger from '../config/logger';
-import { initiateNuvionPayout } from './../services/nuvionpayout.service';
+import { initiateNuvionPayout, blockNuvionPayout, blockCryptoPayout } from './../services/nuvionpayout.service';
 import { generalQueue } from '../workers/general.worker';
 
 class NuvionController {
@@ -254,45 +254,123 @@ class NuvionController {
         }
     }
 
-    async initiatePayout(req: Request & Record<string, any>, res: Response) {
-        const { user } = req; // adjust to however this codebase's auth middleware actually attaches the authenticated user
-        try {
-            const { beneficiaryId, fromCurrency, toCurrency, amount, narration, recipientCountry, recipientEmail, recipientAddress } = req.body;
  
-            if (!beneficiaryId || !fromCurrency || !toCurrency || !amount || !narration) {
+    // POST /payouts/nuvion — fiat-sourced. PIN enforced via
+    // requireTransactionPin middleware at the route level.
+    async initiatePayout(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        try {
+            const { beneficiaryId, paymentDetailId, fromCurrency, amount, narration } = req.body;
+ 
+            if (!beneficiaryId || !paymentDetailId || !fromCurrency || !amount || !narration) {
                 return res.status(400).json({
                     success: false,
-                    msg: 'beneficiaryId, fromCurrency, toCurrency, amount, and narration are required',
+                    msg: 'beneficiaryId, paymentDetailId, fromCurrency, amount, and narration are required',
                 });
             }
  
-            const result = await initiateNuvionPayout({
-                userId: user.id,
-                beneficiaryId,
-                fromCurrency,
-                toCurrency,
-                amount,
-                narration,
-                recipientCountry,
-                recipientEmail,
-                recipientAddress
+            const treasury = await prisma.nuvionTreasuryAccount.findFirst({ where: { currency: fromCurrency, isActive: true } });
+            if (!treasury) {
+                return res.status(400).json({ success: false, msg: `Payouts in ${fromCurrency} are not available yet` });
+            }
+ 
+            const { transferRequestId } = await blockNuvionPayout({
+                userId: user.id, beneficiaryId, paymentDetailId, fromCurrency, amount, narration,
             });
+ 
+            return res.status(200).json({ success: true, msg: 'Payout is being processed', transferRequestId, status: 'PENDING' });
+        } catch (error: any) {
+            logger.error('Nuvion payout initiation failed:', error);
+            return res.status(422).json({ success: false, msg: error.message ?? 'Payout failed' });
+        }
+    }
+
+    // POST /payouts/nuvion/crypto — crypto-sourced, float-funded. Takes
+    // cryptoCurrencyId only — chain is derived internally, never passed
+    // from the frontend.
+    async initiateCryptoPayout(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        try {
+            const { beneficiaryId, paymentDetailId, cryptoCurrencyId, amount, narration } = req.body;
+ 
+            if (!beneficiaryId || !paymentDetailId || !cryptoCurrencyId || !amount || !narration) {
+                return res.status(400).json({
+                    success: false,
+                    msg: 'beneficiaryId, paymentDetailId, cryptoCurrencyId, amount, and narration are required',
+                });
+            }
+ 
+            const { transferRequestId } = await blockCryptoPayout({
+                userId: user.id, beneficiaryId, paymentDetailId, cryptoCurrencyId, amount, narration,
+            });
+ 
+            return res.status(200).json({ success: true, msg: 'Payout is being processed', transferRequestId, status: 'PENDING' });
+        } catch (error: any) {
+            logger.error('Nuvion crypto payout initiation failed:', error);
+            return res.status(422).json({ success: false, msg: error.message ?? 'Payout failed' });
+        }
+    }
+
+    // GET /payouts/nuvion/:id
+    async getPayoutStatus(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        const { id } = req.params;
+        try {
+            const transferRequest = await prisma.transferRequest.findUnique({ where: { id } });
+            if (!transferRequest || transferRequest.userId !== user.id) {
+                return res.status(404).json({ success: false, msg: 'Transfer not found' });
+            }
  
             return res.status(200).json({
                 success: true,
-                msg: 'Payout initiated',
-                transferRequestId: result.transferRequestId,
-                nuvionTransferId: result.nuvionTransferId,
+                status: transferRequest.status,
+                amount: transferRequest.amount,
+                currency: transferRequest.currencyId,
+                reference: transferRequest.reference,
+                errorMessage: transferRequest.errorMessage,
+                createdAt: transferRequest.createdAt,
+                completedAt: transferRequest.completedAt,
+                failedAt: transferRequest.failedAt,
             });
- 
         } catch (error: any) {
-            logger.error('Nuvion payout initiation failed:', error);
-            return res.status(422).json({
-                success: false,
-                msg: error.message ?? 'Payout failed',
-            });
+            logger.error('Failed to get Nuvion payout status:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
         }
     }
+ 
+    // GET /payouts/nuvion
+    async listPayouts(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        try {
+            const transferRequests = await prisma.transferRequest.findMany({
+                where: { userId: user.id, type: { in: ['BANK', 'CRYPTO'] } },
+                orderBy: { createdAt: 'desc' },
+                take: 50,
+            });
+ 
+            return res.status(200).json({ success: true, transfers: transferRequests });
+        } catch (error: any) {
+            logger.error('Failed to list Nuvion payouts:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+
+    // GET /payouts/nuvion/supported-currencies
+    async getSupportedCurrencies(req: Request & Record<string, any>, res: Response) {
+        try {
+            const treasuries = await prisma.nuvionTreasuryAccount.findMany({
+                where: { isActive: true },
+                select: { currency: true },
+                distinct: ['currency'],
+            });
+ 
+            return res.status(200).json({ success: true, currencies: treasuries.map((t) => t.currency) });
+        } catch (error: any) {
+            logger.error('Failed to get supported currencies:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+    
 
 }
 

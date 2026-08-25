@@ -2,9 +2,10 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import logger from '../config/logger';
-import { verifyControWebhookSignature } from '../services/contro.service';
-import { handleKycSessionCompleted, checkProgramKycAndNotify } from '../services/controOnboarding.service';
+import { verifyControWebhookSignature, issueCard, activateCard, revealHtml } from '../services/contro.service';
+import { handleKycSessionCompleted, startCardKyc, checkProgramKycAndNotify } from '../services/controOnboarding.service';
 import notificationService from '../services/notification.service';
+import ablyService from '../services/ably.service';
 
 class ControController {
 
@@ -204,6 +205,8 @@ class ControController {
                         type: 'GENERAL',
                         content: 'We were unable to verify your identity for card issuance. Please contact support or try again.',
                     });
+
+                    await ablyService.notifyCardKycUpdate(user.id, 'rejected');
                 
                     logger.info(`Rejection notification queued for user ${user.id}`);
                     break;
@@ -275,6 +278,193 @@ class ControController {
             return res.status(500).json({ error: 'Internal Server Error' });
         }
     }
+
+    async startCardOnboarding(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        try {
+            if (user.controCardholderId) {
+                return res.status(200).json({
+                    success: true,
+                    msg: 'You already have a Contro cardholder — no new KYC session needed',
+                    alreadyOnboarded: true,
+                });
+            }
+ 
+            const result = await startCardKyc(user.id);
+ 
+            if (!result.success) {
+                return res.status(422).json({ success: false, msg: result.error });
+            }
+ 
+            return res.status(200).json({
+                success: true,
+                msg: result.skippedToDirectCreation
+                    ? 'Verification reused — no new session needed'
+                    : 'KYC session created',
+                sessionUrl: result.sessionUrl,
+                sessionId: result.sessionId,
+                skippedToDirectCreation: result.skippedToDirectCreation ?? false,
+            });
+ 
+        } catch (error: any) {
+            logger.error('Failed to start Contro card onboarding:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+ 
+    // GET /cards/contro/status
+    // Lets the frontend check where a user currently sits in the
+    // pipeline — KYC session pending, cardholder created, program KYC
+    // pending/approved/rejected, card issued/active.
+    async getCardStatus(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        try {
+            const fresh = await prisma.user.findUnique({
+                where: { id: user.id },
+                select: {
+                    controCardholderId: true,
+                    controKycStatus: true,
+                    controProgramKycStatus: true,
+                    controCards: {
+                        select: { id: true, controCardId: true, status: true, last4: true, brand: true, createdAt: true },
+                        orderBy: { createdAt: 'desc' },
+                        take: 1,
+                    },
+                },
+            });
+ 
+            if (!fresh) {
+                return res.status(404).json({ success: false, msg: 'User not found' });
+            }
+ 
+            // If a cardholder exists but program KYC isn't confirmed
+            // approved yet, re-check real state rather than trust
+            // whatever's cached — same "webhook is a trigger, not a
+            // trusted source" discipline used throughout this
+            // integration. Cheap enough to do on every status check.
+            if (fresh.controCardholderId && fresh.controProgramKycStatus !== 'approved') {
+                await checkProgramKycAndNotify(user.id);
+                const refreshed = await prisma.user.findUnique({
+                    where: { id: user.id },
+                    select: { controProgramKycStatus: true },
+                });
+                fresh.controProgramKycStatus = refreshed?.controProgramKycStatus ?? fresh.controProgramKycStatus;
+            }
+ 
+            return res.status(200).json({
+                success: true,
+                hasCardholder: !!fresh.controCardholderId,
+                kycStatus: fresh.controKycStatus,
+                programKycStatus: fresh.controProgramKycStatus,
+                readyToIssueCard: fresh.controProgramKycStatus === 'approved' && fresh.controCards.length === 0,
+                card: fresh.controCards[0] ?? null,
+            });
+ 
+        } catch (error: any) {
+            logger.error('Failed to get Contro card status:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+
+    async issueCard(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        try {
+            const fresh = await prisma.user.findUnique({
+                where: { id: user.id },
+                select: { controCardholderId: true, controProgramKycStatus: true, controCards: { select: { id: true } } },
+            });
+    
+            if (!fresh?.controCardholderId) {
+                return res.status(400).json({ success: false, msg: 'No cardholder found — complete verification first' });
+            }
+            if (fresh.controProgramKycStatus !== 'approved') {
+                return res.status(400).json({ success: false, msg: 'Program KYC not yet approved' });
+            }
+            if (fresh.controCards.length > 0) {
+                return res.status(200).json({ success: true, msg: 'Card already issued', alreadyIssued: true });
+            }
+    
+            const programId = process.env.CONTRO_CARD_PROGRAM_ID as string;
+            const idempotencyKey = `issue_card_${user.id}`; // stable/deterministic — confirmed supported specifically to prevent double-issuance on retry
+    
+            const card = await issueCard({
+                cardholderId: fresh.controCardholderId,
+                programId,
+                idempotencyKey,
+            });
+    
+            if (!card.success || !card.id) {
+                logger.error(`Card issuance failed for user ${user.id}`, { error: card.error });
+                return res.status(422).json({ success: false, msg: card.error ?? 'Card issuance failed' });
+            }
+    
+            // Activation is a real, separate, required step — confirmed via
+            // live testing earlier this session, cards start in "created"/
+            // "pending", never usable until this call succeeds.
+            const activation = await activateCard(card.id);
+            if (!activation.success) {
+                logger.error(`Card activation failed for user ${user.id}, card ${card.id}`, { error: activation.error });
+                // Card DOES exist on Contro's side at this point even though
+                // activation failed — record it as-is rather than losing
+                // track of it, status will just reflect whatever Contro
+                // reports until a retry/webhook resolves it.
+            }
+    
+            await prisma.controCard.create({
+                data: {
+                    userId: user.id,
+                    controCardId: card.id,
+                    programId,
+                    status: card.status ?? 'created',
+                    type: (card as any).type,
+                    brand: (card as any).brand,
+                    last4: (card as any).last4,
+                },
+            });
+    
+            logger.info(`Card issued for user ${user.id}`, { cardId: card.id });
+            return res.status(200).json({ success: true, msg: 'Card issued', cardId: card.id });
+    
+        } catch (error: any) {
+            logger.error('Card issuance error:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+    
+    // POST /cards/contro/reveal
+    // CONFIRMED from Contro's docs: single-use, 60-second-expiry signed URL.
+    // Generate a fresh one every time the user opens the reveal UI — never
+    // cache/reuse.
+    async revealCard(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        try {
+            const card = await prisma.controCard.findFirst({
+                where: { userId: user.id },
+                orderBy: { createdAt: 'desc' },
+            });
+    
+            if (!card) {
+                return res.status(404).json({ success: false, msg: 'No card found' });
+            }
+    
+            const reveal = await revealHtml(card.controCardId, {
+                copyPan: true,
+            });
+    
+            if (!reveal.success || !(reveal as any).accessUrl) {
+                return res.status(422).json({ success: false, msg: reveal.error ?? 'Failed to generate reveal URL' });
+            }
+    
+            return res.status(200).json({ success: true, accessUrl: (reveal as any).accessUrl });
+    
+        } catch (error: any) {
+            logger.error('Card reveal error:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+
+
+
 }
 
 export default new ControController();

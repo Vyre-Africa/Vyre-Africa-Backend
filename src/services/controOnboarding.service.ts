@@ -25,6 +25,7 @@ import {
 } from './contro.service';
 import notificationService from './notification.service';
 import { mintDiditShareToken } from './didit.service';
+import ablyService from './ably.service';
 
 const CARD_PROGRAM_ID = process.env.CONTRO_CARD_PROGRAM_ID as string;
 
@@ -246,6 +247,9 @@ export async function checkProgramKycAndNotify(userId: string): Promise<{ succes
         where: { id: userId },
         data: { controCardApprovalEmailSentAt: new Date() },
     });
+
+    // CORRECTED — uses the real, existing AblyService singleton
+    await ablyService.notifyCardKycUpdate(userId, 'approved');
 
     logger.info(`Approval email queued for user ${userId}`);
     return { success: true, approved: true };
