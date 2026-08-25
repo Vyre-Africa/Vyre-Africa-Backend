@@ -1429,41 +1429,42 @@ class UserController {
     }
 
     async verifyAccountDetail(req: Request & Record<string, any>, res: Response) {
-        const { bankId, accountNumber } = req.body
-        const user = req.user
-
-        console.log(req.body)
-
-        const bank = await prisma.bank.findUnique({
-            where: { id: bankId }
-        });
-
-        console.log(bank)
-
-        if (!bank) {
-            return res.status(400).json({
-                msg: 'bank not found',
-                success: false,
-            });
+        const { bankId, bankCode, accountNumber } = req.body;
+        const user = req.user;
+    
+        if (!bankId && !bankCode) {
+            return res.status(400).json({ msg: 'bankId or bankCode is required', success: false });
         }
-
-        const verifyDetails = await flutterwaveService.resolveAccount(bank.code, accountNumber)
-
-        console.log(verifyDetails)
-
+    
+        let resolvedBankCode: string;
+    
+        if (bankCode) {
+            // NEW — direct path. Used by the global-payout flow, where the
+            // bank was already selected from Nuvion's own bank-codes list —
+            // no local Bank table lookup needed at all.
+            resolvedBankCode = bankCode;
+        } else {
+            // UNCHANGED — existing path for callers using Vyre's own local
+            // Bank table (e.g. the domestic transfer flow).
+            const bank = await prisma.bank.findUnique({ where: { id: bankId } });
+            if (!bank) {
+                return res.status(400).json({ msg: 'bank not found', success: false });
+            }
+            resolvedBankCode = bank.code;
+        }
+    
+        const verifyDetails = await flutterwaveService.resolveAccount(resolvedBankCode, accountNumber);
+    
         if (verifyDetails?.status !== 'success') {
-            return res.status(400).json({
-                msg: 'wrong account details',
-                success: false,
-            });
+            return res.status(400).json({ msg: 'wrong account details', success: false });
         }
-
+    
         return res.status(201).json({
             msg: 'Bank Account verified successfully',
             success: true,
             data: {
                 accountNumber: verifyDetails.data?.account_number,
-                accountName: verifyDetails.data?.account_name
+                accountName: verifyDetails.data?.account_name,
             },
         });
     }
