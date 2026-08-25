@@ -884,6 +884,13 @@ router.get(
   nuvionController.getSupportedCurrencies
 );
 
+router.get(
+  '/beneficiaries/bank-codes/:country', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  beneficiaryController.getBankCodesForCountry
+);
+
 router.post(
   '/beneficiaries',
   requireAuthWithCORS(),                                          

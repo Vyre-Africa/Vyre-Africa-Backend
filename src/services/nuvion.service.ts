@@ -24,6 +24,24 @@ function handleNuvionError(context: string, error: any) {
 
 const VYRE_ENTITY_ID = config.NUVION_ENTITY_ID as string;
 
+// --------- Banks-------------//
+export interface BankCodeResult {
+    success: boolean;
+    banks?: { bank_code: string; bank_name: string; swift_bic: string | null }[];
+    error?: string; httpStatus?: number; rawData?: any;
+}
+ 
+export async function getBankCodes(country: string): Promise<BankCodeResult> {
+    try {
+        const res = await nuvionApi.get(`/bank-codes/${country}`);
+        // CONFIRMED response shape from Nuvion's docs — flat array under data
+        return { success: true, banks: res.data.data, rawData: res.data };
+    } catch (error: any) {
+        const { error: msg, httpStatus, rawData } = handleNuvionError('getBankCodes', error);
+        return { success: false, error: msg, httpStatus, rawData };
+    }
+}
+
 // ─── Counterparties ─────────────────────────────────────────────────────
 
 export interface CounterpartyResult {
