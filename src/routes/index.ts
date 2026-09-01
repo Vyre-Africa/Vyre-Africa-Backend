@@ -848,6 +848,13 @@ router.post(
 );
 
 router.post(
+  '/cards/contro/:cardId/reveal', 
+  requireAuthWithCORS(), 
+  authMiddleware, 
+  controController.revealCard
+);
+
+router.post(
   '/payouts/nuvion',  
   requireAuthWithCORS(),    
   authMiddleware, 

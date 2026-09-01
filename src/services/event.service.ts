@@ -2708,15 +2708,15 @@ class eventService {
   async handleDiditEvent(jobData: { body: any }) {
     const { body } = jobData;
     const { session_id, status, vendor_data, decision } = body;
- 
+
     logger.info('Processing Didit event (async)', { session_id, status, vendor_data });
     logger.info('Didit webhook raw payload', { body });
- 
+
     if (!vendor_data) {
         logger.warn('Didit webhook has no vendor_data — cannot identify which Vyre user this belongs to', { session_id });
         return;
     }
- 
+
     const user = await prisma.user.findUnique({ where: { id: vendor_data } });
     if (!user) {
         logger.warn(`No Vyre user found for Didit vendor_data ${vendor_data}`);
@@ -2734,12 +2734,12 @@ class eventService {
             resolvedAt: ['Approved', 'Declined'].includes(status) ? new Date() : null,
         },
     });
- 
+
     await prisma.user.update({
         where: { id: user.id },
         data: { diditSessionId: session_id, diditKycStatus: status },
     });
- 
+
     // CONFIRMED real status vocabulary: Not Started | In Progress |
     // Approved | Declined | In Review | Abandoned | Expired | Kyc Expired.
     // Only "Approved" should ever set the existing kycTier gate.
@@ -2747,31 +2747,40 @@ class eventService {
         logger.info(`Didit session ${session_id} status "${status}" — not upgrading kycTier`);
         return;
     }
- 
+
     // CONFIRMED plural-array decision structure — id_verifications[0],
     // never a singular id_verification key.
     const idVerification = decision?.id_verifications?.[0];
- 
+
     await prisma.user.update({
         where: { id: user.id },
         data: {
-            kycTier: 2,
-            kycTier2At: new Date(),
+            kycTier: 3, // CHANGED — was 2. This same Didit workflow now
+                        // includes address verification (added specifically
+                        // to satisfy Contro's cardholder residence-address
+                        // requirement), which meets Tier 3's real
+                        // requirement of enhanced due diligence in the same
+                        // pass — no separate Tier 3 step needed.
+            kycTier2At: new Date(), // still set — the user genuinely passed
+                                     // through Tier 2's requirements too,
+                                     // just in the same session rather than
+                                     // a separate one
+            kycTier3At: new Date(), // NEW
             legalFirstName: idVerification?.first_name ?? user.legalFirstName,
             legalLastName: idVerification?.last_name ?? user.legalLastName,
             legalNameVerifiedAt: new Date(),
             dojahLivenessRef: `didit_${session_id}`, // legacy field name, reused deliberately — same concept, different engine
         },
     });
- 
-    logger.info(`User ${user.id} upgraded to kycTier 2 via Didit session ${session_id}`);
 
-    // NEW — approval notification
+    logger.info(`User ${user.id} upgraded to kycTier 3 via Didit session ${session_id} (address verification included)`);
+
+    // UPDATED — approval notification now reflects the real tier granted
     await notificationService.queue({
       userId: user.id,
-      title: "You're now Tier 2 verified",
+      title: "You're now fully verified",
       type: 'GENERAL',
-      content: 'Your identity verification is complete — you now have access to higher trading limits.',
+      content: 'Your identity verification is complete — you now have unlimited trading volume.',
     });
 
 

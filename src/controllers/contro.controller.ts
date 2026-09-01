@@ -2,10 +2,17 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
 import config from '../config/env.config';
 import logger from '../config/logger';
-import { verifyControWebhookSignature, issueCard, activateCard, revealHtml } from '../services/contro.service';
+import { verifyControWebhookSignature, issueCard, activateCard, revealHtml, updateSpendControl } from '../services/contro.service';
 import { handleKycSessionCompleted, startCardKyc, checkProgramKycAndNotify } from '../services/controOnboarding.service';
 import notificationService from '../services/notification.service';
 import ablyService from '../services/ably.service';
+import walletService from '../services/wallet.service';
+import { Decimal } from 'decimal.js';
+
+
+function toDecimal(value: number | string | Decimal): Decimal {
+    return new Decimal(value.toString());
+}
 
 class ControController {
 
@@ -212,30 +219,76 @@ class ControController {
                     break;
                 }
             
-                case 'card.issued':
+                case 'card.issued': {
+                // CONFIRMED: this event carries no status field at all —
+                // its firing simply means the card is now active. No
+                // extraction, no fallback guessing needed.
+                const cardId = body?.cardId;
+ 
+                if (!cardId) {
+                    logger.warn('card.issued webhook — no cardId in payload, check raw payload above');
+                    break;
+                }
+ 
+                const card = await prisma.controCard.findUnique({ where: { controCardId: cardId } });
+                if (!card) {
+                    logger.warn(`No local ControCard record for Contro card ${cardId} — was it issued outside our normal flow?`);
+                    break;
+                }
+ 
+                await prisma.controCard.update({
+                    where: { id: card.id },
+                    data: { status: 'active' },
+                });
+ 
+                // Real "your card is ready" confirmation — the actual
+                // point of certainty that issuance + activation both
+                // succeeded on Contro's side. issueCard's HTTP response
+                // fires before that's confirmed.
+                await notificationService.queue({
+                    userId: card.userId,
+                    title: 'Your card is ready',
+                    type: 'GENERAL',
+                    content: 'Your Vyre card has been issued and is ready to use.',
+                });
+ 
+                logger.info(`ControCard ${card.id} confirmed active via card.issued webhook`);
+                break;
+                }
+    
                 case 'card.status.changed': {
+                    // The only case that actually carries newStatus/
+                    // previousStatus — handles every transition AFTER
+                    // initial issuance (frozen, unfrozen, cancelled, etc.).
                     const cardId = body?.cardId;
                     const newStatus = body?.newStatus;
-            
-                    if (!cardId) {
-                        logger.warn(`${resolvedEventType} webhook — no cardId in payload, check raw payload above`);
+                    const previousStatus = body?.previousStatus;
+    
+                    if (!cardId || !newStatus) {
+                        logger.warn('card.status.changed webhook — missing cardId or newStatus, check raw payload above');
                         break;
                     }
-            
+    
                     const card = await prisma.controCard.findUnique({ where: { controCardId: cardId } });
                     if (!card) {
                         logger.warn(`No local ControCard record for Contro card ${cardId} — was it issued outside our normal flow?`);
                         break;
                     }
-            
-                    if (newStatus) {
-                        await prisma.controCard.update({
-                            where: { id: card.id },
-                            data: { status: newStatus },
-                        });
-                        logger.info(`Updated ControCard ${card.id} status`, { previousStatus: body?.previousStatus, newStatus });
-                    } else {
-                        logger.info(`${resolvedEventType} received with no status change info — likely the issuance confirmation itself`, { body });
+    
+                    await prisma.controCard.update({
+                        where: { id: card.id },
+                        data: { status: newStatus },
+                    });
+    
+                    logger.info(`ControCard ${card.id} status changed: ${previousStatus ?? '?'} → ${newStatus}`);
+    
+                    // Still conservative on notifications here — not yet
+                    // confirmed whether Contro fires this for user-initiated
+                    // freezes (via our own /freeze endpoint) too, which would
+                    // risk a duplicate notification alongside whatever that
+                    // endpoint already tells the user directly.
+                    if (newStatus === 'frozen' && previousStatus !== 'frozen') {
+                        logger.info(`Card ${card.id} frozen — TODO: confirm whether Contro fires this for user-initiated freezes too, to avoid duplicate notifications`);
                     }
                     break;
                 }
@@ -326,22 +379,27 @@ class ControController {
                     controKycStatus: true,
                     controProgramKycStatus: true,
                     controCards: {
-                        select: { id: true, controCardId: true, status: true, last4: true, brand: true, createdAt: true },
+                        select: {
+                            id: true,
+                            controCardId: true,
+                            status: true,
+                            last4: true,
+                            brand: true,
+                            createdAt: true,
+                            fundingWalletId: true,
+                            lastSyncedCapUsd: true,
+                            totalSpentUsd: true,
+                        },
                         orderBy: { createdAt: 'desc' },
-                        take: 1,
+                        // NO take: 1 — every card, not just the latest one
                     },
                 },
             });
- 
+
             if (!fresh) {
                 return res.status(404).json({ success: false, msg: 'User not found' });
             }
- 
-            // If a cardholder exists but program KYC isn't confirmed
-            // approved yet, re-check real state rather than trust
-            // whatever's cached — same "webhook is a trigger, not a
-            // trusted source" discipline used throughout this
-            // integration. Cheap enough to do on every status check.
+
             if (fresh.controCardholderId && fresh.controProgramKycStatus !== 'approved') {
                 await checkProgramKycAndNotify(user.id);
                 const refreshed = await prisma.user.findUnique({
@@ -350,16 +408,39 @@ class ControController {
                 });
                 fresh.controProgramKycStatus = refreshed?.controProgramKycStatus ?? fresh.controProgramKycStatus;
             }
- 
+
+            // Resolve funding-currency display info for EVERY card, not
+            // just one — batched to avoid one query per card.
+            const walletIds = [...new Set(fresh.controCards.map(c => c.fundingWalletId))];
+            const wallets = walletIds.length
+                ? await prisma.wallet.findMany({ where: { id: { in: walletIds } }, select: { id: true, currencyId: true } })
+                : [];
+            // const currencyIds = [...new Set(wallets.map(w => w.currencyId))];
+
+            const currencyIds = [...new Set(wallets.map(w => w.currencyId).filter((id): id is string => id !== null))];
+            const currencies = currencyIds.length
+                ? await prisma.currency.findMany({ where: { id: { in: currencyIds } }, select: { id: true, ISO: true, name: true, chain: true, imgUrl: true } })
+                : [];
+
+            const walletToCurrency = new Map(wallets.map(w => [w.id, currencies.find(c => c.id === w.currencyId)]));
+
+            const cards = fresh.controCards.map(c => ({
+                ...c,
+                availableBalance: toDecimal(c.lastSyncedCapUsd ?? 0).minus(toDecimal(c.totalSpentUsd ?? 0)).toString(),
+                fundingCurrency: walletToCurrency.get(c.fundingWalletId) ?? null,
+            }));
+
             return res.status(200).json({
                 success: true,
                 hasCardholder: !!fresh.controCardholderId,
                 kycStatus: fresh.controKycStatus,
                 programKycStatus: fresh.controProgramKycStatus,
-                readyToIssueCard: fresh.controProgramKycStatus === 'approved' && fresh.controCards.length === 0,
-                card: fresh.controCards[0] ?? null,
+                // CHANGED — no longer gated by "no existing cards". Once
+                // KYC is approved, the user can always issue another card.
+                readyToIssueCard: fresh.controProgramKycStatus === 'approved',
+                cards, // CHANGED — array, not a single "card"
             });
- 
+
         } catch (error: any) {
             logger.error('Failed to get Contro card status:', error);
             return res.status(500).json({ success: false, msg: 'Internal Server Error' });
@@ -369,35 +450,57 @@ class ControController {
     async issueCard(req: Request & Record<string, any>, res: Response) {
         const { user } = req;
         try {
+            const { cryptoCurrencyId } = req.body; // NEW — which wallet this card gets permanently tied to for both the issuance fee and every future funding
+ 
+            if (!cryptoCurrencyId) {
+                return res.status(400).json({ success: false, msg: 'cryptoCurrencyId is required to select which wallet funds this card' });
+            }
+ 
             const fresh = await prisma.user.findUnique({
                 where: { id: user.id },
                 select: { controCardholderId: true, controProgramKycStatus: true, controCards: { select: { id: true } } },
             });
-    
+ 
             if (!fresh?.controCardholderId) {
                 return res.status(400).json({ success: false, msg: 'No cardholder found — complete verification first' });
             }
             if (fresh.controProgramKycStatus !== 'approved') {
                 return res.status(400).json({ success: false, msg: 'Program KYC not yet approved' });
             }
-            if (fresh.controCards.length > 0) {
-                return res.status(200).json({ success: true, msg: 'Card already issued', alreadyIssued: true });
+            // if (fresh.controCards.length > 0) {
+            //     return res.status(200).json({ success: true, msg: 'Card already issued', alreadyIssued: true });
+            // }
+ 
+            // NEW — collect the $4 issuance fee BEFORE calling Contro at
+            // all. No point debiting the user if issuance then fails, and
+            // this confirms upfront that the chosen wallet actually has
+            // the funds before we commit to anything with Contro.
+            const CARD_ISSUANCE_FEE_USD = '4';
+            const wallet = await prisma.wallet.findFirst({ where: { userId: user.id, currencyId: cryptoCurrencyId } });
+            if (!wallet || toDecimal(wallet.availableBalance).lt(toDecimal(CARD_ISSUANCE_FEE_USD))) {
+                return res.status(400).json({ success: false, msg: 'Insufficient balance to cover the $4 issuance fee' });
             }
-    
+ 
             const programId = process.env.CONTRO_CARD_PROGRAM_ID as string;
             const idempotencyKey = `issue_card_${user.id}`; // stable/deterministic — confirmed supported specifically to prevent double-issuance on retry
-    
+ 
             const card = await issueCard({
                 cardholderId: fresh.controCardholderId,
                 programId,
                 idempotencyKey,
             });
-    
+ 
             if (!card.success || !card.id) {
                 logger.error(`Card issuance failed for user ${user.id}`, { error: card.error });
+                // The $4 fee has already been collected at this point.
+                // Issuance genuinely failed, so this needs a real refund
+                // path — not built yet, flagging loudly rather than
+                // silently leaving the user out $4 for a card they never
+                // got.
+                logger.error(`[CONTRO FEE REFUND NEEDED] User ${user.id} was charged $4 (${cryptoCurrencyId}) for a card that failed to issue`);
                 return res.status(422).json({ success: false, msg: card.error ?? 'Card issuance failed' });
             }
-    
+ 
             // Activation is a real, separate, required step — confirmed via
             // live testing earlier this session, cards start in "created"/
             // "pending", never usable until this call succeeds.
@@ -409,7 +512,17 @@ class ControController {
                 // track of it, status will just reflect whatever Contro
                 // reports until a retry/webhook resolves it.
             }
-    
+
+            // Deduct issuance Fee
+            // balance is validate in the direct_offchain_Transfer function 
+            await walletService.direct_offchain_Transfer({
+                userId: user.id,
+                receipientId: config.Admin_Id,
+                currencyId: cryptoCurrencyId,
+                amount: CARD_ISSUANCE_FEE_USD,
+                narration: 'Card issuance fee'
+            });
+ 
             await prisma.controCard.create({
                 data: {
                     userId: user.id,
@@ -419,14 +532,78 @@ class ControController {
                     type: (card as any).type,
                     brand: (card as any).brand,
                     last4: (card as any).last4,
+                    fundingWalletId: wallet.id, // NEW — permanently binds this card to the wallet chosen above
+                    lastSyncedCapUsd: 0, // NEW — starts at zero; card can't spend anything until funded
                 },
             });
-    
-            logger.info(`Card issued for user ${user.id}`, { cardId: card.id });
+ 
+            logger.info(`Card issued for user ${user.id}`, { cardId: card.id, fundingCurrencyId: cryptoCurrencyId });
             return res.status(200).json({ success: true, msg: 'Card issued', cardId: card.id });
-    
+ 
         } catch (error: any) {
             logger.error('Card issuance error:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+
+    async fundCard(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        const { cardId } = req.params;
+        try {
+            const { amount, pin } = req.body;
+
+            if (!amount) {
+                return res.status(400).json({ success: false, msg: 'amount is required' });
+            }
+
+            const card = await prisma.controCard.findUnique({ where: { id: cardId } });
+            if (!card || card.userId !== user.id) {
+                return res.status(404).json({ success: false, msg: 'Card not found' });
+            }
+
+            // Direct lookup by the exact wallet ID — no ambiguity possible,
+            // unlike searching by userId+currencyId.
+            const wallet = await prisma.wallet.findUnique({ where: { id: card.fundingWalletId } });
+            if (!wallet) {
+                return res.status(404).json({ success: false, msg: 'Funding wallet not found' });
+            }
+            if (!wallet.currencyId) {
+                logger.error(`[DATA INTEGRITY] Wallet ${wallet.id} (funding wallet for card ${card.id}) has no currencyId`);
+                return res.status(500).json({ success: false, msg: 'This card\'s funding wallet is misconfigured. Contact support.' });
+            }
+
+            // Balance itself is validated inside direct_offchain_Transfer —
+            // matching the confirmed pattern from issueCard, no redundant
+            // pre-check needed here.
+            await walletService.direct_offchain_Transfer({
+                userId: user.id,
+                receipientId: config.Admin_Id,
+                currencyId: wallet.currencyId, // now genuinely narrowed to string, not string | null
+                amount,
+                narration: 'Card funding',
+            });
+
+            const newCap = toDecimal(card.lastSyncedCapUsd ?? 0).plus(toDecimal(amount));
+
+            const syncResult = await updateSpendControl(card.controCardId, {
+                sales: { allTime: newCap.toNumber() },
+            });
+
+            if (!syncResult.success) {
+                await prisma.controCard.update({ where: { id: cardId }, data: { lastCapSyncError: syncResult.error } });
+                logger.error(`[CONTRO CAP SYNC FAILED] Card ${cardId} funded internally but Contro cap not updated`, { error: syncResult.error });
+                return res.status(422).json({ success: false, msg: 'Funding recorded, but could not sync your new limit with the card provider. Contact support.' });
+            }
+
+            await prisma.controCard.update({
+                where: { id: cardId },
+                data: { lastSyncedCapUsd: newCap, lastCapSyncedAt: new Date(), lastCapSyncError: null },
+            });
+
+            return res.status(200).json({ success: true, msg: 'Card funded', newBalance: newCap.minus(card.totalSpentUsd ?? 0).toString() });
+
+        } catch (error: any) {
+            logger.error('Card funding error:', error);
             return res.status(500).json({ success: false, msg: 'Internal Server Error' });
         }
     }
@@ -437,32 +614,27 @@ class ControController {
     // cache/reuse.
     async revealCard(req: Request & Record<string, any>, res: Response) {
         const { user } = req;
+        const { cardId } = req.params; // NEW — was implicitly "the" card before
+ 
         try {
-            const card = await prisma.controCard.findFirst({
-                where: { userId: user.id },
-                orderBy: { createdAt: 'desc' },
-            });
-    
-            if (!card) {
-                return res.status(404).json({ success: false, msg: 'No card found' });
+            const card = await prisma.controCard.findUnique({ where: { id: cardId } });
+            if (!card || card.userId !== user.id) {
+                return res.status(404).json({ success: false, msg: 'Card not found' });
             }
-    
-            const reveal = await revealHtml(card.controCardId, {
-                copyPan: true,
-            });
-    
+ 
+            const reveal = await revealHtml(card.controCardId, { copyPan: true });
+ 
             if (!reveal.success || !(reveal as any).accessUrl) {
                 return res.status(422).json({ success: false, msg: reveal.error ?? 'Failed to generate reveal URL' });
             }
-    
+ 
             return res.status(200).json({ success: true, accessUrl: (reveal as any).accessUrl });
-    
+ 
         } catch (error: any) {
             logger.error('Card reveal error:', error);
             return res.status(500).json({ success: false, msg: 'Internal Server Error' });
         }
     }
-
 
 
 }
