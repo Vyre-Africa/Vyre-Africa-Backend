@@ -1563,27 +1563,22 @@ model ControCard {
   id                String    @id @default(cuid())
   userId            String
   user              User      @relation(fields: [userId], references: [id])
-  controCardId      String    @unique // Contro's card id, e.g. "card_def456"
+  controCardId      String    @unique
   programId         String
-  status            String    // created | pending | active | frozen | cancelled
-                              // NOTE: "pending" observed live but NOT in Contro's
-                              // documented OpenAPI enum (created|active|frozen|
-                              // cancelled) — kept as a plain string rather than a
-                              // strict enum specifically so an undocumented real
-                              // value doesn't break persistence.
-  type              String?   // virtual | physical
-  brand             String?   // Visa | Mastercard
+  status            String
+  type              String?
+  brand             String?
   last4             String?
  
-  // The actual ledger boundary — see spend control note below. This is
-  // VYRE's OWN record of what cap we last told Contro to apply, kept in
-  // sync with the user's real Vyre wallet balance. Separate from
-  // Contro's own spendControl.spent (accrued spend), which is
-  // confirmed only present "where the card program supports it" — not
-  // guaranteed, so don't rely on it as the sole source of truth.
+  // NEW — set once at issuance, this is the ONE wallet every fee and
+  // funding transaction for this card is debited from. Never changes
+  // after issuance in Option A's design.
+  fundingWalletId   String
+ 
   lastSyncedCapUsd  Decimal?  @db.Decimal(12, 2)
   lastCapSyncedAt   DateTime?
-  lastCapSyncError  String?   // set if the last spend-control PATCH failed — confirmed this CAN fail (sandbox: "Provider sandbox does not implement spend-control updates")
+  lastCapSyncError  String?
+  totalSpentUsd     Decimal   @default(0) @db.Decimal(12, 2)
  
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt

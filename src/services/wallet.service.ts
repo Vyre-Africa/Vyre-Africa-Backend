@@ -1021,8 +1021,9 @@ class WalletService
         receipientId: string;
         currencyId: string;
         amount: string;
+        narration?:string
     }) {
-        const { userId, receipientId, currencyId, amount } = payload;
+        const { userId, receipientId, currencyId, amount, narration } = payload;
         const startTime = Date.now();
 
         try {
@@ -1168,7 +1169,7 @@ class WalletService
                         status: 'SUCCESSFUL',
                         walletId: user_Wallet.id,
                         type: 'DEBIT_PAYMENT',
-                        description: `${currency.name} transfer to ${receipientId.slice(0, 8)}`,
+                        description: narration ? narration : `${currency.name} transfer to ${receipientId.slice(0, 8)}`,
                         metadata: {
                             recipientId: receipientId,
                             recipientWalletId: receipient_Wallet.id, // ✅ Removed optional chaining
@@ -1184,7 +1185,7 @@ class WalletService
                         status: 'SUCCESSFUL',
                         walletId: receipient_Wallet.id, // ✅ Removed optional chaining
                         type: 'CREDIT_PAYMENT',
-                        description: `${currency.name} transfer from ${userId.slice(0, 8)}`,
+                        description: narration ? narration : `${currency.name} transfer from ${userId.slice(0, 8)}`,
                         metadata: {
                             senderId: userId,
                             senderWalletId: user_Wallet.id,
