@@ -834,18 +834,27 @@ router.get(
 );
 
 router.post(
-  '/cards/contro/issue', 
+  '/cards/contro/issue',
   requireAuthWithCORS(),
-  authMiddleware, 
+  authMiddleware,
+  requireTransactionPin,
   controController.issueCard
 );
 
 router.post(
-  '/cards/contro/reveal',
-  requireAuthWithCORS(), 
-  authMiddleware, 
-  controController.revealCard
+  '/cards/contro/:cardId/fund',
+  requireAuthWithCORS(),
+  authMiddleware,
+  requireTransactionPin,
+  controController.fundCard
 );
+
+// router.post(
+//   '/cards/contro/reveal',
+//   requireAuthWithCORS(), 
+//   authMiddleware, 
+//   controController.revealCard
+// );
 
 router.post(
   '/cards/contro/:cardId/reveal', 
