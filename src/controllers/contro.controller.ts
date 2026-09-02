@@ -419,7 +419,7 @@ class ControController {
 
             const currencyIds = [...new Set(wallets.map(w => w.currencyId).filter((id): id is string => id !== null))];
             const currencies = currencyIds.length
-                ? await prisma.currency.findMany({ where: { id: { in: currencyIds } }, select: { id: true, ISO: true, name: true, chain: true, imgUrl: true } })
+                ? await prisma.currency.findMany({ where: { id: { in: currencyIds } }, select: { id: true, ISO: true, name: true, chain: true, imgUrl: true, chainImgUrl: true } })
                 : [];
 
             const walletToCurrency = new Map(wallets.map(w => [w.id, currencies.find(c => c.id === w.currencyId)]));
@@ -598,6 +598,19 @@ class ControController {
             await prisma.controCard.update({
                 where: { id: cardId },
                 data: { lastSyncedCapUsd: newCap, lastCapSyncedAt: new Date(), lastCapSyncError: null },
+            });
+
+            const fundingCurrency = await prisma.currency.findUnique({
+                where: { id: wallet.currencyId! },
+                select: { ISO: true },
+            });
+
+  
+            await notificationService.queue({
+                userId: user.id,
+                title: 'Card funded',
+                content: `Your card was funded with ${amount} ${fundingCurrency?.ISO ?? ''}. New balance: $${newCap.minus(card.totalSpentUsd ?? 0).toFixed(2)}.`,
+                type: 'GENERAL',
             });
 
             return res.status(200).json({ success: true, msg: 'Card funded', newBalance: newCap.minus(card.totalSpentUsd ?? 0).toString() });
