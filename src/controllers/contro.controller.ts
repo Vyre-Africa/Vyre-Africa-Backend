@@ -515,13 +515,16 @@ class ControController {
 
             // Deduct issuance Fee
             // balance is validate in the direct_offchain_Transfer function 
-            await walletService.direct_offchain_Transfer({
-                userId: user.id,
-                receipientId: config.Admin_Id,
-                currencyId: cryptoCurrencyId,
-                amount: CARD_ISSUANCE_FEE_USD,
-                narration: 'Card issuance fee'
-            });
+            if(config.Admin_Id !== user.id ){
+                await walletService.direct_offchain_Transfer({
+                    userId: user.id,
+                    receipientId: config.Admin_Id,
+                    currencyId: cryptoCurrencyId,
+                    amount: CARD_ISSUANCE_FEE_USD,
+                    narration: 'Card issuance fee'
+                });
+            }
+            
  
             await prisma.controCard.create({
                 data: {
@@ -575,13 +578,15 @@ class ControController {
             // Balance itself is validated inside direct_offchain_Transfer —
             // matching the confirmed pattern from issueCard, no redundant
             // pre-check needed here.
-            await walletService.direct_offchain_Transfer({
-                userId: user.id,
-                receipientId: config.Admin_Id,
-                currencyId: wallet.currencyId, // now genuinely narrowed to string, not string | null
-                amount,
-                narration: 'Card funding',
-            });
+            if(config.Admin_Id !== user.id ){
+                await walletService.direct_offchain_Transfer({
+                    userId: user.id,
+                    receipientId: config.Admin_Id,
+                    currencyId: wallet.currencyId, // now genuinely narrowed to string, not string | null
+                    amount,
+                    narration: 'Card funding',
+                });
+            }
 
             const newCap = toDecimal(card.lastSyncedCapUsd ?? 0).plus(toDecimal(amount));
 
