@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
 import logger from '../config/logger';
-import { initiateNuvionPayout, blockNuvionPayout, blockCryptoPayout } from './../services/nuvionpayout.service';
+import { initiateNuvionPayout, blockNuvionPayout, blockCryptoPayout, ensureNuvionCounterpartyAndPaymentDetail } from './../services/nuvionpayout.service';
+import { createFxQuote } from '../services/nuvion.service';
 import { generalQueue } from '../workers/general.worker';
 
 class NuvionController {
@@ -308,6 +309,63 @@ class NuvionController {
         } catch (error: any) {
             logger.error('Nuvion crypto payout initiation failed:', error);
             return res.status(422).json({ success: false, msg: error.message ?? 'Payout failed' });
+        }
+    }
+
+    // nuvionPayout.controller.ts (or wherever payout controllers live)
+
+    async getPayoutQuote(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        const { beneficiaryId, paymentDetailId, cryptoCurrencyId, amount } = req.body;
+
+        try {
+            const beneficiary = await prisma.beneficiary.findUnique({ where: { id: beneficiaryId } });
+            if (!beneficiary || beneficiary.userId !== user.id) {
+                return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
+            }
+
+            const paymentMethod = await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: paymentDetailId } });
+            if (!paymentMethod || paymentMethod.beneficiaryId !== beneficiaryId) {
+                return res.status(404).json({ success: false, msg: 'Payment method not found' });
+            }
+
+            const cryptoCurrency = await prisma.currency.findUnique({ where: { id: cryptoCurrencyId } });
+            if (!cryptoCurrency) return res.status(400).json({ success: false, msg: 'Unknown source currency' });
+
+            const usdTreasury = await prisma.nuvionTreasuryAccount.findFirst({ where: { currency: 'USD', isActive: true } });
+            if (!usdTreasury) return res.status(503).json({ success: false, msg: 'Quotes temporarily unavailable' });
+
+            // Same shared logic the real payout uses — ensures the
+            // counterparty/payment detail genuinely exist on Nuvion's side
+            // before a quote can even be requested.
+            const { counterpartyId, paymentDetailNuvionId } = await ensureNuvionCounterpartyAndPaymentDetail(beneficiary, paymentMethod);
+
+            const quote = await createFxQuote({
+                to_currency: paymentMethod.currency,
+                from_currency: 'USD',
+                amount_from: Number(amount),
+                account_id: usdTreasury.nuvionAccountId,
+                counterparty_id: counterpartyId,
+                payment_detail_id: paymentDetailNuvionId,
+            });
+
+            if (!quote.success || !quote.id) {
+                return res.status(422).json({ success: false, msg: quote.error ?? 'Could not get a quote right now' });
+            }
+
+            return res.status(200).json({
+                success: true,
+                fxQuoteId: quote.id,
+                amountTo: (quote as any).amount_to,
+                rate: quote.rate,
+                toCurrency: paymentMethod.currency,
+                expiresAt: (quote as any).quote?.expires_at, // real timestamp, ms
+                validForSeconds: (quote as any).quote?.valid_for, // real, currently ~119
+            });
+
+        } catch (error: any) {
+            logger.error('Failed to get payout quote:', error);
+            return res.status(500).json({ success: false, msg: error.message ?? 'Internal Server Error' });
         }
     }
 

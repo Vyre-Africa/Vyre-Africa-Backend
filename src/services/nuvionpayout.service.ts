@@ -43,6 +43,15 @@ function toDecimal(value: number | string | Decimal): Decimal {
     return new Decimal(value.toString());
 }
 
+const ISO_TO_NUVION_CODE: Record<string, string> = {
+    USDC: 'USC',
+    USDT: 'UST',
+};
+ 
+export function toNuvionCurrencyCode(iso: string): string {
+    return ISO_TO_NUVION_CODE[iso] ?? iso;
+}
+
 
 function isTransientError(error: any): boolean {
     const httpStatus = error?.httpStatus;
@@ -105,9 +114,12 @@ export async function blockNuvionPayout(params: BlockPayoutParams): Promise<{ tr
         throw new Error('This beneficiary is missing required details — please complete their profile before sending a payout');
     }
     if (!paymentMethod.accountNumber) throw new Error('This payment method has no account number set');
+
+    const vyreCurrency = await prisma.currency.findFirst({ where: { ISO: fromCurrency } });
+    if (!vyreCurrency) throw new Error(`No Vyre Currency record found for ${fromCurrency}`); 
  
     const sharedReference = generateRef('NVPAY');
- 
+
     const { transaction, block } = await virtualAccountService.initiateBankWithdrawal({
         userId,
         currency: fromCurrency,
@@ -118,13 +130,19 @@ export async function blockNuvionPayout(params: BlockPayoutParams): Promise<{ tr
             accountName: paymentMethod.accountName ?? (beneficiary.bank as any)?.accountName ?? '',
         },
         reference: sharedReference,
-        metadata: { payoutProvider: 'NUVION', beneficiaryId, beneficiaryPaymentDetailId: paymentDetailId, narration },
+        metadata: {
+            payoutProvider: 'NUVION', beneficiaryId, beneficiaryPaymentDetailId: paymentDetailId, narration,
+            treasuryAccountId: treasury.id, // NEW — for symmetry with the crypto path
+        },
     });
- 
+
     const transferRequest = await prisma.transferRequest.create({
         data: {
             idempotencyKey: sharedReference, type: 'BANK', bank: beneficiary.bank ?? undefined,
-            currencyId: fromCurrency, amount: transaction.amount, userId, status: 'PENDING',
+            currencyId: vyreCurrency.id,
+            amount: transaction.amount, userId, status: 'PENDING',
+            beneficiaryId, // NEW — real column, was previously only in VirtualTransaction.metadata
+            beneficiaryPaymentDetailId: paymentDetailId, // NEW
         } as any,
     });
  
@@ -154,71 +172,128 @@ export interface BlockCryptoPayoutParams {
     userId: string; beneficiaryId: string; paymentDetailId: string;
     cryptoCurrencyId: string; amount: string; narration: string;
 }
- 
-export async function blockCryptoPayout(params: BlockCryptoPayoutParams): Promise<{ transferRequestId: string }> {
+
+export async function blockCryptoPayout(params: BlockCryptoPayoutParams): Promise<{
+    transferRequestId: string;
+    estimatedFee: number;
+    vyreFee: number;
+    totalDebit: string;
+}> {
     const { userId, beneficiaryId, paymentDetailId, cryptoCurrencyId, amount, narration } = params;
- 
+
     const beneficiary = await prisma.beneficiary.findUnique({ where: { id: beneficiaryId } });
     if (!beneficiary || beneficiary.userId !== userId) throw new Error('Beneficiary not found or does not belong to this user');
- 
+
     const paymentMethod = await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: paymentDetailId } });
     if (!paymentMethod || paymentMethod.beneficiaryId !== beneficiaryId) throw new Error('Payment method not found for this beneficiary');
- 
+
     if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail || !beneficiary.nuvionRecipientAddressLine1) {
         throw new Error('This beneficiary is missing required details — please complete their profile before sending a payout');
     }
- 
+
     const cryptoCurrency = await prisma.currency.findUnique({ where: { id: cryptoCurrencyId } });
     if (!cryptoCurrency) throw new Error('Unknown source currency');
- 
-    const nuvionStablecoinCode = cryptoCurrency.ISO === 'USDC' ? 'USC' : cryptoCurrency.ISO === 'USDT' ? 'UST' : null;
-    if (!nuvionStablecoinCode) throw new Error(`${cryptoCurrency.ISO} is not supported for global payouts yet`);
- 
-    const nuvionChain = VYRE_TO_NUVION_CHAIN[cryptoCurrency.chain!];
-    if (!nuvionChain) throw new Error(`${cryptoCurrency.chain} is not a supported chain for global payouts`);
- 
-    const wallet = await prisma.wallet.findFirst({ where: { userId, currencyId: cryptoCurrencyId } });
-    if (!wallet) throw new Error('Wallet not found');
-    if (toDecimal(wallet.availableBalance).lt(toDecimal(amount))) throw new Error('Insufficient balance');
- 
-    const treasury = await prisma.nuvionTreasuryAccount.findFirst({
-        where: { currency: nuvionStablecoinCode, isActive: true, chain: nuvionChain },
+    if (!['USDC', 'USDT'].includes(cryptoCurrency.ISO)) {
+        throw new Error(`${cryptoCurrency.ISO} is not supported for global payouts yet`);
+    }
+
+    // Nuvion-facing payout is ALWAYS routed through the USD treasury
+    // directly — no chain-specific stablecoin treasury involved. The
+    // user's actual stablecoin, on its own chain, is what gets frozen
+    // below; USD is purely the Nuvion-side routing currency.
+    const usdTreasury = await prisma.nuvionTreasuryAccount.findFirst({
+        where: { currency: 'USD', isActive: true },
     });
-    if (!treasury || !treasury.walletAddress) throw new Error(`No active treasury float for ${nuvionStablecoinCode} on ${cryptoCurrency.chain}`);
- 
-    if (!treasury.lastKnownAvailable || toDecimal(treasury.lastKnownAvailable).lt(toDecimal(amount))) {
-        logger.error(`[NUVION FLOAT LOW] Treasury ${treasury.id} (${nuvionStablecoinCode}/${nuvionChain}) has insufficient float — lastKnownAvailable: ${treasury.lastKnownAvailable}`);
+    if (!usdTreasury) throw new Error('No active USD treasury account configured');
+
+    // ── Fee calculation — three genuinely distinct components ──
+    // 1. amount             — what the recipient actually receives
+    // 2. estimatedNuvionFee — Nuvion's own pass-through cost (our best
+    //                         estimate; only confirmed real for 'wire' so far)
+    // 3. vyreFee            — Vyre's own margin/revenue, never touches Nuvion
+    const estimatedNuvionFee = estimateNuvionFee(paymentMethod.scheme);
+    const vyreFee = calculateVyreFee(amount);
+    const totalDebit = toDecimal(amount).plus(estimatedNuvionFee).plus(vyreFee); // frozen from the USER
+    const treasuryDraw = toDecimal(amount).plus(estimatedNuvionFee); // ACTUALLY drawn from Nuvion's real USD float — excludes vyreFee entirely
+
+    if (!usdTreasury.lastKnownAvailable || toDecimal(usdTreasury.lastKnownAvailable).lt(treasuryDraw)) {
+        logger.error(`[NUVION USD FLOAT LOW] Treasury ${usdTreasury.id} has insufficient float for ${treasuryDraw} (amount + Nuvion fee) — lastKnownAvailable: ${usdTreasury.lastKnownAvailable}`);
         throw new Error('This payout amount is temporarily unavailable — please try a smaller amount or try again shortly');
     }
- 
+
+    const usdVyreCurrency = await prisma.currency.findFirst({ where: { ISO: 'USD' } });
+    if (!usdVyreCurrency) throw new Error('No Vyre Currency record found for USD');
+
     const sharedReference = generateRef('NVPAY');
- 
+
+    // Real freeze via the block mechanism — funds stay frozen (not
+    // double-spendable) but aren't permanently moved until Nuvion
+    // confirms success via webhook. Freezes the FULL total (amount +
+    // both fees), not just the send amount.
+    const { transaction, block } = await virtualAccountService.initiateGlobalPayoutBlock({
+        userId,
+        currencyId: cryptoCurrencyId,
+        amount: totalDebit.toString(),
+        reference: sharedReference,
+        metadata: {
+            payoutProvider: 'NUVION',
+            beneficiaryId,
+            beneficiaryPaymentDetailId: paymentDetailId,
+            narration,
+            treasuryAccountId: usdTreasury.id,
+            sendAmount: amount,
+            estimatedNuvionFee,
+            vyreFee,
+        },
+    });
+
     const transferRequest = await prisma.transferRequest.create({
         data: {
-            idempotencyKey: sharedReference, type: 'CRYPTO',
-            currencyId: nuvionStablecoinCode, amount: toDecimal(amount), userId, status: 'PENDING',
+            idempotencyKey: sharedReference,
+            type: 'CRYPTO',
+            currencyId: usdVyreCurrency.id, // real Vyre Currency FK for USD — the Nuvion-facing routing currency
+            amount: toDecimal(amount), // the SEND amount only — what the recipient actually gets
+            estimatedFeeUsd: toDecimal(estimatedNuvionFee),
+            vyreFeeUsd: toDecimal(vyreFee),
+            userId,
+            status: 'PENDING',
+            beneficiaryId,
+            beneficiaryPaymentDetailId: paymentDetailId,
         } as any,
     });
- 
+
+    // Only amount + Nuvion's fee draw down the real treasury float —
+    // vyreFee never leaves Vyre's own system, so it must never decrement
+    // Nuvion's real balance.
     await prisma.nuvionTreasuryAccount.update({
-        where: { id: treasury.id },
-        data: { lastKnownAvailable: { decrement: toDecimal(amount) } as any },
+        where: { id: usdTreasury.id },
+        data: { lastKnownAvailable: { decrement: treasuryDraw } as any },
     });
- 
+
     await generalQueue.add('Nuvion_Payout_Process', {
-        transferRequestId: transferRequest.id, sharedReference, narration, isCryptoSourced: true,
-        beneficiaryId, beneficiaryPaymentDetailId: paymentDetailId,
-        replenishUserId: userId, replenishCurrencyId: cryptoCurrencyId,
-        treasuryAccountId: treasury.id, treasuryWalletAddress: treasury.walletAddress,
+        transferRequestId: transferRequest.id,
+        transactionId: transaction.id,
+        blockId: block.id,
+        sharedReference,
+        narration,
+        isCryptoSourced: true,
     });
- 
+
     await notificationService.queue({
-        userId, title: 'Transfer initiated', type: 'GENERAL',
-        content: `Your ${amount} ${cryptoCurrency.ISO} transfer is being processed. We'll let you know once it's complete.`,
+        userId,
+        title: 'Transfer initiated',
+        type: 'GENERAL',
+        content: `Sending ${amount} ${cryptoCurrency.ISO}. Network fee: ~$${estimatedNuvionFee}. Service fee: $${vyreFee}. Total: ${totalDebit.toString()} ${cryptoCurrency.ISO}.`,
     });
- 
-    logger.info(`[NuvionPayout] Crypto payout queued (float-funded, no debit yet): TransferRequest ${transferRequest.id}`);
-    return { transferRequestId: transferRequest.id };
+
+    logger.info(`[NuvionPayout] Crypto payout blocked (routed via USD treasury) — amount ${amount} + Nuvion fee ${estimatedNuvionFee} + Vyre fee ${vyreFee} = ${totalDebit}, queued: TransferRequest ${transferRequest.id}`);
+
+    return {
+        transferRequestId: transferRequest.id,
+        estimatedFee: estimatedNuvionFee,
+        vyreFee,
+        totalDebit: totalDebit.toString(),
+    };
 }
 
 
@@ -227,14 +302,17 @@ export async function blockCryptoPayout(params: BlockCryptoPayoutParams): Promis
 // ═══════════════════════════════════════════════════════════════════════
 
 export async function processNuvionPayoutJob(jobData: {
-    transferRequestId: string; sharedReference: string; narration: string; isCryptoSourced?: boolean;
-    transactionId?: string; blockId?: string; beneficiaryId?: string; beneficiaryPaymentDetailId?: string;
-    replenishUserId?: string; replenishCurrencyId?: string;
-    treasuryAccountId?: string; treasuryWalletAddress?: string;
+    transferRequestId: string; transactionId: string; blockId: string;
+    sharedReference: string; narration: string; isCryptoSourced?: boolean;
+    fxQuoteId?: string;
 }) {
-    const { transferRequestId, sharedReference, narration, isCryptoSourced } = jobData;
- 
-    const transferRequest = await prisma.transferRequest.findUnique({ where: { id: transferRequestId } });
+    const { transferRequestId, transactionId, blockId, sharedReference, narration, isCryptoSourced, fxQuoteId: preSuppliedFxQuoteId } = jobData;
+
+    const transferRequest = await prisma.transferRequest.findUnique({
+        where: { id: transferRequestId },
+        include: { currency: true }
+    });
+
     if (!transferRequest) {
         logger.error(`[NuvionPayout] processNuvionPayoutJob — TransferRequest ${transferRequestId} not found`);
         return;
@@ -243,51 +321,47 @@ export async function processNuvionPayoutJob(jobData: {
         logger.info(`[NuvionPayout] TransferRequest ${transferRequestId} already ${transferRequest.status} — skipping reprocess`);
         return;
     }
- 
-    let beneficiaryId: string | undefined;
-    let beneficiaryPaymentDetailId: string | undefined;
- 
-    if (isCryptoSourced) {
-        beneficiaryId = jobData.beneficiaryId;
-        beneficiaryPaymentDetailId = jobData.beneficiaryPaymentDetailId;
-    } else {
-        const transaction = await prisma.virtualTransaction.findUnique({ where: { id: jobData.transactionId } });
-        const meta = transaction?.metadata as any;
-        beneficiaryId = meta?.beneficiaryId;
-        beneficiaryPaymentDetailId = meta?.beneficiaryPaymentDetailId;
-    }
- 
+
+    const nuvionCurrencyCode = toNuvionCurrencyCode(transferRequest.currency.ISO);
+
+    const beneficiaryId = transferRequest.beneficiaryId;
+    const beneficiaryPaymentDetailId = transferRequest.beneficiaryPaymentDetailId;
+
+    const transaction = await prisma.virtualTransaction.findUnique({ where: { id: transactionId } });
+    const meta = transaction?.metadata as any;
+    const treasuryAccountId = meta?.treasuryAccountId;
+
     const beneficiary = beneficiaryId ? await prisma.beneficiary.findUnique({ where: { id: beneficiaryId } }) : null;
     const paymentMethod = beneficiaryPaymentDetailId ? await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: beneficiaryPaymentDetailId } }) : null;
- 
+
     if (!beneficiary || !paymentMethod) {
-        await failPayout(jobData, 'Beneficiary or payment method record missing');
+        await failPayout({ transferRequestId, transactionId, blockId, isCryptoSourced }, 'Beneficiary or payment method record missing');
         return;
     }
- 
+
     const toCurrency = paymentMethod.currency;
-    const isCrossCurrency = transferRequest.currencyId !== toCurrency;
+    const isCrossCurrency = nuvionCurrencyCode !== toCurrency;
     const decimalAmount = toDecimal(transferRequest.amount);
- 
-    const treasury = isCryptoSourced
-        ? await prisma.nuvionTreasuryAccount.findUnique({ where: { id: jobData.treasuryAccountId } })
-        : await prisma.nuvionTreasuryAccount.findFirst({ where: { currency: transferRequest.currencyId!, isActive: true } });
- 
+
+    const treasury = treasuryAccountId
+        ? await prisma.nuvionTreasuryAccount.findUnique({ where: { id: treasuryAccountId } })
+        : null;
+
     if (!treasury) {
-        await failPayout(jobData, 'Treasury account no longer active');
+        await failPayout({ transferRequestId, transactionId, blockId, isCryptoSourced }, 'Treasury account no longer active');
         return;
     }
- 
+
     try {
         let counterpartyId = beneficiary.nuvionCounterpartyId;
         let paymentDetailNuvionId = paymentMethod.nuvionPaymentDetailId;
- 
+
         if (!counterpartyId) {
             const accountName = (beneficiary.bank as any)?.accountName as string;
             if (!accountName) throw new Error('Beneficiary has no registered name');
             const [firstName, ...lastNameParts] = accountName.trim().split(' ');
             const lastName = lastNameParts.join(' ') || firstName;
- 
+
             const counterparty = await createCounterparty({
                 type: 'individual',
                 profile: {
@@ -304,118 +378,300 @@ export async function processNuvionPayoutJob(jobData: {
             counterpartyId = counterparty.id;
             await prisma.beneficiary.update({ where: { id: beneficiary.id }, data: { nuvionCounterpartyId: counterpartyId } });
         }
- 
+
         if (!paymentDetailNuvionId) {
-            const paymentDetail = await createPaymentDetail({
-                payment_method: 'bank-transfer', currency: toCurrency,
+            const basePayload = {
+                payment_method: paymentMethod.paymentMethod,
+                currency: toCurrency,
                 account_holder_name: paymentMethod.accountName ?? (beneficiary.bank as any)?.accountName,
-                counterparty_id: counterpartyId, country: beneficiary.nuvionRecipientCountry!,
-                account_number: String(paymentMethod.accountNumber),
-                ...(paymentMethod.bankName && { bank_name: paymentMethod.bankName }),
-                ...(paymentMethod.bankCode && { bank_code: paymentMethod.bankCode }),
-                ...(paymentMethod.swiftCode && { swift_bic: paymentMethod.swiftCode }),
-                ...(paymentMethod.iban && { iban: paymentMethod.iban }),
-                ...(paymentMethod.routingNumber && { routing_number: paymentMethod.routingNumber }),
-                ...(paymentMethod.sortCode && { sort_code: paymentMethod.sortCode }),
-            });
+                counterparty_id: counterpartyId,
+                country: beneficiary.nuvionRecipientCountry!,
+            };
+
+            let railPayload: Record<string, any> = {};
+
+            switch (paymentMethod.paymentMethod) {
+                case 'book-transfer':
+                    railPayload = { account_number: String(paymentMethod.accountNumber) };
+                    break;
+                case 'momo-transfer':
+                    railPayload = { scheme: paymentMethod.scheme, phone_number: paymentMethod.accountNumber };
+                    break;
+                case 'stablecoin-transfer':
+                    railPayload = { blockchain_network: paymentMethod.bankCode, wallet_address: paymentMethod.accountNumber };
+                    break;
+                case 'bank-transfer':
+                default:
+                    railPayload = {
+                        account_number: String(paymentMethod.accountNumber),
+                        scheme: paymentMethod.scheme ?? (paymentMethod.bankAddressCountry === 'US' ? 'wire' : undefined),
+                        ...(paymentMethod.accountType && { account_type: paymentMethod.accountType }),
+                        ...(paymentMethod.bankName && { bank_name: paymentMethod.bankName }),
+                        ...(paymentMethod.bankCode && { bank_code: paymentMethod.bankCode }),
+                        ...(paymentMethod.swiftCode && { swift_bic: paymentMethod.swiftCode }),
+                        ...(paymentMethod.iban && { iban: paymentMethod.iban }),
+                        ...(paymentMethod.routingNumber && { routing_number: paymentMethod.routingNumber }),
+                        ...(paymentMethod.sortCode && { sort_code: paymentMethod.sortCode }),
+                        ...(paymentMethod.bankAddressLine1 && {
+                            bank_address: {
+                                line1: paymentMethod.bankAddressLine1,
+                                city: paymentMethod.bankAddressCity,
+                                state: paymentMethod.bankAddressState,
+                                postal_code: paymentMethod.bankAddressPostal,
+                                country: paymentMethod.bankAddressCountry,
+                            },
+                        }),
+                    };
+                    break;
+            }
+
+            const paymentDetail = await createPaymentDetail({ ...basePayload, ...railPayload } as any);
             if (!paymentDetail.success || !paymentDetail.id) throw new Error(`Failed to create Nuvion payment detail: ${paymentDetail.error}`);
             paymentDetailNuvionId = paymentDetail.id;
             await prisma.beneficiaryPaymentDetail.update({ where: { id: paymentMethod.id }, data: { nuvionPaymentDetailId: paymentDetailNuvionId } });
         }
- 
+
         let nuvionTransferId: string;
         let fxQuoteId: string | undefined;
         let fxRate: number | undefined;
- 
+        let realFee = 0;
+
         if (isCrossCurrency) {
-            const quote = await createFxQuote({
-                to_currency: toCurrency, from_currency: transferRequest.currencyId!,
-                amount_from: decimalAmount.toNumber(), account_id: treasury.nuvionAccountId,
-                counterparty_id: counterpartyId, payment_detail_id: paymentDetailNuvionId,
-            });
-            if (!quote.success || !quote.id) throw Object.assign(new Error(quote.error ?? 'FX quote failed'), { httpStatus: quote.httpStatus });
-            fxQuoteId = quote.id; fxRate = quote.rate;
- 
+            let fxQuoteToUse = preSuppliedFxQuoteId;
+
+            if (!fxQuoteToUse) {
+                const quote = await createFxQuote({
+                    to_currency: toCurrency, from_currency: nuvionCurrencyCode,
+                    amount_from: decimalAmount.toNumber(), account_id: treasury.nuvionAccountId,
+                    counterparty_id: counterpartyId, payment_detail_id: paymentDetailNuvionId,
+                });
+                if (!quote.success || !quote.id) throw Object.assign(new Error(quote.error ?? 'FX quote failed'), { httpStatus: quote.httpStatus });
+                fxQuoteToUse = quote.id; fxRate = quote.rate;
+            } else {
+                logger.info(`[NuvionPayout] Reusing pre-fetched quote ${fxQuoteToUse} for TransferRequest ${transferRequestId}`);
+            }
+            fxQuoteId = fxQuoteToUse;
+
             const transferAttempt = await withBoundedRetry(
                 () => initiateCrossCurrencyTransfer({
                     account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId!,
-                    counterparty_id: counterpartyId!, fx_quote_id: quote.id!, narration,
-                    payment_type: 'bank-transfer', unique_reference: sharedReference,
+                    counterparty_id: counterpartyId!, fx_quote_id: fxQuoteToUse!, narration,
+                    payment_type: paymentMethod.paymentMethod as any, unique_reference: sharedReference,
                 }), 'cross-currency transfer'
             );
-            if (!transferAttempt.success) throw new Error(transferAttempt.error);
-            nuvionTransferId = (transferAttempt.result as any).id;
+
+            if (!transferAttempt.success && preSuppliedFxQuoteId && /expired|invalid.*quote/i.test(transferAttempt.error ?? '')) {
+                // ⚠️ Best-guess pattern match — Nuvion's real expired-quote
+                // error text hasn't been confirmed yet. Worth tightening
+                // once one is actually observed.
+                logger.warn(`[NuvionPayout] Pre-fetched quote ${preSuppliedFxQuoteId} appears expired — creating a fresh one for TransferRequest ${transferRequestId}`);
+
+                const freshQuote = await createFxQuote({
+                    to_currency: toCurrency, from_currency: nuvionCurrencyCode,
+                    amount_from: decimalAmount.toNumber(), account_id: treasury.nuvionAccountId,
+                    counterparty_id: counterpartyId, payment_detail_id: paymentDetailNuvionId,
+                });
+                if (!freshQuote.success || !freshQuote.id) throw Object.assign(new Error(freshQuote.error ?? 'FX quote failed'), { httpStatus: freshQuote.httpStatus });
+                fxQuoteId = freshQuote.id; fxRate = freshQuote.rate;
+
+                const retryAttempt = await withBoundedRetry(
+                    () => initiateCrossCurrencyTransfer({
+                        account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId!,
+                        counterparty_id: counterpartyId!, fx_quote_id: freshQuote.id!, narration,
+                        payment_type: paymentMethod.paymentMethod as any, unique_reference: sharedReference,
+                    }), 'cross-currency transfer (retry with fresh quote)'
+                );
+
+                if (!retryAttempt.success) throw new Error(retryAttempt.error);
+                nuvionTransferId = (retryAttempt.result as any).id;
+                realFee = (retryAttempt.result as any).applicable_fee ?? 0;
+            } else {
+                if (!transferAttempt.success) throw new Error(transferAttempt.error);
+                nuvionTransferId = (transferAttempt.result as any).id;
+                realFee = (transferAttempt.result as any).applicable_fee ?? 0;
+            }
         } else {
             const transferAttempt = await withBoundedRetry(
                 () => initiateSameCurrencyTransfer({
                     account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId!,
-                    counterparty_id: counterpartyId!, amount: decimalAmount.toNumber(), currency: transferRequest.currencyId!,
-                    narration, payment_type: 'bank-transfer', unique_reference: sharedReference,
+                    counterparty_id: counterpartyId!, amount: decimalAmount.toNumber(),
+                    currency: nuvionCurrencyCode,
+                    narration, payment_type: paymentMethod.paymentMethod as any, unique_reference: sharedReference,
                 }), 'same-currency transfer'
             );
             if (!transferAttempt.success) throw new Error(transferAttempt.error);
             nuvionTransferId = (transferAttempt.result as any).id;
+            realFee = (transferAttempt.result as any).applicable_fee ?? 0;
         }
- 
+
+        const realFeeUsd = toDecimal(realFee);
+        const estimatedFeeUsd = toDecimal(transferRequest.estimatedFeeUsd ?? 0);
+
+        if (realFeeUsd.lt(estimatedFeeUsd)) {
+            const refundAmount = estimatedFeeUsd.minus(realFeeUsd);
+            const txn = await prisma.virtualTransaction.findUnique({ where: { id: transactionId } });
+            if (txn?.fromAccountId) {
+                await prisma.virtualAccount.update({
+                    where: { id: txn.fromAccountId },
+                    data: { available: { increment: refundAmount } as any, frozen: { decrement: refundAmount } as any },
+                });
+                await prisma.block.update({ where: { id: blockId }, data: { amount: { decrement: refundAmount } as any } });
+                logger.info(`[NuvionPayout] Fee reconciliation — estimated $${estimatedFeeUsd}, actual $${realFeeUsd}, refunded $${refundAmount} to user`);
+            }
+        } else if (realFeeUsd.gt(estimatedFeeUsd)) {
+            logger.error(`[NUVION FEE UNDERESTIMATE] TransferRequest ${transferRequestId} — estimated $${estimatedFeeUsd}, actual $${realFeeUsd}. Vyre absorbing the ${realFeeUsd.minus(estimatedFeeUsd)} difference.`);
+        }
+
         await prisma.transferRequest.update({
             where: { id: transferRequestId },
-            data: { status: 'PROCESSING', reference: nuvionTransferId, nuvionFxQuoteId: fxQuoteId, nuvionFxRate: fxRate ? toDecimal(fxRate) : undefined } as any,
+            data: {
+                status: 'PROCESSING', reference: nuvionTransferId,
+                nuvionFxQuoteId: fxQuoteId, nuvionFxRate: fxRate ? toDecimal(fxRate) : undefined,
+                actualFeeUsd: realFeeUsd,
+            } as any,
         });
- 
+
         if (isCryptoSourced) {
-            await generalQueue.add('Nuvion_Treasury_Replenish', {
-                transferRequestId,
-                replenishUserId: jobData.replenishUserId,
-                replenishCurrencyId: jobData.replenishCurrencyId,
-                treasuryAccountId: jobData.treasuryAccountId,
-                treasuryWalletAddress: jobData.treasuryWalletAddress,
-                amount: decimalAmount.toString(),
+            await prisma.nuvionTreasuryAccount.update({
+                where: { id: treasury.id },
+                data: { pendingManualTopupUsd: { increment: decimalAmount } as any },
             });
-            logger.info(`[NuvionPayout] Queued treasury replenishment for TransferRequest ${transferRequestId}`);
+
+            const updated = await prisma.nuvionTreasuryAccount.findUnique({ where: { id: treasury.id } });
+            const pending = toDecimal(updated?.pendingManualTopupUsd ?? 0);
+
+            logger.info(`[NuvionPayout] Crypto-sourced payout drew from USD float — pending manual top-up now: $${pending.toString()}`);
+
+            if (pending.gte(toDecimal('1000'))) {
+                logger.warn(`[NUVION MANUAL TOPUP NEEDED] USD treasury has $${pending.toString()} pending — please top up via Nuvion's dashboard using accumulated USDC/USDT.`);
+            }
         }
- 
-        logger.info(`[NuvionPayout] TransferRequest ${transferRequestId} submitted — Nuvion transfer ${nuvionTransferId}, awaiting outflows webhook`);
- 
+
     } catch (error: any) {
-        await failPayout(jobData, error.message);
+        await failPayout({ transferRequestId, transactionId, blockId, isCryptoSourced }, error.message);
     }
 }
 
-async function failPayout(jobData: any, reason: string) {
-    const { transferRequestId, isCryptoSourced } = jobData;
- 
+async function failPayout(jobData: { transferRequestId: string; transactionId: string; blockId: string; isCryptoSourced?: boolean }, reason: string) {
+    const { transferRequestId, transactionId, blockId, isCryptoSourced } = jobData;
+
+    // UNIFIED — both paths now call a "fail the block" function with the
+    // exact same shape, just a different underlying function depending
+    // on which rail sourced the payout.
+    let failedAccount;
+
     if (isCryptoSourced) {
-        if (jobData.treasuryAccountId) {
-            const tr = await prisma.transferRequest.findUnique({ where: { id: transferRequestId }, select: { amount: true } });
-            await prisma.nuvionTreasuryAccount.update({
-                where: { id: jobData.treasuryAccountId },
-                data: { lastKnownAvailable: { increment: toDecimal(tr?.amount ?? 0) } as any },
-            });
-        }
-        await prisma.transferRequest.update({ where: { id: transferRequestId }, data: { status: 'FAILED', errorMessage: reason } });
- 
-        const tr = await prisma.transferRequest.findUnique({ where: { id: transferRequestId } });
-        if (tr) {
-            await notificationService.queue({
-                userId: tr.userId, title: 'Transfer unsuccessful', type: 'GENERAL',
-                content: `Your transfer could not be completed. No funds were debited. Please try again or contact support.`,
-            });
-        }
+        const failed = await virtualAccountService.failGlobalPayoutBlock({ transactionId, blockId, reason });
+        const transaction = await prisma.virtualTransaction.findUnique({ where: { id: transactionId } });
+        failedAccount = transaction?.fromAccountId
+            ? await prisma.virtualAccount.findUnique({ where: { id: transaction.fromAccountId } })
+            : null;
     } else {
-        const failed = await virtualAccountService.failBankWithdrawal({ transactionId: jobData.transactionId, blockId: jobData.blockId, reason });
-        await prisma.transferRequest.update({ where: { id: transferRequestId }, data: { status: 'FAILED', errorMessage: reason } });
- 
-        const account = await prisma.virtualAccount.findUnique({ where: { id: failed.fromAccountId! } });
-        if (account) {
-            await notificationService.queue({
-                userId: account.userId, title: 'Transfer unsuccessful', type: 'GENERAL',
-                content: `Your ${failed.currency} ${failed.amount} transfer could not be completed. The funds have been returned to your balance. Please try again or contact support.`,
-            });
-        }
+        const failed = await virtualAccountService.failBankWithdrawal({ transactionId, blockId, reason });
+        failedAccount = failed.fromAccountId
+            ? await prisma.virtualAccount.findUnique({ where: { id: failed.fromAccountId } })
+            : null;
     }
- 
+
+    await prisma.transferRequest.update({ where: { id: transferRequestId }, data: { status: 'FAILED', errorMessage: reason } });
+
+    if (failedAccount) {
+        await notificationService.queue({
+            userId: failedAccount.userId, title: 'Transfer unsuccessful', type: 'GENERAL',
+            content: `Your transfer could not be completed. The funds have been returned to your balance. Please try again or contact support.`,
+        });
+    }
+
     logger.error(`[NuvionPayout] TransferRequest ${transferRequestId} failed at submission`, { error: reason, isCryptoSourced });
 }
+
+// nuvionPayout.service.ts — new shared function, extracted from what
+// was previously inline inside processNuvionPayoutJob's try block.
+ 
+export async function ensureNuvionCounterpartyAndPaymentDetail(
+    beneficiary: any,
+    paymentMethod: any
+): Promise<{ counterpartyId: string; paymentDetailNuvionId: string }> {
+    let counterpartyId = beneficiary.nuvionCounterpartyId;
+ 
+    if (!counterpartyId) {
+        const accountName = (beneficiary.bank as any)?.accountName as string;
+        if (!accountName) throw new Error('Beneficiary has no registered name');
+        const [firstName, ...lastNameParts] = accountName.trim().split(' ');
+        const lastName = lastNameParts.join(' ') || firstName;
+ 
+        const counterparty = await createCounterparty({
+            type: 'individual',
+            profile: {
+                first_name: firstName, last_name: lastName, relationship: 'vendor',
+                email: beneficiary.nuvionRecipientEmail!,
+                address: {
+                    line1: beneficiary.nuvionRecipientAddressLine1!, city: beneficiary.nuvionRecipientAddressCity!,
+                    state_or_province: beneficiary.nuvionRecipientAddressState!, postal_code: beneficiary.nuvionRecipientAddressPostal!,
+                    country: beneficiary.nuvionRecipientCountry!,
+                },
+            },
+        });
+        if (!counterparty.success || !counterparty.id) throw new Error(`Failed to create Nuvion counterparty: ${counterparty.error}`);
+        counterpartyId = counterparty.id;
+        await prisma.beneficiary.update({ where: { id: beneficiary.id }, data: { nuvionCounterpartyId: counterpartyId } });
+    }
+ 
+    let paymentDetailNuvionId = paymentMethod.nuvionPaymentDetailId;
+ 
+    if (!paymentDetailNuvionId) {
+        const basePayload = {
+            payment_method: paymentMethod.paymentMethod,
+            currency: paymentMethod.currency,
+            account_holder_name: paymentMethod.accountName ?? (beneficiary.bank as any)?.accountName,
+            counterparty_id: counterpartyId,
+            country: beneficiary.nuvionRecipientCountry!,
+        };
+ 
+        let railPayload: Record<string, any> = {};
+ 
+        switch (paymentMethod.paymentMethod) {
+            case 'book-transfer':
+                railPayload = { account_number: String(paymentMethod.accountNumber) };
+                break;
+            case 'momo-transfer':
+                railPayload = { scheme: paymentMethod.scheme, phone_number: paymentMethod.accountNumber };
+                break;
+            case 'stablecoin-transfer':
+                railPayload = { blockchain_network: paymentMethod.bankCode, wallet_address: paymentMethod.accountNumber };
+                break;
+            case 'bank-transfer':
+            default:
+                railPayload = {
+                    account_number: String(paymentMethod.accountNumber),
+                    scheme: paymentMethod.scheme ?? (paymentMethod.bankAddressCountry === 'US' ? 'wire' : undefined),
+                    ...(paymentMethod.accountType && { account_type: paymentMethod.accountType }),
+                    ...(paymentMethod.bankName && { bank_name: paymentMethod.bankName }),
+                    ...(paymentMethod.bankCode && { bank_code: paymentMethod.bankCode }),
+                    ...(paymentMethod.swiftCode && { swift_bic: paymentMethod.swiftCode }),
+                    ...(paymentMethod.iban && { iban: paymentMethod.iban }),
+                    ...(paymentMethod.routingNumber && { routing_number: paymentMethod.routingNumber }),
+                    ...(paymentMethod.sortCode && { sort_code: paymentMethod.sortCode }),
+                    ...(paymentMethod.bankAddressLine1 && {
+                        bank_address: {
+                            line1: paymentMethod.bankAddressLine1, city: paymentMethod.bankAddressCity,
+                            state: paymentMethod.bankAddressState, postal_code: paymentMethod.bankAddressPostal,
+                            country: paymentMethod.bankAddressCountry,
+                        },
+                    }),
+                };
+                break;
+        }
+ 
+        const paymentDetail = await createPaymentDetail({ ...basePayload, ...railPayload } as any);
+        if (!paymentDetail.success || !paymentDetail.id) throw new Error(`Failed to create Nuvion payment detail: ${paymentDetail.error}`);
+        paymentDetailNuvionId = paymentDetail.id;
+        await prisma.beneficiaryPaymentDetail.update({ where: { id: paymentMethod.id }, data: { nuvionPaymentDetailId: paymentDetailNuvionId } });
+    }
+ 
+    return { counterpartyId, paymentDetailNuvionId };
+}
+
  
 // ═══════════════════════════════════════════════════════════════════════
 // PHASE 3 — treasury replenishment. Only for crypto-sourced payouts,
@@ -729,4 +985,34 @@ export async function initiateNuvionPayout(params: InitiatePayoutParams) {
         logger.error(`[NuvionPayout] Transfer ${transferRequest.id} failed, block released`, { error: error.message });
         throw new Error(`Nuvion payout failed: ${error.message}`);
     }
+}
+
+export const NUVION_FEE_ESTIMATES_USD: Record<string, number> = {
+    wire: 5,              // CONFIRMED — real $5 fee, same-currency USD Wire
+    fps: 6.9,             // CONFIRMED — real $6.90 fee, but specifically CROSS-CURRENCY (USD→GBP). May differ for same-currency GBP FPS if ever tested.
+    ach: 3,                // ⚠️ still unconfirmed
+    rtp: 3,                // ⚠️ unconfirmed — and this specific routing number is blocked regardless
+    sepa: 1,                // ⚠️ unconfirmed
+    swift: 15,              // ⚠️ unconfirmed, and confirmed unusable for US-addressed banks specifically
+    nip: 0.5,               // ⚠️ unconfirmed
+    'book-transfer': 0,
+    default: 7,              // CHANGED — raised from 5 to 7, since our one other confirmed cross-currency data point ($6.90) came in well above the old default
+};
+ 
+export function estimateNuvionFee(scheme: string | null | undefined): number {
+    if (!scheme) return NUVION_FEE_ESTIMATES_USD.default;
+    return NUVION_FEE_ESTIMATES_USD[scheme] ?? NUVION_FEE_ESTIMATES_USD.default;
+}
+
+export const VYRE_GLOBAL_PAYOUT_FEE = {
+    percentage: 0.01, // 1% — placeholder, adjust to whatever Vyre's actual pricing is
+    flatUsd: 1,        // $1 flat, added on top of the percentage
+    minUsd: 2,         // never charge less than this, regardless of amount
+    maxUsd: 25,        // cap, so a very large payout doesn't generate an absurd fee
+};
+ 
+export function calculateVyreFee(amount: string): number {
+    const amountNum = Number(amount);
+    const raw = amountNum * VYRE_GLOBAL_PAYOUT_FEE.percentage + VYRE_GLOBAL_PAYOUT_FEE.flatUsd;
+    return Math.min(Math.max(raw, VYRE_GLOBAL_PAYOUT_FEE.minUsd), VYRE_GLOBAL_PAYOUT_FEE.maxUsd);
 }

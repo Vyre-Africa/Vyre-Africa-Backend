@@ -205,3 +205,28 @@ Error: Admin wallet not found
 2026-08-17 00:15:57 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
 2026-08-17 00:15:57 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
 2026-08-17 00:15:59 [error] [NuvionPayout] Transfer 676b5387-d9e3-42aa-a852-f682669ff2e9 failed, block released 
+2026-09-10 13:32:59 [error] inflows.completed — treasury cmtqwo1n80000z5sbx79otsxc found but getAccount() failed to re-sync 
+2026-09-10 15:38:22 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 15:38:22 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
+2026-09-10 15:38:27 [error] [NuvionPayout] TransferRequest f905337b-5d66-4987-8e39-b3423486ef81 failed at submission 
+2026-09-10 15:48:09 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 16:04:47 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-10 16:04:52 [error] [NuvionPayout] TransferRequest 67d9750e-bbf8-4f07-a265-e08de1b3743d failed at submission 
+2026-09-10 16:07:05 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-10 17:04:24 [error] Nuvion call failed [updatePaymentDetail]: 
+2026-09-10 17:09:31 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 17:09:31 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
+2026-09-10 17:09:38 [error] [NuvionPayout] TransferRequest 5b5f71ab-8181-4b81-86d4-5250aea37736 failed at submission 
+2026-09-10 17:10:59 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 17:24:46 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 17:38:10 [error] Nuvion call failed [updatePaymentDetail]: 
+2026-09-10 18:05:31 [error] Nuvion call failed [updatePaymentDetail]: 
+2026-09-10 18:05:33 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 18:05:34 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 18:11:10 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 22:31:44 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-11 05:02:47 [error] Nuvion call failed [createFxQuote]: 
+2026-09-11 05:06:21 [error] Nuvion call failed [createFxQuote]: 
+2026-09-11 05:25:08 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-12 03:33:02 [error] Nuvion call failed [initiateCrossCurrencyTransfer]: 
+2026-09-13 06:09:10 [error] Nuvion call failed [initiateCrossCurrencyTransfer]: 

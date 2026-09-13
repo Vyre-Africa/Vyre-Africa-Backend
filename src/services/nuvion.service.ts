@@ -131,6 +131,46 @@ export async function getPaymentDetail(paymentDetailId: string): Promise<Payment
     }
 }
 
+export async function updatePaymentDetail(
+    paymentDetailId: string,
+    payload: Partial<{
+        account_holder_name: string;
+        bank_address: Record<string, any> | null; // WIDENED — was Record<string, any> only, now allows null to clear the field
+        [field: string]: any;
+    }>
+): Promise<PaymentDetailResult> {
+    try {
+        const res = await nuvionApi.patch(`/payment-details/${paymentDetailId}`, payload);
+        logger.info('Nuvion payment detail updated', { paymentDetailId, rawData: res.data });
+        return { success: true, ...res.data.data, rawData: res.data };
+    } catch (error: any) {
+        const { error: msg, httpStatus, rawData } = handleNuvionError('updatePaymentDetail', error);
+        return { success: false, error: msg, httpStatus, rawData };
+    }
+}
+ 
+
+export interface PaymentDetailListResult {
+    success: boolean;
+    paymentDetails?: Array<Record<string, any>>;
+    error?: string;
+    httpStatus?: number;
+    rawData?: any;
+}
+ 
+export async function listCounterpartyPaymentDetails(counterpartyId: string): Promise<PaymentDetailListResult> {
+    try {
+        const res = await nuvionApi.get(`/counterparties/${counterpartyId}/payment-details`);
+        // CONFIRMED shape: response.data.data.data is the actual array —
+        // double-nested "data" key, easy to miss.
+        return { success: true, paymentDetails: res.data.data.data, rawData: res.data };
+    } catch (error: any) {
+        const { error: msg, httpStatus, rawData } = handleNuvionError('listCounterpartyPaymentDetails', error);
+        return { success: false, error: msg, httpStatus, rawData };
+    }
+}
+ 
+
 // ─── FX Quotes ──────────────────────────────────────────────────────────
 
 export interface FxQuoteResult {
@@ -148,9 +188,26 @@ export async function createFxQuote(payload: {
         return { success: false, error: 'Exactly one of amount_to or amount_from must be provided, not both or neither' };
     }
     try {
-        const res = await nuvionApi.post('/fx-quotes', payload);
+        // FIXED — convert dollar amount to cents before sending.
+        // Confirmed via a real test: Nuvion rejects amount_from below
+        // 100, and 300 correctly produced a $3.00 quote.
+        const apiPayload = {
+            ...payload,
+            ...(payload.amount_from !== undefined && { amount_from: Math.round(payload.amount_from * 100) }),
+            ...(payload.amount_to !== undefined && { amount_to: Math.round(payload.amount_to * 100) }),
+        };
+        const res = await nuvionApi.post('/fx-quotes', apiPayload);
         logger.info('Nuvion FX quote created', { rawData: res.data });
-        return { success: true, ...res.data.data, rawData: res.data };
+        // Convert the response BACK to dollars, so callers keep working
+        // with plain dollar values throughout — cents never leak out.
+        const data = res.data.data;
+        return {
+            success: true,
+            ...data,
+            amount_from: data.amount_from / 100,
+            amount_to: data.amount_to / 100,
+            rawData: res.data,
+        };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('createFxQuote', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -171,9 +228,18 @@ export async function initiateSameCurrencyTransfer(payload: {
     unique_reference: string; meta?: Record<string, any>;
 }): Promise<TransferResult> {
     try {
-        const res = await nuvionApi.post('/transfers', payload);
+        // FIXED — amount converted to cents before sending.
+        const apiPayload = { ...payload, amount: Math.round(payload.amount * 100) };
+        const res = await nuvionApi.post('/transfers', apiPayload);
         logger.info('Nuvion transfer initiated (same-currency)', { rawData: res.data });
-        return { success: true, ...res.data.data, rawData: res.data };
+        const data = res.data.data;
+        return {
+            success: true,
+            ...data,
+            amount: data.amount / 100, // converted back to dollars for the caller
+            applicable_fee: data.applicable_fee / 100, // ALSO cents — same fix needed here
+            rawData: res.data,
+        };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('initiateSameCurrencyTransfer', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -187,9 +253,19 @@ export async function initiateCrossCurrencyTransfer(payload: {
     unique_reference: string; meta?: Record<string, any>;
 }): Promise<TransferResult> {
     try {
+        // No amount field here at all — the fx_quote_id already encodes
+        // the amount, since it was fixed to cents when the quote was
+        // created above. Nothing to convert on this call itself.
         const res = await nuvionApi.post('/transfers', payload);
         logger.info('Nuvion transfer initiated (cross-currency)', { rawData: res.data });
-        return { success: true, ...res.data.data, rawData: res.data };
+        const data = res.data.data;
+        return {
+            success: true,
+            ...data,
+            amount: data.amount / 100, // NEW — was missing, still raw cents before this
+            applicable_fee: data.applicable_fee / 100,
+            rawData: res.data,
+        };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('initiateCrossCurrencyTransfer', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -202,6 +278,35 @@ export async function getTransfer(transferId: string): Promise<TransferResult> {
         return { success: true, ...res.data.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('getTransfer', error);
+        return { success: false, error: msg, httpStatus, rawData };
+    }
+}
+
+export interface TransferStatusResult {
+    success: boolean;
+    id?: string;
+    status?: 'pending' | 'processing' | 'successful' | 'failed' | 'reversed'; // CONFIRMED real values, distinct from TransferResult's
+    status_reason?: string;
+    amount?: number;
+    applicable_fee?: number;
+    error?: string;
+    httpStatus?: number;
+    rawData?: any;
+}
+ 
+export async function getTransferStatus(transferId: string): Promise<TransferStatusResult> {
+    try {
+        const res = await nuvionApi.get(`/transfers/${transferId}`);
+        const data = res.data.data;
+        return {
+            success: true,
+            ...data,
+            amount: data.amount / 100,
+            applicable_fee: data.applicable_fee ? data.applicable_fee / 100 : undefined,
+            rawData: res.data,
+        };
+    } catch (error: any) {
+        const { error: msg, httpStatus, rawData } = handleNuvionError('getTransferStatus', error);
         return { success: false, error: msg, httpStatus, rawData };
     }
 }
@@ -229,7 +334,11 @@ export async function createTreasuryAccount(payload: {
 export async function getAccount(accountId: string): Promise<AccountResult> {
     try {
         const res = await nuvionApi.get(`/accounts/${accountId}`);
-        return { success: true, ...res.data.data, rawData: res.data };
+        // FIXED — was spreading res.data.data directly, which put
+        // "account" (containing balance, currency, etc.) as a nested
+        // key rather than flattening those fields to the top level.
+        // Matches createTreasuryAccount's convention now.
+        return { success: true, ...res.data.data.account, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('getAccount', error);
         return { success: false, error: msg, httpStatus, rawData };

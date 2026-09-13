@@ -4420,3 +4420,79 @@ Error: Admin wallet not found
 2026-09-02 00:14:04 [info] Connected to Ably! 
 2026-09-02 00:14:16 [info] Server running on port 4000 
 2026-09-02 00:14:18 [info] Connected to Ably! 
+2026-09-06 03:45:25 [info] Connected to Ably! 
+2026-09-07 08:14:46 [info] Processing Nuvion event (async) 
+2026-09-07 08:14:46 [info] Nuvion webhook raw payload 
+2026-09-07 08:14:47 [info] Connected to Ably! 
+2026-09-07 08:14:48 [info] NuvionTreasuryAccount created for USD: 01M1W086TX52RXWD4RKVQA34DX 
+2026-09-07 08:14:48 [info] Processing Nuvion event (async) 
+2026-09-07 08:14:48 [info] Nuvion webhook raw payload 
+2026-09-07 08:14:48 [info] account_details.created for a non-stablecoin account — no treasury action needed 
+2026-09-10 13:32:56 [info] Connected to Ably! 
+2026-09-10 13:32:57 [info] Processing Nuvion event (async) 
+2026-09-10 13:32:57 [info] Nuvion webhook raw payload 
+2026-09-10 13:32:59 [error] inflows.completed — treasury cmtqwo1n80000z5sbx79otsxc found but getAccount() failed to re-sync 
+2026-09-10 13:50:19 [info] Connected to Ably! 
+2026-09-10 13:50:21 [info] Processing Nuvion event (async) 
+2026-09-10 13:50:21 [info] Nuvion webhook raw payload 
+2026-09-10 13:50:23 [info] ✅ Treasury cmtqwo1n80000z5sbx79otsxc re-synced after inflow: 9900 USD. pendingManualTopupUsd reset. 
+2026-09-10 14:53:23 [info] Connected to Ably! 
+2026-09-10 14:57:02 [info] Connected to Ably! 
+2026-09-10 15:05:31 [info] Connected to Ably! 
+2026-09-10 15:38:05 [info] Connected to Ably! 
+2026-09-10 15:38:16 [info] [NuvionPayout] Crypto payout blocked (routed via USD treasury), queued: TransferRequest f905337b-5d66-4987-8e39-b3423486ef81 
+2026-09-10 15:38:20 [info] Nuvion counterparty created 
+2026-09-10 15:38:21 [info] Nuvion payment detail created 
+2026-09-10 15:38:22 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 15:38:22 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
+2026-09-10 15:38:27 [error] [NuvionPayout] TransferRequest f905337b-5d66-4987-8e39-b3423486ef81 failed at submission 
+2026-09-10 15:48:09 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 16:04:29 [info] Connected to Ably! 
+2026-09-10 16:04:43 [info] [NuvionPayout] Crypto payout blocked (routed via USD treasury), queued: TransferRequest 67d9750e-bbf8-4f07-a265-e08de1b3743d 
+2026-09-10 16:04:47 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-10 16:04:52 [error] [NuvionPayout] TransferRequest 67d9750e-bbf8-4f07-a265-e08de1b3743d failed at submission 
+2026-09-10 16:07:05 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-10 17:04:24 [error] Nuvion call failed [updatePaymentDetail]: 
+2026-09-10 17:07:37 [info] Nuvion payment detail updated 
+2026-09-10 17:09:02 [info] Connected to Ably! 
+2026-09-10 17:09:25 [info] [NuvionPayout] Crypto payout blocked (routed via USD treasury), queued: TransferRequest 5b5f71ab-8181-4b81-86d4-5250aea37736 
+2026-09-10 17:09:31 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 17:09:31 [error] [NuvionPayout] same-currency transfer failed permanently after 1 attempt(s) 
+2026-09-10 17:09:38 [error] [NuvionPayout] TransferRequest 5b5f71ab-8181-4b81-86d4-5250aea37736 failed at submission 
+2026-09-10 17:10:59 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 17:24:45 [info] Nuvion payment detail updated 
+2026-09-10 17:24:46 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 17:38:10 [error] Nuvion call failed [updatePaymentDetail]: 
+2026-09-10 18:05:31 [error] Nuvion call failed [updatePaymentDetail]: 
+2026-09-10 18:05:32 [info] Nuvion payment detail updated 
+2026-09-10 18:05:33 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 18:05:33 [info] Nuvion payment detail updated 
+2026-09-10 18:05:34 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 18:11:10 [info] Nuvion payment detail updated 
+2026-09-10 18:11:10 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-10 18:16:30 [info] Nuvion payment detail updated 
+2026-09-10 18:16:33 [info] Nuvion transfer initiated (same-currency) 
+2026-09-10 19:52:41 [info] Connected to Ably! 
+2026-09-10 19:52:56 [info] [NuvionPayout] Crypto payout blocked (routed via USD treasury) — amount 1 + Nuvion fee 5 + Vyre fee 2 = 8, queued: TransferRequest c625fc14-9425-4ffc-98b3-d6aed94211ff 
+2026-09-10 19:53:14 [info] Nuvion transfer initiated (same-currency) 
+2026-09-10 19:53:17 [info] [NuvionPayout] Crypto-sourced payout drew from USD float — pending manual top-up now: $1 
+2026-09-10 22:26:28 [info] Nuvion payment detail created 
+2026-09-10 22:31:44 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-09-11 04:49:15 [info] Connected to Ably! 
+2026-09-11 04:51:26 [info] Connected to Ably! 
+2026-09-11 05:02:46 [info] Nuvion payment detail created 
+2026-09-11 05:02:47 [error] Nuvion call failed [createFxQuote]: 
+2026-09-11 05:06:21 [error] Nuvion call failed [createFxQuote]: 
+2026-09-11 05:08:51 [info] Nuvion FX quote created 
+2026-09-11 05:25:08 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-11 05:28:58 [info] Nuvion FX quote created 
+2026-09-11 05:28:59 [info] Nuvion transfer initiated (cross-currency) 
+2026-09-12 03:28:56 [info] Nuvion payment detail created 
+2026-09-12 03:33:01 [info] Nuvion FX quote created 
+2026-09-12 03:33:02 [error] Nuvion call failed [initiateCrossCurrencyTransfer]: 
+2026-09-13 06:09:08 [info] Nuvion FX quote created 
+2026-09-13 06:09:10 [error] Nuvion call failed [initiateCrossCurrencyTransfer]: 
+2026-09-13 13:08:33 [info] Server running on port 4000 
+2026-09-13 13:08:34 [info] Connected to Ably! 
+2026-09-13 13:08:51 [info] Server running on port 4000 
+2026-09-13 13:08:52 [info] Connected to Ably! 

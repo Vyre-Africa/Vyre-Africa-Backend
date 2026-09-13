@@ -173,6 +173,7 @@ enum TransactionType {
   CRYPTO_DEPOSIT // blockchain to wallet
   CRYPTO_WITHDRAWAL // wallet to blockchain
   CURRENCY_EXCHANGE // NGN to USDT etc.
+  GLOBAL_PAYOUT
   FEE_CHARGE
   REFUND
   REVERSAL
@@ -647,11 +648,18 @@ model BeneficiaryPaymentDetail {
   beneficiaryId String
   beneficiary   beneficiary @relation(fields: [beneficiaryId], references: [id])
  
-  currency String  // e.g. "NGN", "GBP", "USD" — this IS the payout's toCurrency once selected, no separate input needed
-  label    String? // optional user-facing label, e.g. "Main GTBank account", "US checking" — helps distinguish multiple accounts in the same currency
+  currency String
+  label    String?
+ 
+  // NEW — which Nuvion rail this detail uses. Was implicitly assumed to
+  // always be 'bank-transfer' everywhere in processNuvionPayoutJob,
+  // which is wrong now that book-transfer (and eventually momo/
+  // stablecoin) are real, distinct options.
+  paymentMethod String @default("bank-transfer") // 'bank-transfer' | 'momo-transfer' | 'stablecoin-transfer' | 'book-transfer'
+  scheme        String? // e.g. 'ach' | 'wire' | 'rtp' | 'interac_email' | 'interac_account' | 'pesonet' | 'insta_pay' — only some rails need this
  
   accountNumber  String
-  accountName    String? // usually matches the beneficiary's own name, but allows override (e.g. a joint account under a different name)
+  accountName    String?
   bankName       String?
   bankCode       String?
   swiftCode      String?
@@ -659,14 +667,21 @@ model BeneficiaryPaymentDetail {
   routingNumber  String?
   sortCode       String?
  
-  // nuvionPaymentDetailId now lives HERE, not on beneficiary — moved
-  // down since each payment-detail record is its own distinct Nuvion
-  // object, potentially in a different currency/rail than any other
-  // payment method the same beneficiary has.
   nuvionPaymentDetailId String?
  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // NEW — required by Nuvion for at least the SWIFT (Acct No.) rail,
+  // confirmed via a real 422 validation error, not documented in their
+  // rail-fields table.
+  bankAddressLine1  String?
+  bankAddressCity   String?
+  bankAddressState  String?
+  bankAddressPostal String?
+  bankAddressCountry String?
+
+  accountType String? // 'checking' | 'savings'
  
   @@index([beneficiaryId])
 }
@@ -681,6 +696,8 @@ model TransferRequest {
   vyre   Json?
 
   currencyId String
+  currency   Currency @relation(fields: [currencyId], references: [id])
+
   amount     Decimal
 
   userId String
@@ -710,6 +727,10 @@ model TransferRequest {
   beneficiaryId              String?
   beneficiaryPaymentDetailId String?
 
+  vyreFeeUsd   Decimal? @db.Decimal(12, 2)
+  estimatedFeeUsd Decimal? @db.Decimal(12, 2)
+  actualFeeUsd    Decimal? @db.Decimal(12, 2)
+
   @@index([userId, createdAt])
   @@index([status])
 }
@@ -730,6 +751,12 @@ model NuvionTreasuryAccount {
  
   lastKnownAvailable Decimal?  @db.Decimal(20, 8)
   lastSyncedAt       DateTime?
+
+  // NEW — running total of how much has been drawn down by
+  // crypto-sourced payouts since the last manual top-up. Reset to 0 by
+  // ops (via a small script or manual query) whenever a real top-up is
+  // actually performed via Nuvion's dashboard.
+  pendingManualTopupUsd Decimal @default(0) @db.Decimal(20, 2)
  
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -827,7 +854,8 @@ model Currency {
 
   isStablecoin Boolean       @default(false)
   createdAt    DateTime      @default(now())
-  Wallet       Wallet[]
+  wallets       Wallet[]
+  transferRequests       TransferRequest[]
   basePairs    Pair[]        @relation("baseCurrency")
   quotePairs   Pair[]        @relation("quoteCurrency")
   Awaiting     Awaiting[]
