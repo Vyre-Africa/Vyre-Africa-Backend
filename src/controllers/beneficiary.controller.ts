@@ -50,20 +50,35 @@ class BeneficiaryController {
                 return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
             }
 
-            const { currency, label, accountNumber, accountName, bankName, bankCode, swiftCode, iban, routingNumber, sortCode } = req.body;
+            const {
+                currency, label, accountNumber, accountName, bankName, bankCode,
+                swiftCode, iban, routingNumber, sortCode,
+                paymentMethod, scheme,
+                accountType, // NEW — required for Wire/ACH/RTP
+                bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry, // NEW — required for Wire/ACH/RTP/SWIFT
+            } = req.body;
 
             if (!currency || !accountNumber) {
                 return res.status(400).json({ success: false, msg: 'currency and accountNumber are required' });
             }
 
+            const validMethods = ['bank-transfer', 'momo-transfer', 'stablecoin-transfer', 'book-transfer'];
+            if (paymentMethod && !validMethods.includes(paymentMethod)) {
+                return res.status(400).json({ success: false, msg: `paymentMethod must be one of: ${validMethods.join(', ')}` });
+            }
+
             const paymentDetail = await prisma.beneficiaryPaymentDetail.create({
                 data: {
                     beneficiaryId: id, currency, label,
+                    paymentMethod: paymentMethod ?? 'bank-transfer',
+                    scheme,
                     accountNumber: String(accountNumber), accountName, bankName,
                     bankCode: bankCode ? String(bankCode) : undefined,
                     swiftCode, iban,
                     routingNumber: routingNumber ? String(routingNumber) : undefined,
                     sortCode: sortCode ? String(sortCode) : undefined,
+                    accountType, // NEW
+                    bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry, // NEW
                 },
             });
 

@@ -485,6 +485,151 @@ class VirtualAccountService {
         }, { isolationLevel: 'Serializable' });
     }
 
+    // Freeze funds for a crypto-sourced global payout. Matches
+    // initiateBankWithdrawal's {transaction, block} return shape exactly.
+    async initiateGlobalPayoutBlock(payload: {
+        userId: string;
+        currencyId: string;
+        amount: string;
+        reference: string;
+        metadata?: any;
+    }) {
+        const { userId, currencyId, amount, reference, metadata } = payload;
+        const decimalAmount = toDecimal(amount);
+ 
+        const wallet = await prisma.wallet.findFirst({ where: { userId, currencyId } });
+        if (!wallet) throw new Error('Wallet not found');
+ 
+        const account = await prisma.virtualAccount.findUnique({ where: { id: wallet.id } });
+        if (!account) throw new Error('Account not found');
+        if (toDecimal(account.available).lt(decimalAmount)) throw new Error('Insufficient balance');
+ 
+        // FIXED — block creation and transaction creation now happen
+        // inside ONE shared transaction. If either step fails, BOTH roll
+        // back together — no more possibility of an orphaned, permanently
+        // frozen block with no VirtualTransaction to ever release it.
+        return await prisma.$transaction(async (tx) => {
+ 
+            await tx.$queryRaw`
+                SELECT id FROM "VirtualAccount"
+                WHERE id = ${wallet.id}
+                FOR UPDATE
+            `;
+ 
+            const acc = await tx.virtualAccount.findUnique({ where: { id: wallet.id } });
+            if (!acc) throw new Error('Account not found');
+            if (toDecimal(acc.available).lt(decimalAmount)) throw new Error('Insufficient balance');
+ 
+            const block = await tx.block.create({
+                data: {
+                    walletId: wallet.id,
+                    amount: decimalAmount,
+                    description: `Global payout pending - ${reference}`,
+                    active: true,
+                },
+            });
+ 
+            await tx.virtualAccount.update({
+                where: { id: wallet.id },
+                data: {
+                    frozen: { increment: decimalAmount },
+                    available: { decrement: decimalAmount },
+                },
+            });
+ 
+            const transaction = await tx.virtualTransaction.create({
+                data: {
+                    fromAccountId: wallet.id,
+                    amount: decimalAmount,
+                    netAmount: decimalAmount,
+                    currency: account.currency,
+                    type: 'GLOBAL_PAYOUT',
+                    status: 'PENDING',
+                    reference,
+                    blockId: block.id,
+                    metadata,
+                },
+            });
+ 
+            return { transaction, block };
+ 
+        }, { isolationLevel: 'Serializable' });
+    }
+
+    // Called once Nuvion's outflows.completed webhook confirms the
+    // payout genuinely landed. THIS is the point the debit becomes
+    // real and permanent — funds move from the user to admin's pooled
+    // wallet via transferFromBlock, ready for later replenishment.
+    async completeGlobalPayoutBlock(payload: {
+        transactionId: string;
+        blockId: string;
+        externalRef?: string;
+    }) {
+        const { transactionId, blockId, externalRef } = payload;
+
+        const transaction = await prisma.virtualTransaction.findUnique({
+            where: { id: transactionId }
+        });
+
+        if (!transaction) throw new Error('Transaction not found');
+        if (transaction.status !== 'PENDING') {
+            throw new Error('Transaction is not pending');
+        }
+
+        const block = await prisma.block.findUnique({
+            where: { id: blockId }
+        });
+
+        if (!block) throw new Error('Block not found');
+        if (!block.active) throw new Error('Block is not active');
+
+        const adminAccount = await this.getAccount(config.Admin_Id, transaction.currency);
+        if (!adminAccount) throw new Error('Admin Account not found');
+
+        const result = await this.transferFromBlock({
+            blockId,
+            toAccountId: adminAccount.id,
+            amount: block.amount.toString(), // reuses the block already fetched above — no need to re-query
+            description: `Global payout completed${externalRef ? ` - ${externalRef}` : ''}`,
+        });
+
+        await prisma.virtualTransaction.update({
+            where: { id: transactionId },
+            data: { status: 'COMPLETED', completedAt: new Date(), externalRef },
+        });
+
+        return result;
+    }
+
+    async failGlobalPayoutBlock(payload: {
+        transactionId: string;
+        blockId: string;
+        reason: string;
+    }) {
+        const { transactionId, blockId, reason } = payload;
+ 
+        const transaction = await prisma.virtualTransaction.findUnique({ where: { id: transactionId } });
+        if (!transaction) throw new Error('Transaction not found');
+        if (transaction.status !== 'PENDING') throw new Error('Transaction is not pending');
+ 
+        const block = await prisma.block.findUnique({ where: { id: blockId } });
+        if (!block) throw new Error('Block not found');
+        if (!block.active) throw new Error('Block is not active');
+ 
+        // Real, existing unblock — cleanly releases frozen funds back to
+        // available. Nothing was ever permanently moved, so no reverse
+        // transfer is needed at all.
+        await this.unblock(blockId);
+ 
+        const updated = await prisma.virtualTransaction.update({
+            where: { id: transactionId },
+            data: { status: 'FAILED', failureReason: reason },
+        });
+ 
+        return updated;
+    }
+ 
+
     // ── Crypto Deposit ───────────────────────────────────────────
 
     async cryptoDeposit(payload: {

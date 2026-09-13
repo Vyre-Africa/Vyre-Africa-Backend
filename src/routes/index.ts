@@ -900,6 +900,15 @@ router.get(
   nuvionController.getSupportedCurrencies
 );
 
+router.post(
+  '/payouts/nuvion/quote', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  nuvionController.getPayoutQuote
+);
+
+
+
 router.get(
   '/beneficiaries/bank-codes/:country', 
   requireAuthWithCORS(),
