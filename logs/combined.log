@@ -4496,3 +4496,8 @@ Error: Admin wallet not found
 2026-09-13 13:08:34 [info] Connected to Ably! 
 2026-09-13 13:08:51 [info] Server running on port 4000 
 2026-09-13 13:08:52 [info] Connected to Ably! 
+2026-09-14 02:50:02 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-14 03:03:03 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-14 03:07:11 [info] Connected to Ably! 
+2026-09-14 03:07:13 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-14 03:44:52 [info] Connected to Ably! 

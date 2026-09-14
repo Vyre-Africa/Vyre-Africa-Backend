@@ -8,6 +8,7 @@ import {
     initiateSameCurrencyTransfer,
     initiateCrossCurrencyTransfer,
     getAccount,
+    listCounterpartyPaymentDetails
 } from './nuvion.service';
 import { Decimal } from 'decimal.js';
 import { ulid } from 'ulid';
@@ -301,6 +302,7 @@ export async function blockCryptoPayout(params: BlockCryptoPayoutParams): Promis
 // PHASE 2 — slow, runs in the background worker
 // ═══════════════════════════════════════════════════════════════════════
 
+
 export async function processNuvionPayoutJob(jobData: {
     transferRequestId: string; transactionId: string; blockId: string;
     sharedReference: string; narration: string; isCryptoSourced?: boolean;
@@ -353,83 +355,10 @@ export async function processNuvionPayoutJob(jobData: {
     }
 
     try {
-        let counterpartyId = beneficiary.nuvionCounterpartyId;
-        let paymentDetailNuvionId = paymentMethod.nuvionPaymentDetailId;
-
-        if (!counterpartyId) {
-            const accountName = (beneficiary.bank as any)?.accountName as string;
-            if (!accountName) throw new Error('Beneficiary has no registered name');
-            const [firstName, ...lastNameParts] = accountName.trim().split(' ');
-            const lastName = lastNameParts.join(' ') || firstName;
-
-            const counterparty = await createCounterparty({
-                type: 'individual',
-                profile: {
-                    first_name: firstName, last_name: lastName, relationship: 'vendor',
-                    email: beneficiary.nuvionRecipientEmail!,
-                    address: {
-                        line1: beneficiary.nuvionRecipientAddressLine1!, city: beneficiary.nuvionRecipientAddressCity!,
-                        state_or_province: beneficiary.nuvionRecipientAddressState!, postal_code: beneficiary.nuvionRecipientAddressPostal!,
-                        country: beneficiary.nuvionRecipientCountry!,
-                    },
-                },
-            });
-            if (!counterparty.success || !counterparty.id) throw new Error(`Failed to create Nuvion counterparty: ${counterparty.error}`);
-            counterpartyId = counterparty.id;
-            await prisma.beneficiary.update({ where: { id: beneficiary.id }, data: { nuvionCounterpartyId: counterpartyId } });
-        }
-
-        if (!paymentDetailNuvionId) {
-            const basePayload = {
-                payment_method: paymentMethod.paymentMethod,
-                currency: toCurrency,
-                account_holder_name: paymentMethod.accountName ?? (beneficiary.bank as any)?.accountName,
-                counterparty_id: counterpartyId,
-                country: beneficiary.nuvionRecipientCountry!,
-            };
-
-            let railPayload: Record<string, any> = {};
-
-            switch (paymentMethod.paymentMethod) {
-                case 'book-transfer':
-                    railPayload = { account_number: String(paymentMethod.accountNumber) };
-                    break;
-                case 'momo-transfer':
-                    railPayload = { scheme: paymentMethod.scheme, phone_number: paymentMethod.accountNumber };
-                    break;
-                case 'stablecoin-transfer':
-                    railPayload = { blockchain_network: paymentMethod.bankCode, wallet_address: paymentMethod.accountNumber };
-                    break;
-                case 'bank-transfer':
-                default:
-                    railPayload = {
-                        account_number: String(paymentMethod.accountNumber),
-                        scheme: paymentMethod.scheme ?? (paymentMethod.bankAddressCountry === 'US' ? 'wire' : undefined),
-                        ...(paymentMethod.accountType && { account_type: paymentMethod.accountType }),
-                        ...(paymentMethod.bankName && { bank_name: paymentMethod.bankName }),
-                        ...(paymentMethod.bankCode && { bank_code: paymentMethod.bankCode }),
-                        ...(paymentMethod.swiftCode && { swift_bic: paymentMethod.swiftCode }),
-                        ...(paymentMethod.iban && { iban: paymentMethod.iban }),
-                        ...(paymentMethod.routingNumber && { routing_number: paymentMethod.routingNumber }),
-                        ...(paymentMethod.sortCode && { sort_code: paymentMethod.sortCode }),
-                        ...(paymentMethod.bankAddressLine1 && {
-                            bank_address: {
-                                line1: paymentMethod.bankAddressLine1,
-                                city: paymentMethod.bankAddressCity,
-                                state: paymentMethod.bankAddressState,
-                                postal_code: paymentMethod.bankAddressPostal,
-                                country: paymentMethod.bankAddressCountry,
-                            },
-                        }),
-                    };
-                    break;
-            }
-
-            const paymentDetail = await createPaymentDetail({ ...basePayload, ...railPayload } as any);
-            if (!paymentDetail.success || !paymentDetail.id) throw new Error(`Failed to create Nuvion payment detail: ${paymentDetail.error}`);
-            paymentDetailNuvionId = paymentDetail.id;
-            await prisma.beneficiaryPaymentDetail.update({ where: { id: paymentMethod.id }, data: { nuvionPaymentDetailId: paymentDetailNuvionId } });
-        }
+        // CHANGED — replaces ~80 lines of duplicated counterparty/payment
+        // detail creation logic with a single call to the shared function.
+        // Any future fix to this logic now only needs to happen once.
+        const { counterpartyId, paymentDetailNuvionId } = await ensureNuvionCounterpartyAndPaymentDetail(beneficiary, paymentMethod);
 
         let nuvionTransferId: string;
         let fxQuoteId: string | undefined;
@@ -454,16 +383,13 @@ export async function processNuvionPayoutJob(jobData: {
 
             const transferAttempt = await withBoundedRetry(
                 () => initiateCrossCurrencyTransfer({
-                    account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId!,
-                    counterparty_id: counterpartyId!, fx_quote_id: fxQuoteToUse!, narration,
+                    account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId,
+                    counterparty_id: counterpartyId, fx_quote_id: fxQuoteToUse!, narration,
                     payment_type: paymentMethod.paymentMethod as any, unique_reference: sharedReference,
                 }), 'cross-currency transfer'
             );
 
             if (!transferAttempt.success && preSuppliedFxQuoteId && /expired|invalid.*quote/i.test(transferAttempt.error ?? '')) {
-                // ⚠️ Best-guess pattern match — Nuvion's real expired-quote
-                // error text hasn't been confirmed yet. Worth tightening
-                // once one is actually observed.
                 logger.warn(`[NuvionPayout] Pre-fetched quote ${preSuppliedFxQuoteId} appears expired — creating a fresh one for TransferRequest ${transferRequestId}`);
 
                 const freshQuote = await createFxQuote({
@@ -476,8 +402,8 @@ export async function processNuvionPayoutJob(jobData: {
 
                 const retryAttempt = await withBoundedRetry(
                     () => initiateCrossCurrencyTransfer({
-                        account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId!,
-                        counterparty_id: counterpartyId!, fx_quote_id: freshQuote.id!, narration,
+                        account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId,
+                        counterparty_id: counterpartyId, fx_quote_id: freshQuote.id!, narration,
                         payment_type: paymentMethod.paymentMethod as any, unique_reference: sharedReference,
                     }), 'cross-currency transfer (retry with fresh quote)'
                 );
@@ -493,8 +419,8 @@ export async function processNuvionPayoutJob(jobData: {
         } else {
             const transferAttempt = await withBoundedRetry(
                 () => initiateSameCurrencyTransfer({
-                    account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId!,
-                    counterparty_id: counterpartyId!, amount: decimalAmount.toNumber(),
+                    account_id: treasury.nuvionAccountId, payment_detail_id: paymentDetailNuvionId,
+                    counterparty_id: counterpartyId, amount: decimalAmount.toNumber(),
                     currency: nuvionCurrencyCode,
                     narration, payment_type: paymentMethod.paymentMethod as any, unique_reference: sharedReference,
                 }), 'same-currency transfer'
@@ -587,19 +513,19 @@ async function failPayout(jobData: { transferRequestId: string; transactionId: s
 
 // nuvionPayout.service.ts — new shared function, extracted from what
 // was previously inline inside processNuvionPayoutJob's try block.
- 
+
 export async function ensureNuvionCounterpartyAndPaymentDetail(
     beneficiary: any,
     paymentMethod: any
 ): Promise<{ counterpartyId: string; paymentDetailNuvionId: string }> {
     let counterpartyId = beneficiary.nuvionCounterpartyId;
- 
+
     if (!counterpartyId) {
         const accountName = (beneficiary.bank as any)?.accountName as string;
         if (!accountName) throw new Error('Beneficiary has no registered name');
         const [firstName, ...lastNameParts] = accountName.trim().split(' ');
         const lastName = lastNameParts.join(' ') || firstName;
- 
+
         const counterparty = await createCounterparty({
             type: 'individual',
             profile: {
@@ -616,20 +542,30 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
         counterpartyId = counterparty.id;
         await prisma.beneficiary.update({ where: { id: beneficiary.id }, data: { nuvionCounterpartyId: counterpartyId } });
     }
- 
+
     let paymentDetailNuvionId = paymentMethod.nuvionPaymentDetailId;
- 
+
     if (!paymentDetailNuvionId) {
+        // Country is the BANK's country, not the beneficiary's own
+        // residence — GBP/USD map to their known single country;
+        // everything else falls back to bankAddressCountry, then the
+        // beneficiary's own country (correct for African bank-code
+        // markets, where the bank IS in the recipient's own country).
+        const bankCountry =
+            paymentMethod.currency === 'GBP' ? 'GB' :
+            paymentMethod.currency === 'USD' ? 'US' :
+            paymentMethod.bankAddressCountry || beneficiary.nuvionRecipientCountry!;
+
         const basePayload = {
             payment_method: paymentMethod.paymentMethod,
             currency: paymentMethod.currency,
             account_holder_name: paymentMethod.accountName ?? (beneficiary.bank as any)?.accountName,
             counterparty_id: counterpartyId,
-            country: beneficiary.nuvionRecipientCountry!,
+            country: bankCountry,
         };
- 
+
         let railPayload: Record<string, any> = {};
- 
+
         switch (paymentMethod.paymentMethod) {
             case 'book-transfer':
                 railPayload = { account_number: String(paymentMethod.accountNumber) };
@@ -662,13 +598,43 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
                 };
                 break;
         }
- 
+
         const paymentDetail = await createPaymentDetail({ ...basePayload, ...railPayload } as any);
-        if (!paymentDetail.success || !paymentDetail.id) throw new Error(`Failed to create Nuvion payment detail: ${paymentDetail.error}`);
-        paymentDetailNuvionId = paymentDetail.id;
-        await prisma.beneficiaryPaymentDetail.update({ where: { id: paymentMethod.id }, data: { nuvionPaymentDetailId: paymentDetailNuvionId } });
+
+        if (!paymentDetail.success) {
+            // Self-healing fallback — if this failed specifically
+            // because a payment detail with this account number already
+            // exists (partial-failure retry, or a race between
+            // concurrent requests), find the real one and link to it
+            // instead of failing outright.
+            const isDuplicate = (paymentDetail.rawData?.validations ?? []).some(
+                (v: any) => Object.values(v)[0] && (Object.values(v)[0] as any).type === 'error_duplicate_resource'
+            );
+
+            if (isDuplicate) {
+                logger.warn(`[NuvionPayout] Payment detail creation hit a duplicate for account ${paymentMethod.accountNumber} — looking up the existing one instead of failing.`);
+
+                const list = await listCounterpartyPaymentDetails(counterpartyId);
+                const existing = list.success
+                    ? list.paymentDetails?.find((pd: any) => pd.account_number === String(paymentMethod.accountNumber))
+                    : null;
+
+                if (existing) {
+                    paymentDetailNuvionId = existing.id;
+                    await prisma.beneficiaryPaymentDetail.update({ where: { id: paymentMethod.id }, data: { nuvionPaymentDetailId: paymentDetailNuvionId } });
+                    logger.info(`[NuvionPayout] Self-healed — linked to existing payment detail ${paymentDetailNuvionId}`);
+                } else {
+                    throw Object.assign(new Error(`Payment detail creation reported a duplicate, but no matching existing record was found for account ${paymentMethod.accountNumber}`), { rawData: paymentDetail.rawData });
+                }
+            } else {
+                throw Object.assign(new Error(`Failed to create Nuvion payment detail: ${paymentDetail.error}`), { rawData: paymentDetail.rawData });
+            }
+        } else {
+            paymentDetailNuvionId = paymentDetail.id!;
+            await prisma.beneficiaryPaymentDetail.update({ where: { id: paymentMethod.id }, data: { nuvionPaymentDetailId: paymentDetailNuvionId } });
+        }
     }
- 
+
     return { counterpartyId, paymentDetailNuvionId };
 }
 
