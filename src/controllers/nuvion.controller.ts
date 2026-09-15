@@ -226,7 +226,15 @@ class NuvionController {
  
             logger.info('Nuvion webhook received', { eventType });
  
-            const derivedEventId = data?.id ?? data?.unique_reference ?? `${eventType}_${JSON.stringify(data).slice(0, 100)}_${Date.now()}`;
+            // const derivedEventId = data?.id ?? data?.unique_reference ?? `${eventType}_${JSON.stringify(data).slice(0, 100)}_${Date.now()}`;
+
+            const derivedEventId = data?.id
+                ? `${eventType}_${data.id}`
+                : data?.unique_reference
+                    ? `${eventType}_${data.unique_reference}`
+                    : `${eventType}_${JSON.stringify(data).slice(0, 100)}_${Date.now()}`; 
+
+            
  
             // Idempotency check + record stays HERE, synchronous — this is
             // what prevents a retried delivery from queueing the same
