@@ -114,6 +114,8 @@ class VirtualAccountService {
 
     async getAccount(userId: string, currency: string, type = 'STANDARD', blockchain?: string) {
 
+        console.log(`Fetching account for userId=${userId}, currency=${currency}, type=${type}, blockchain=${blockchain}`);
+
         const account = await prisma.virtualAccount.findFirst({
             where: {
                 userId,
@@ -582,14 +584,32 @@ class VirtualAccountService {
 
         if (!block) throw new Error('Block not found');
         if (!block.active) throw new Error('Block is not active');
+        if (!block.walletId) throw new Error('Block has no associated wallet'); // NEW — guards the nullable field
 
-        const adminAccount = await this.getAccount(config.Admin_Id, transaction.currency);
+        const wallet = await prisma.wallet.findUnique({
+            where: { id: block.walletId }, // now narrowed to string, not string | null
+        });
+
+        if (!wallet) throw new Error('Source wallet not found for this block');
+        if (!wallet.currencyId) throw new Error('Source wallet has no currency set');
+
+        // NEW — Wallet has no direct `currency` relation to include; it's
+        // a plain currencyId FK. Fetch the real Currency record separately.
+        const currency = await prisma.currency.findUnique({
+            where: { id: wallet.currencyId },
+        });
+
+        if (!currency) throw new Error('Currency record not found for this wallet');
+
+        console.log(`Admin account fetched: ${config.Admin_Id} for currency ${currency.ISO} on chain ${currency.chain ?? 'null (fiat)'}`);
+        const adminAccount = await this.getAccount(config.Admin_Id, currency.ISO, 'STANDARD', currency.chain ?? undefined);
+
         if (!adminAccount) throw new Error('Admin Account not found');
 
         const result = await this.transferFromBlock({
             blockId,
             toAccountId: adminAccount.id,
-            amount: block.amount.toString(), // reuses the block already fetched above — no need to re-query
+            amount: block.amount.toString(),
             description: `Global payout completed${externalRef ? ` - ${externalRef}` : ''}`,
         });
 
@@ -600,7 +620,7 @@ class VirtualAccountService {
 
         return result;
     }
-
+    
     async failGlobalPayoutBlock(payload: {
         transactionId: string;
         blockId: string;
