@@ -233,3 +233,4 @@ Error: Admin wallet not found
 2026-09-14 02:50:02 [error] Nuvion call failed [createPaymentDetail]: 
 2026-09-14 03:03:03 [error] Nuvion call failed [createPaymentDetail]: 
 2026-09-14 03:07:13 [error] Nuvion call failed [createPaymentDetail]: 
+2026-09-14 23:10:26 [error] Nuvion call failed [initiateCrossCurrencyTransfer]: 

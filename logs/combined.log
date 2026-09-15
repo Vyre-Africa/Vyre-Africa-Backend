@@ -4501,3 +4501,13 @@ Error: Admin wallet not found
 2026-09-14 03:07:11 [info] Connected to Ably! 
 2026-09-14 03:07:13 [error] Nuvion call failed [createPaymentDetail]: 
 2026-09-14 03:44:52 [info] Connected to Ably! 
+2026-09-14 03:51:31 [info] Server running on port 4000 
+2026-09-14 03:51:32 [info] Connected to Ably! 
+2026-09-14 03:51:49 [info] Server running on port 4000 
+2026-09-14 03:51:50 [info] Connected to Ably! 
+2026-09-14 23:10:24 [info] Nuvion FX quote created 
+2026-09-14 23:10:26 [error] Nuvion call failed [initiateCrossCurrencyTransfer]: 
+2026-09-15 10:55:31 [info] Server running on port 4000 
+2026-09-15 10:55:32 [info] Connected to Ably! 
+2026-09-15 10:55:49 [info] Server running on port 4000 
+2026-09-15 10:55:50 [info] Connected to Ably! 

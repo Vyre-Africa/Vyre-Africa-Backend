@@ -21,6 +21,7 @@ import virtualAccountService from './virtualAccount.service';
 import { currency } from '../globals';
 import { trackKycUsage } from '../services/kycLimits.service';
 import { getAccount } from './nuvion.service';
+import { toNuvionCurrencyCode } from './nuvionpayout.service';
 
 
 
@@ -2608,13 +2609,41 @@ class eventService {
               await prisma.transferRequest.update({ where: { id: transferRequest.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
  
               const completedAccount = await prisma.virtualAccount.findUnique({ where: { id: transaction.fromAccountId! } });
+
+              const paymentMethod = transferRequest.beneficiaryPaymentDetailId
+                ? await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: transferRequest.beneficiaryPaymentDetailId } })
+                : null;
+ 
+              const beneficiary = transferRequest.beneficiaryId
+              ? await prisma.beneficiary.findUnique({ where: { id: transferRequest.beneficiaryId } })
+              : null;
+    
+              const currency = await prisma.currency.findUnique({
+                where: { id: transferRequest.currencyId },
+                select: { ISO: true },
+              });
+
+              const readableCode = currency ? toNuvionCurrencyCode(currency.ISO) : transferRequest.currencyId;
+    
+              const displayAmount = DecimalUtil.roundForDisplay(transferRequest.amount, readableCode);
+
+              const maskedAccount = paymentMethod?.accountNumber
+              ? `${String(paymentMethod.accountNumber).slice(0, 4)}****${String(paymentMethod.accountNumber).slice(-4)}`
+              : 'N/A';
+
               if (completedAccount) {
-                
-                await notificationService.queue({
-                      userId: completedAccount.userId, title: 'Transfer complete', type: 'GENERAL',
-                      content: `Your ${transferRequest.currency.ISO} ${transferRequest.amount} transfer has been delivered successfully.`,
-                });
+                  await notificationService.queue({
+                      userId: completedAccount.userId,
+                      title: 'Transfer Sent',
+                      content: `Your global transfer of <strong>${displayAmount} ${readableCode}</strong> to ${(beneficiary?.bank as any)?.accountName ?? 'the recipient'} (${paymentMethod?.bankName ?? 'N/A'}) was successful.
+                                  <br>Reference: ${transferRequest.reference}
+                                  <br>Account: ${maskedAccount}`,
+                      type: 'GENERAL',
+                  });
               }
+
+              
+
               logger.info(`TransferRequest ${transferRequest.id} completed via outflows.completed webhook`);
               break;
           }
@@ -2659,14 +2688,26 @@ class eventService {
                   where: { id: transferRequest.id },
                   data: { status: 'FAILED', errorMessage: statusReason ?? eventType, failedAt: new Date() },
               });
+
+              const currency = await prisma.currency.findUnique({
+                  where: { id: transferRequest.currencyId },
+                  select: { ISO: true },
+              });
+              const readableCode = currency ? toNuvionCurrencyCode(currency.ISO) : transferRequest.currencyId;
  
               const failedAccount = await prisma.virtualAccount.findUnique({ where: { id: transaction.fromAccountId! } });
+
               if (failedAccount) {
                   await notificationService.queue({
-                      userId: failedAccount.userId, title: 'Transfer unsuccessful', type: 'GENERAL',
-                      content: `Your ${transferRequest.currency.ISO} ${transferRequest.amount} transfer could not be completed. The funds have been returned to your balance.`,
+                      userId: failedAccount.userId,
+                      title: 'Transfer Unsuccessful',
+                      content: `Your global transfer of <strong>${DecimalUtil.roundForDisplay(transferRequest.amount, readableCode)} ${readableCode}</strong> could not be completed.
+                                  <br>Reason: ${statusReason ?? eventType}
+                                  <br>The funds have been returned to your balance.`,
+                      type: 'GENERAL',
                   });
               }
+              
               logger.info(`TransferRequest ${transferRequest.id} failed via ${eventType} webhook — funds released`);
               break;
           }
