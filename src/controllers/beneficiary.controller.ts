@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
 import logger from '../config/logger';
-import { getBankCodes } from '../services/nuvion.service';
+import { getBankCodes, updatePaymentDetail } from '../services/nuvion.service';
 
 class BeneficiaryController {
 
@@ -193,6 +193,65 @@ class BeneficiaryController {
             return res.status(500).json({ success: false, msg: 'Internal Server Error' });
         }
     }
+
+    async updatePaymentDetail(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        const { id, paymentDetailId } = req.params;
+        try {
+            const beneficiary = await prisma.beneficiary.findUnique({ where: { id } });
+            if (!beneficiary || beneficiary.userId !== user.id) {
+                return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
+            }
+ 
+            const existing = await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: paymentDetailId } });
+            if (!existing || existing.beneficiaryId !== id) {
+                return res.status(404).json({ success: false, msg: 'Payment method not found' });
+            }
+ 
+            const {
+                accountName, bankName, bankCode, swiftCode, iban, routingNumber, sortCode,
+                accountType, bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry,
+            } = req.body;
+ 
+            // Sync to Nuvion first — if this fails, don't touch the local
+            // record, so the two never drift out of sync with each other.
+            if (existing.nuvionPaymentDetailId) {
+                const nuvionUpdate = await updatePaymentDetail(existing.nuvionPaymentDetailId, {
+                    counterparty_id: beneficiary.nuvionCounterpartyId!, // confirmed required even on PATCH
+                    account_holder_name: accountName,
+                    ...(bankName && { bank_name: bankName }),
+                    ...(bankAddressLine1 && {
+                        bank_address: {
+                            line1: bankAddressLine1, city: bankAddressCity,
+                            state: bankAddressState, postal_code: bankAddressPostal, country: bankAddressCountry,
+                        },
+                    }),
+                });
+                if (!nuvionUpdate.success) {
+                    return res.status(422).json({ success: false, msg: `Could not update with Nuvion: ${nuvionUpdate.error}` });
+                }
+            }
+ 
+            const updated = await prisma.beneficiaryPaymentDetail.update({
+                where: { id: paymentDetailId },
+                data: {
+                    accountName, bankName,
+                    bankCode: bankCode ? String(bankCode) : undefined,
+                    swiftCode, iban,
+                    routingNumber: routingNumber ? String(routingNumber) : undefined,
+                    sortCode: sortCode ? String(sortCode) : undefined,
+                    accountType,
+                    bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry,
+                },
+            });
+ 
+            return res.status(200).json({ success: true, msg: 'Payment method updated', paymentDetail: updated });
+        } catch (error: any) {
+            logger.error('Failed to update payment detail:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+ 
 }
 
 export default new BeneficiaryController();

@@ -4524,3 +4524,7 @@ Error: Admin wallet not found
 2026-09-15 13:39:46 [info] Processing Nuvion event (async) 
 2026-09-15 13:39:46 [info] Nuvion webhook raw payload 
 2026-09-15 13:39:54 [info] TransferRequest 5b0204af-c744-4606-a11d-aeaa96cb7667 completed via outflows.completed webhook 
+2026-09-16 22:57:42 [info] Server running on port 4000 
+2026-09-16 22:57:43 [info] Connected to Ably! 
+2026-09-16 22:58:01 [info] Server running on port 4000 
+2026-09-16 22:58:02 [info] Connected to Ably! 
