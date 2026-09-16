@@ -930,6 +930,13 @@ router.post(
   beneficiaryController.addPaymentDetail
 );
 
+router.patch(
+  '/beneficiaries/:id/payment-details/:paymentDetailId', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  beneficiaryController.updatePaymentDetail
+);
+
 router.get(
   '/beneficiaries/:id/payment-details',
   requireAuthWithCORS(),                       
