@@ -735,6 +735,29 @@ model TransferRequest {
   @@index([status])
 }
 
+model WalletFundingRequest {
+  id                    String   @id @default(cuid())
+  userId                String
+  currencyId            String
+  currency              Currency @relation(fields: [currencyId], references: [id])
+  chain                 String
+  fiatAmount            Decimal  @db.Decimal(20, 2)
+  fiatCurrency          String
+  expectedCryptoAmount  Decimal  @db.Decimal(20, 8)
+  merchantReference     String   @unique
+  quidaxReference       String?
+  bankName              String?
+  bankAccountNumber     String?
+  bankAccountName       String?
+  status                String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
+  failureReason         String?
+  createdAt             DateTime @default(now())
+  completedAt           DateTime?
+ 
+  @@index([userId])
+  @@index([status])
+}
+
 model NuvionTreasuryAccount {
   id              String   @id @default(cuid())
   currency        String
@@ -856,6 +879,7 @@ model Currency {
   createdAt    DateTime      @default(now())
   wallets       Wallet[]
   transferRequests       TransferRequest[]
+  walletFundingRequests       WalletFundingRequest[]
   basePairs    Pair[]        @relation("baseCurrency")
   quotePairs   Pair[]        @relation("quoteCurrency")
   Awaiting     Awaiting[]

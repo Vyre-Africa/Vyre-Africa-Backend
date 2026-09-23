@@ -36,6 +36,7 @@ import controController from '../controllers/contro.controller';
 import nuvionController from '../controllers/nuvion.controller';
 import diditController from '../controllers/didit.controller';
 import beneficiaryController from '../controllers/beneficiary.controller';
+import walletFundingController from '../controllers/walletFunding.controller';
 
 
 const router = Router();
@@ -964,6 +965,38 @@ router.get(
   authMiddleware, 
   beneficiaryController.getBeneficiary
 );
+
+// wallet funding routes 
+// wallet funding routes
+
+router.get(
+  '/wallet-funding/rate', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  walletFundingController.getRatePreview
+);
+
+router.post(
+  '/wallet-funding/initiate', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  walletFundingController.initiate
+);
+
+router.get(
+  '/wallet-funding/:reference',
+  requireAuthWithCORS(),
+  authMiddleware, 
+  walletFundingController.getStatus
+);
+
+router.get(
+  '/wallet-funding', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  walletFundingController.listRecent
+);
+ 
 
 // router.get(
 //   '/user/two-factor-authentication',

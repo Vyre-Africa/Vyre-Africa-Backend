@@ -2254,71 +2254,80 @@ class eventService {
   // ______________________________________________//
 
   async processRampWebhook(body: any) {
-      const { event, data } = body
-  
-      logger.info('Ramp webhook received', { event, merchantReference: data.merchant_reference })
-  
-      // Find the awaiting by merchant reference
-      // Include pair + currencies so trackKycUsage can convert to USD
-      const awaiting = await prisma.awaiting.findFirst({
-          where:   { reference: data.merchant_reference },
-          include: {
-              order: {
-                  include: {
-                      pair: {
-                          include: {
-                              baseCurrency:  true,
-                              quoteCurrency: true,
-                          }
-                      }
-                  }
-              }
-          }
-      })
-  
-      if (!awaiting) {
-          logger.warn('Ramp webhook — awaiting not found', { reference: data.merchant_reference })
-          return
-      }
-  
-      if (!awaiting.isSynthetic) {
-          logger.warn('Ramp webhook — awaiting is not synthetic', { awaitingId: awaiting.id })
-          return
-      }
-  
-      // Route to correct handler based on Quidax event names
-      switch (event) {
-  
-        // ── SELL order (user pays fiat → receives crypto) = Quidax ONRAMP ────────
-          case 'buy_transaction.processing':
-              await this.handleOnrampProcessing(awaiting)
-              break
-  
-          case 'buy_transaction.successful':
-              await this.handleOnrampCompleted(awaiting)
-              break
-  
-          case 'buy_transaction.failed':
-              await this.handleRampFailed(awaiting, 'onramp')
-              break
-  
-        // ── BUY order (user sends crypto → receives fiat) = Quidax OFFRAMP ───────
-          case 'sell_transaction.processing':
-              await this.handleOfframpProcessing(awaiting)
-              break
-  
-          case 'sell_transaction.successful':
-              await this.handleOfframpCompleted(awaiting, data)
-              break
-  
-          case 'sell_transaction.failed':
-              await this.handleRampFailed(awaiting, 'offramp')
-              break
-  
-          default:
-              logger.warn('Ramp webhook — unhandled event', { event })
-      }
-  }
+    const { event, data } = body
+ 
+    logger.info('Ramp webhook received', { event, merchantReference: data.merchant_reference })
+ 
+    // NEW — branch to the wallet-funding flow FIRST, before any Awaiting
+    // lookup at all. This flow has no Awaiting record; routing it through
+    // the existing logic below would just log "awaiting not found" and
+    // silently drop the webhook, exactly the same class of bug as the
+    // Nuvion outflows.completed dedup collision from earlier.
+    if (data.merchant_reference?.startsWith('WALLETFUND_')) {
+        return this.processWalletFundingWebhook(event, data)
+    }
+ 
+    // Find the awaiting by merchant reference
+    // Include pair + currencies so trackKycUsage can convert to USD
+    const awaiting = await prisma.awaiting.findFirst({
+        where:   { reference: data.merchant_reference },
+        include: {
+            order: {
+                include: {
+                    pair: {
+                        include: {
+                            baseCurrency:  true,
+                            quoteCurrency: true,
+                        }
+                    }
+                }
+            }
+        }
+    })
+ 
+    if (!awaiting) {
+        logger.warn('Ramp webhook — awaiting not found', { reference: data.merchant_reference })
+        return
+    }
+ 
+    if (!awaiting.isSynthetic) {
+        logger.warn('Ramp webhook — awaiting is not synthetic', { awaitingId: awaiting.id })
+        return
+    }
+ 
+    // Route to correct handler based on Quidax event names
+    switch (event) {
+ 
+      // ── SELL order (user pays fiat → receives crypto) = Quidax ONRAMP ────────
+        case 'buy_transaction.processing':
+            await this.handleOnrampProcessing(awaiting)
+            break
+ 
+        case 'buy_transaction.successful':
+            await this.handleOnrampCompleted(awaiting)
+            break
+ 
+        case 'buy_transaction.failed':
+            await this.handleRampFailed(awaiting, 'onramp')
+            break
+ 
+      // ── BUY order (user sends crypto → receives fiat) = Quidax OFFRAMP ───────
+        case 'sell_transaction.processing':
+            await this.handleOfframpProcessing(awaiting)
+            break
+ 
+        case 'sell_transaction.successful':
+            await this.handleOfframpCompleted(awaiting, data)
+            break
+ 
+        case 'sell_transaction.failed':
+            await this.handleRampFailed(awaiting, 'offramp')
+            break
+ 
+        default:
+            logger.warn('Ramp webhook — unhandled event', { event })
+    }
+}
 
   // ── ONRAMP: Quidax received the fiat, processing now ───────
   private async handleOnrampProcessing(awaiting: any) {
@@ -2468,6 +2477,146 @@ class eventService {
 
     await ablyService.awaiting_Order_Update(awaiting.id);
     logger.error(`${type} failed`, { awaitingId: awaiting.id });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // NEW — wallet-funding flow (direct top-up, no Awaiting/order involved)
+  // ═══════════════════════════════════════════════════════════════════════
+  
+  private async processWalletFundingWebhook(event: string, data: any) {
+      const record = await prisma.walletFundingRequest.findUnique({
+          where: { merchantReference: data.merchant_reference },
+      })
+  
+      if (!record) {
+          logger.warn('Wallet funding webhook — record not found', { reference: data.merchant_reference })
+          return
+      }
+  
+      switch (event) {
+          case 'buy_transaction.processing':
+              await prisma.walletFundingRequest.update({
+                  where: { id: record.id },
+                  data: { status: 'PROCESSING' },
+              })
+              logger.info('Wallet funding processing', { id: record.id })
+              break
+  
+          case 'buy_transaction.successful':
+              await this.handleWalletFundingCompleted(record)
+              break
+  
+          case 'buy_transaction.failed':
+              await prisma.walletFundingRequest.update({
+                  where: { id: record.id },
+                  data: { status: 'FAILED', failureReason: 'Quidax reported transaction failed' },
+              })
+              await notificationService.queue({
+                  userId: record.userId,
+                  title: 'Wallet Funding Failed',
+                  type: 'GENERAL',
+                  content: 'Your wallet funding could not be processed. If you made payment, please contact support.',
+              })
+              logger.error('Wallet funding failed', { id: record.id })
+              break
+  
+          default:
+              logger.warn('Wallet funding webhook — unhandled event', { event })
+      }
+  }
+
+  private async handleWalletFundingCompleted(record: { id: string }) {
+      // FIXED — the whole check-and-credit sequence now runs inside one
+      // transaction, with the WalletFundingRequest row locked FIRST. A
+      // second, concurrent webhook delivery for the same event physically
+      // cannot read the row until this transaction commits — so it will
+      // always see status: 'COMPLETED' once it does get in, not the stale
+      // 'PENDING' both deliveries would otherwise race to see.
+      const result = await prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`
+              SELECT id FROM "WalletFundingRequest"
+              WHERE id = ${record.id}
+              FOR UPDATE
+          `;
+  
+          const locked = await tx.walletFundingRequest.findUnique({ where: { id: record.id } });
+          if (!locked) throw new Error('WalletFundingRequest not found');
+  
+          if (locked.status === 'COMPLETED') {
+              logger.info('Wallet funding webhook — already completed, skipping', { id: locked.id });
+              return null; // signals "already handled" to the caller below
+          }
+  
+          const wallet = await tx.wallet.findFirst({
+              where: { userId: locked.userId, currencyId: locked.currencyId },
+          });
+          if (!wallet) throw new Error('User wallet not found at completion time');
+  
+          const currency = await tx.currency.findUnique({ where: { id: locked.currencyId } });
+  
+          // Mark COMPLETED inside the SAME transaction as the credit below —
+          // if anything after this point throws, the whole transaction
+          // rolls back together, so the status flip and the actual credit
+          // can never drift apart from each other.
+          await tx.walletFundingRequest.update({
+              where: { id: locked.id },
+              data: { status: 'COMPLETED', completedAt: new Date() },
+          });
+  
+          return { locked, wallet, currency };
+      }, { isolationLevel: 'Serializable' });
+  
+      if (!result) return; // already handled by a prior delivery
+  
+      const { locked, wallet, currency } = result;
+  
+      // creditAccount runs its own separate transaction (locking the
+      // VirtualAccount row) — deliberately kept outside the transaction
+      // above, since that one's job was purely to win the race on the
+      // WalletFundingRequest row, not to hold a lock across two accounts
+      // at once.
+      await virtualAccountService.creditAccount({
+          accountId: wallet.id,
+          amount: locked.expectedCryptoAmount.toString(),
+          description: `Wallet funded via Quidax onramp — ${locked.merchantReference}`,
+          metadata: {
+              source: 'QUIDAX_ONRAMP',
+              fiatAmount: locked.fiatAmount.toString(),
+              fiatCurrency: locked.fiatCurrency,
+              merchantReference: locked.merchantReference,
+          },
+      });
+  
+      await prisma.virtualTransaction.create({
+          data: {
+              toAccountId: wallet.id,
+              amount: locked.expectedCryptoAmount,
+              fee: 0,
+              netAmount: locked.expectedCryptoAmount,
+              currency: currency?.ISO ?? '',
+              type: 'CRYPTO_DEPOSIT',
+              status: 'COMPLETED',
+              reference: locked.merchantReference,
+              blockchain: locked.chain,
+              metadata: {
+                  source: 'QUIDAX_ONRAMP',
+                  fiatAmount: locked.fiatAmount.toString(),
+                  fiatCurrency: locked.fiatCurrency,
+              },
+              completedAt: new Date(),
+          },
+      });
+  
+      await notificationService.queue({
+          userId: locked.userId,
+          title: 'Wallet Funded',
+          type: 'GENERAL',
+          content: `Your wallet has been credited with <strong>${locked.expectedCryptoAmount} ${currency?.ISO}</strong>. Thanks for choosing Vyre.`,
+      });
+  
+      logger.info('Wallet funding completed — user credited', {
+          id: locked.id, userId: locked.userId, amount: locked.expectedCryptoAmount.toString(),
+      });
   }
 
   async handleNuvionEvent(jobData: { eventType: string; data: any; rawBody: any }) {
