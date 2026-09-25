@@ -2613,6 +2613,20 @@ class eventService {
           type: 'GENERAL',
           content: `Your wallet has been credited with <strong>${locked.expectedCryptoAmount} ${currency?.ISO}</strong>. Thanks for choosing Vyre.`,
       });
+
+      // NEW — records usage against the user's monthly KYC tier limit.
+      // Reuses the exact call shape from handleOfframpCompleted. Amount is
+      // expressed in the STABLECOIN itself with ratePerUsd: 1 rather than
+      // converting the raw fiat amount — USDC/USDT are USD-pegged, so this
+      // is both simpler and more accurate than routing through a separate
+      // fiat→USD rate this function doesn't otherwise need.
+      trackKycUsage({
+          userId:      locked.userId,
+          amount:      Number(locked.expectedCryptoAmount),
+          currencyIso: currency?.ISO ?? 'USDC',
+          ratePerUsd:  1,
+          context:     `handleWalletFundingCompleted | id=${locked.id}`,
+      });
   
       logger.info('Wallet funding completed — user credited', {
           id: locked.id, userId: locked.userId, amount: locked.expectedCryptoAmount.toString(),
