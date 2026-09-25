@@ -12,25 +12,42 @@ class WalletFundingController {
         try {
             const { user } = req;
             const { currencyId, fiatAmount, fiatCurrency } = req.body;
-
+ 
             if (!currencyId || !fiatAmount || !fiatCurrency) {
                 return res.status(400).json({ success: false, msg: 'currencyId, fiatAmount and fiatCurrency are required' });
             }
-
+ 
+            if (!user.legalFirstName || !user.legalLastName) {
+                return res.status(400).json({
+                    success: false,
+                    msg: 'Please complete identity verification before funding your wallet this way.',
+                    requiresKyc: true,
+                });
+            }
+ 
+            // NEW — admin-only override. The shared admin test account
+            // (vyreafrica@gmail.com) causes issues on Quidax's side, so
+            // this substitutes a real personal email for that ONE
+            // account specifically before the request ever reaches
+            // Quidax. Doesn't touch userDetails.email for any other user.
+            const quidaxEmail = user.email === 'vyreafrica@gmail.com'
+                ? 'harveyanafuwe@gmail.com'
+                : user.email;
+ 
             const result = await walletFundingService.initiateStablecoinWalletFunding({
                 userId: user.id,
                 currencyId,
                 fiatAmount: String(fiatAmount),
                 fiatCurrency,
                 userDetails: {
-                    email: user.email,
-                    firstName: user.firstName,
-                    lastName: user.lastName,
+                    email: quidaxEmail,
+                    firstName: user.legalFirstName,
+                    lastName: user.legalLastName,
                 },
             });
-
+ 
             return res.status(200).json({ success: true, ...result });
-
+ 
         } catch (error: any) {
             logger.error('Failed to initiate wallet funding:', error);
             return res.status(400).json({ success: false, msg: error.message ?? 'Could not initiate wallet funding' });
