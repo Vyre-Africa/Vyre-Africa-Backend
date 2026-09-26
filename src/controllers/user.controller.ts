@@ -1165,7 +1165,8 @@ class UserController {
                     transactionPin: true,
                     bvnSubmitted: true,
                     bvnVerified: true,
-                    isVendor: true
+                    isVendor: true,
+                    kycTier: true
                 }
             });
 
