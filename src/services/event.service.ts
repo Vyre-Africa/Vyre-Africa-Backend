@@ -2928,11 +2928,19 @@ class eventService {
   }
  
 
-  async handleDiditEvent(jobData: { body: any }) {
-    const { body } = jobData;
-    const { session_id, status, vendor_data, decision } = body;
+  // event.service.ts — handleDiditEvent
+// Two-workflow model:
+//   Workflow A (identity): ID + liveness + face match + AML  → Tier 2
+//   Workflow B (address):  POA only                          → Tier 3
+//
+// Branches on workflow_id, which is CONFIRMED present in every webhook
+// payload (e.g. "ba34438d-1a87-4ab5-86c7-f7cee1b11ebf").
 
-    logger.info('Processing Didit event (async)', { session_id, status, vendor_data });
+async handleDiditEvent(jobData: { body: any }) {
+    const { body } = jobData;
+    const { session_id, status, vendor_data, decision, workflow_id } = body;
+
+    logger.info('Processing Didit event (async)', { session_id, status, vendor_data, workflow_id });
     logger.info('Didit webhook raw payload', { body });
 
     if (!vendor_data) {
@@ -2946,68 +2954,238 @@ class eventService {
         return;
     }
 
+    // ─── Which workflow fired? ────────────────────────────────────────
+    const isIdentityWorkflow = workflow_id === config.DIDIT_IDENTITY_WORKFLOW_ID;
+    const isAddressWorkflow  = workflow_id === config.DIDIT_ADDRESS_WORKFLOW_ID;
+
+    if (!isIdentityWorkflow && !isAddressWorkflow) {
+        logger.warn(
+            `Didit webhook for unrecognised workflow_id "${workflow_id}" — no tier action taken. ` +
+            `Expected identity=${config.DIDIT_IDENTITY_WORKFLOW_ID} or address=${config.DIDIT_ADDRESS_WORKFLOW_ID}`,
+            { session_id, userId: user.id }
+        );
+        return;
+    }
+
+    // ─── Audit record ─────────────────────────────────────────────────
     await prisma.kycVerification.create({
         data: {
             userId: user.id,
-            type: 'PHOTO_ID_SELFIE', // reusing the existing Tier 2 type value — same concept, different engine, consistent with how dojahLivenessRef is being reused rather than replaced
+            type: isIdentityWorkflow ? 'PHOTO_ID_SELFIE' : 'PROOF_OF_ADDRESS',
+            // ⚠️ confirm 'PROOF_OF_ADDRESS' is an allowed value on the
+            // kycVerification.type column — add it if that's an enum
             country: user.country ?? 'GLOBAL',
             status: status === 'Approved' ? 'APPROVED' : status === 'Declined' ? 'FAILED' : 'PENDING',
-            dojahRef: session_id, // reusing this generic external-reference field for the Didit session id — same flexible-string pattern already used for BVN/NIN elsewhere
+            dojahRef: session_id,
             dojahData: decision ?? undefined,
             resolvedAt: ['Approved', 'Declined'].includes(status) ? new Date() : null,
         },
     });
 
+    // Track session state per workflow so the two don't overwrite each
+    // other. The existing diditSessionId/diditKycStatus columns are
+    // reused for the identity flow; address needs its own pair.
+    //
+    // ⚠️ SCHEMA ADDITION REQUIRED:
+    //   diditAddressSessionId  String?
+    //   diditAddressKycStatus  String?
     await prisma.user.update({
         where: { id: user.id },
-        data: { diditSessionId: session_id, diditKycStatus: status },
+        data: isIdentityWorkflow
+            ? { diditSessionId: session_id, diditKycStatus: status }
+            : { diditAddressSessionId: session_id, diditAddressKycStatus: status },
     });
 
-    // CONFIRMED real status vocabulary: Not Started | In Progress |
-    // Approved | Declined | In Review | Abandoned | Expired | Kyc Expired.
-    // Only "Approved" should ever set the existing kycTier gate.
+    // CONFIRMED status vocabulary: Not Started | In Progress | Approved |
+    // Declined | In Review | Abandoned | Expired | Kyc Expired.
     if (status !== 'Approved') {
-        logger.info(`Didit session ${session_id} status "${status}" — not upgrading kycTier`);
+        logger.info(`Didit session ${session_id} status "${status}" — no tier promotion`);
         return;
     }
 
-    // CONFIRMED plural-array decision structure — id_verifications[0],
-    // never a singular id_verification key.
-    const idVerification = decision?.id_verifications?.[0];
+    // ══════════════════════════════════════════════════════════════════
+    // IDENTITY WORKFLOW → Tier 2
+    // ══════════════════════════════════════════════════════════════════
+    if (isIdentityWorkflow) {
+
+        // ─── AML audit trail ──────────────────────────────────────────
+        // CONFIRMED: decision.aml_screenings is a plural ARRAY with
+        // hits[] / score / status / total_hits / entity_type / screened_data.
+        const amlScreening = decision?.aml_screenings?.[0];
+
+        if (amlScreening) {
+            const totalHits = amlScreening.total_hits ?? amlScreening.hits?.length ?? 0;
+            const amlScore  = amlScreening.score ?? 0;
+            const amlStatus = amlScreening.status ?? null;
+
+            const amlFlagged =
+                totalHits > 0 ||
+                amlScore > 0 ||
+                (!!amlStatus && amlStatus !== 'Approved');
+
+            await prisma.kycVerification.create({
+                data: {
+                    userId: user.id,
+                    type: 'AML',
+                    country: user.country ?? 'GLOBAL',
+                    status: amlStatus === 'Approved' ? 'APPROVED' : 'FAILED',
+                    dojahData: amlScreening,
+                    flaggedForReview: amlFlagged,
+                    reviewNote: amlFlagged
+                        ? `Didit AML: status=${amlStatus ?? 'unknown'}, totalHits=${totalHits}, score=${amlScore}, entityType=${amlScreening.entity_type ?? 'unknown'}, screenedName="${amlScreening.screened_data?.full_name ?? 'unknown'}"`
+                        : null,
+                    resolvedAt: new Date(),
+                },
+            });
+
+            if (amlFlagged) {
+                logger.warn(`Didit AML flagged for review — user ${user.id}, session ${session_id}, hits=${totalHits}, score=${amlScore}`);
+            }
+        } else {
+            logger.warn(
+                `Identity workflow session ${session_id} had no aml_screenings entry — AML audit record NOT created.`,
+                { decisionKeys: decision ? Object.keys(decision) : null }
+            );
+        }
+
+        // CONFIRMED: id_verifications[0] carries first_name / last_name /
+        // date_of_birth / gender / document_number / nationality.
+        const idVerification = decision?.id_verifications?.[0];
+
+        const alreadyAtTier2 = (user.kycTier ?? 0) >= 2;
+
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                // Never demote: an existing Tier 3 user re-running identity
+                // verification must not drop back to 2.
+                ...(alreadyAtTier2 ? {} : { kycTier: 2, kycTier2At: new Date() }),
+
+                legalFirstName: idVerification?.first_name ?? user.legalFirstName,
+                legalLastName: idVerification?.last_name ?? user.legalLastName,
+                legalNameVerifiedAt: new Date(),
+
+                // Gender arrives as "M"/"F"; existing column holds lowercase
+                legalDateOfBirth: idVerification?.date_of_birth
+                    ? new Date(idVerification.date_of_birth)
+                    : user.legalDateOfBirth,
+                legalGender: idVerification?.gender
+                    ? String(idVerification.gender).toLowerCase()
+                    : user.legalGender,
+
+                dojahLivenessRef: `didit_${session_id}`, // legacy field name, reused
+            },
+        });
+
+        if (alreadyAtTier2) {
+            logger.info(`User ${user.id} already at kycTier ${user.kycTier} — identity session ${session_id} processed without re-promotion`);
+            return;
+        }
+
+        logger.info(`User ${user.id} upgraded to kycTier 2 via Didit identity session ${session_id}`);
+
+        await notificationService.queue({
+            userId: user.id,
+            title: "You're verified",
+            type: 'GENERAL',
+            content: 'Your identity is verified — you now have access to $50,000/month in transaction volume. Verify your address any time to remove the limit entirely.',
+        });
+
+        return;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // ADDRESS WORKFLOW → Tier 3
+    // ══════════════════════════════════════════════════════════════════
+
+    // Guard: address verification alone must never grant Tier 3 to
+    // someone who hasn't proven their identity first. Shouldn't be
+    // reachable (the endpoint blocks it), but the webhook is a public
+    // surface and shouldn't rely on that.
+    if ((user.kycTier ?? 0) < 2) {
+        logger.warn(
+            `Address workflow approved for user ${user.id} who is only at kycTier ${user.kycTier} — ` +
+            `NOT promoting to Tier 3. Identity verification must come first.`,
+            { session_id }
+        );
+        return;
+    }
+
+    // CONFIRMED: poa_verifications[0] carries a Google-geocoded parsed
+    // address plus name_match_score_id_verification.
+    const poa = decision?.poa_verifications?.[0];
+    const parsedAddress = poa?.poa_parsed_address;
+
+    if (poa?.status !== 'Approved') {
+        logger.warn(`Address session ${session_id} overall status Approved but poa_verifications[0].status is "${poa?.status}" — not promoting`, { userId: user.id });
+        return;
+    }
+
+    // The POA document's name must match the verified ID. Didit scores
+    // this directly (100 on the confirmed payload). A low score means
+    // the bank statement belongs to someone else — a real fraud signal,
+    // not a formatting quirk.
+    const nameMatchScore = poa.name_match_score_id_verification ?? null;
+    const NAME_MATCH_THRESHOLD = 80; // ⚠️ tune against real data
+
+    if (nameMatchScore !== null && nameMatchScore < NAME_MATCH_THRESHOLD) {
+        logger.warn(
+            `Address POA name match score ${nameMatchScore} below threshold ${NAME_MATCH_THRESHOLD} — ` +
+            `flagging for review instead of auto-promoting`,
+            { userId: user.id, session_id }
+        );
+
+        await prisma.kycVerification.create({
+            data: {
+                userId: user.id,
+                type: 'PROOF_OF_ADDRESS',
+                country: user.country ?? 'GLOBAL',
+                status: 'PENDING',
+                dojahRef: session_id,
+                dojahData: poa,
+                flaggedForReview: true,
+                reviewNote: `POA name match score ${nameMatchScore} below ${NAME_MATCH_THRESHOLD}. Document name: "${poa.name_on_document ?? 'unknown'}". Verified ID name: "${user.legalFirstName} ${user.legalLastName}".`,
+            },
+        });
+
+        return;
+    }
+
+    const alreadyAtTier3 = (user.kycTier ?? 0) >= 3;
 
     await prisma.user.update({
         where: { id: user.id },
         data: {
-            kycTier: 3, // CHANGED — was 2. This same Didit workflow now
-                        // includes address verification (added specifically
-                        // to satisfy Contro's cardholder residence-address
-                        // requirement), which meets Tier 3's real
-                        // requirement of enhanced due diligence in the same
-                        // pass — no separate Tier 3 step needed.
-            kycTier2At: new Date(), // still set — the user genuinely passed
-                                     // through Tier 2's requirements too,
-                                     // just in the same session rather than
-                                     // a separate one
-            kycTier3At: new Date(), // NEW
-            legalFirstName: idVerification?.first_name ?? user.legalFirstName,
-            legalLastName: idVerification?.last_name ?? user.legalLastName,
-            legalNameVerifiedAt: new Date(),
-            dojahLivenessRef: `didit_${session_id}`, // legacy field name, reused deliberately — same concept, different engine
+            ...(alreadyAtTier3 ? {} : { kycTier: 3, kycTier3At: new Date() }),
+
+            // Populate the address columns — currently all null on every
+            // user, and needed by whichever card provider replaces Contro.
+            ...(parsedAddress
+                ? {
+                      address: parsedAddress.formatted_address ?? poa.poa_formatted_address ?? undefined,
+                      city: parsedAddress.city ?? undefined,
+                      state: parsedAddress.region ?? undefined,
+                      country: parsedAddress.country ?? undefined,
+                      postalCode: parsedAddress.postal_code ?? undefined,
+                  }
+                : {}),
         },
     });
 
-    logger.info(`User ${user.id} upgraded to kycTier 3 via Didit session ${session_id} (address verification included)`);
+    if (alreadyAtTier3) {
+        logger.info(`User ${user.id} already at kycTier 3 — address session ${session_id} processed, address data refreshed`);
+        return;
+    }
 
-    // UPDATED — approval notification now reflects the real tier granted
+    logger.info(`User ${user.id} upgraded to kycTier 3 via Didit address session ${session_id}`);
+
     await notificationService.queue({
-      userId: user.id,
-      title: "You're now fully verified",
-      type: 'GENERAL',
-      content: 'Your identity verification is complete — you now have unlimited trading volume.',
+        userId: user.id,
+        title: 'Address verified',
+        type: 'GENERAL',
+        content: 'Your address is verified — your monthly transaction limit has been removed.',
     });
-
-
-  }
+}
  
 
 

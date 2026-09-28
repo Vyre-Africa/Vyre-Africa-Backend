@@ -781,44 +781,18 @@ router.get(
 ////////////////////////////////////////////////////
 
 
-router.get(
-  '/kyc/id-types',
-  kycController.getIdTypes
-);
+// router.get(
+//   '/kyc/id-types',
+//   kycController.getIdTypes
+// );
 
-// Public — no auth. Returns tier + usage only, no PII.
-router.get(
-  '/kyc/lookup',
-  kycController.lookupByEmail
-);
- 
-router.get(
-  '/kyc/usage',
-  requireAuthWithCORS(),
-  authMiddleware,
-  kycController.getUsage
-);
- 
-router.post(
-  '/kyc/upgrade/tier1',
-  requireAuthWithCORS(),
-  authMiddleware,
-  kycController.upgradeTier1
-);
- 
-router.post(
-  '/kyc/upgrade/tier2',
-  requireAuthWithCORS(),
-  authMiddleware,
-  kycController.upgradeTier2
-);
+router.get('/kyc/usage',           requireAuthWithCORS(), authMiddleware, kycController.getUsage);
+router.get('/kyc/lookup',           kycController.lookupByEmail);
 
-router.get(
-  '/kyc/tier2/status', 
-  requireAuthWithCORS(),
-  authMiddleware, 
-  kycController.getTier2Status
-);
+router.post('/kyc/verify/identity', requireAuthWithCORS(), authMiddleware, kycController.startIdentityVerification);
+router.post('/kyc/verify/address',  requireAuthWithCORS(), authMiddleware, kycController.startAddressVerification);
+router.get('/kyc/status',           requireAuthWithCORS(), authMiddleware, kycController.getVerificationStatus);
+
 
 router.post(
   '/cards/contro/start',  

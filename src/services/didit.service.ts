@@ -32,6 +32,7 @@ function handleDiditError(context: string, error: any) {
 // again for a user who already has an in-progress session safely returns
 // the SAME session rather than creating a duplicate.
 
+
 export interface DiditSessionResult {
     success: boolean;
     session_id?: string;
@@ -54,23 +55,39 @@ export async function createDiditSession({
     vendorData,
     callback,
     metadata,
+    workflowId,
 }: {
     vendorData: string; // Vyre's own userId — the link back to our own user record, same role as Contro's externalUserId
     callback?: string;
     metadata?: Record<string, any>;
+    // NEW — which Didit workflow to run. Two exist:
+    //   DIDIT_IDENTITY_WORKFLOW_ID → ID + liveness + face match + AML  (Tier 2)
+    //   DIDIT_ADDRESS_WORKFLOW_ID  → POA only                          (Tier 3)
+    // Defaults to identity so any existing caller that doesn't pass one
+    // keeps its current behaviour rather than silently breaking.
+    workflowId?: string;
 }): Promise<DiditSessionResult> {
+    const resolvedWorkflowId = workflowId ?? config.DIDIT_IDENTITY_WORKFLOW_ID;
+ 
     try {
         const res = await diditApi.post('/v3/session/', {
-            workflow_id: config.DIDIT_WORKFLOW_ID,
+            workflow_id: resolvedWorkflowId,
             vendor_data: vendorData,
             callback,
             callback_method: 'both', // per docs: use 'both' if the callback sometimes fails to fire — safer default
             metadata,
         });
-        logger.info('Didit session created', { vendorData, rawData: res.data });
+ 
+        logger.info('Didit session created', {
+            vendorData,
+            workflowId: resolvedWorkflowId,
+            rawData: res.data,
+        });
+ 
         return { success: true, ...res.data, rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleDiditError('createDiditSession', error);
+        logger.warn('Didit session creation failed', { vendorData, workflowId: resolvedWorkflowId, error: msg });
         return { success: false, error: msg, httpStatus, rawData };
     }
 }
