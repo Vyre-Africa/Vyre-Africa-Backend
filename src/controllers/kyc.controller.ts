@@ -483,6 +483,200 @@ class KycController {
     }
   }
 
+  // POST /kyc/verify/identity
+  // Workflow A — ID + liveness + face match + AML → Tier 2
+  async startIdentityVerification(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+    try {
+      const fresh = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { id: true, kycTier: true },
+      });
+ 
+      if (!fresh) {
+        return res.status(404).json({ success: false, msg: 'User not found' });
+      }
+ 
+      if ((fresh.kycTier ?? 0) >= 2) {
+        return res.status(200).json({
+          success: true,
+          msg: 'Identity already verified',
+          kycTier: fresh.kycTier,
+        });
+      }
+ 
+      const session = await createDiditSession({
+        workflowId: config.DIDIT_IDENTITY_WORKFLOW_ID,
+        vendorData: fresh.id,
+        callback: `${config.FRONTEND_URL}/kyc/callback?flow=identity`,
+        metadata: { purpose: 'identity_verification' },
+      });
+ 
+      if (!session.success || !session.url || !session.session_id) {
+        console.log('Didit identity session creation failed:', session.error);
+        return res.status(422).json({
+          success: false,
+          msg: session.error ?? 'Failed to start identity verification. Please try again.',
+        });
+      }
+ 
+      await prisma.user.update({
+        where: { id: fresh.id },
+        data: { diditSessionId: session.session_id, diditKycStatus: session.status },
+      });
+ 
+      return res.status(200).json({
+        success: true,
+        msg: 'Identity verification session created',
+        sessionUrl: session.url,
+        sessionId: session.session_id,
+      });
+ 
+    } catch (error) {
+      console.log(error);
+      return res.status(500).json({ msg: 'Internal Server Error', success: false });
+    }
+  }
+ 
+  // POST /kyc/verify/address
+  // Workflow B — POA only → Tier 3
+  async startAddressVerification(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+    try {
+      const fresh = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { id: true, kycTier: true },
+      });
+ 
+      if (!fresh) {
+        return res.status(404).json({ success: false, msg: 'User not found' });
+      }
+ 
+      // Identity must come first — you can't prove where you live before
+      // proving who you are.
+      if ((fresh.kycTier ?? 0) < 2) {
+        return res.status(403).json({
+          success: false,
+          msg: 'Verify your identity before verifying your address.',
+          requiresIdentityFirst: true,
+        });
+      }
+ 
+      if ((fresh.kycTier ?? 0) >= 3) {
+        return res.status(200).json({
+          success: true,
+          msg: 'Address already verified',
+          kycTier: fresh.kycTier,
+        });
+      }
+ 
+      const session = await createDiditSession({
+        workflowId: config.DIDIT_ADDRESS_WORKFLOW_ID,
+        vendorData: fresh.id,
+        callback: `${config.FRONTEND_URL}/kyc/callback?flow=address`,
+        metadata: { purpose: 'address_verification' },
+      });
+ 
+      if (!session.success || !session.url || !session.session_id) {
+        console.log('Didit address session creation failed:', session.error);
+        return res.status(422).json({
+          success: false,
+          msg: session.error ?? 'Failed to start address verification. Please try again.',
+        });
+      }
+ 
+      await prisma.user.update({
+        where: { id: fresh.id },
+        data: { diditAddressSessionId: session.session_id, diditAddressKycStatus: session.status },
+      });
+ 
+      return res.status(200).json({
+        success: true,
+        msg: 'Address verification session created',
+        sessionUrl: session.url,
+        sessionId: session.session_id,
+      });
+ 
+    } catch (error) {
+      console.log(error);
+      return res.status(500).json({ msg: 'Internal Server Error', success: false });
+    }
+  }
+
+  // GET /kyc/status
+  // Returns the state of BOTH flows so the frontend can render a real
+  // two-step ladder rather than a single opaque status.
+  async getVerificationStatus(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+    try {
+      const fresh = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: {
+          kycTier: true,
+          diditSessionId: true,
+          diditKycStatus: true,
+          diditAddressSessionId: true,
+          diditAddressKycStatus: true,
+        },
+      });
+ 
+      if (!fresh) {
+        return res.status(404).json({ success: false, msg: 'User not found' });
+      }
+ 
+      // Re-check non-terminal statuses directly rather than trusting a
+      // possibly-stale cached value — the webhook is a trigger, not a
+      // guaranteed-arrived source of truth.
+      const nonTerminal = ['Not Started', 'In Progress'];
+ 
+      let identityStatus = fresh.diditKycStatus;
+      if (fresh.diditSessionId && nonTerminal.includes(identityStatus ?? '')) {
+        const d = await getDiditDecision(fresh.diditSessionId);
+        if (d.success && d.status && d.status !== identityStatus) {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { diditKycStatus: d.status },
+          });
+          identityStatus = d.status;
+        }
+      }
+ 
+      let addressStatus = fresh.diditAddressKycStatus;
+      if (fresh.diditAddressSessionId && nonTerminal.includes(addressStatus ?? '')) {
+        const d = await getDiditDecision(fresh.diditAddressSessionId);
+        if (d.success && d.status && d.status !== addressStatus) {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { diditAddressKycStatus: d.status },
+          });
+          addressStatus = d.status;
+        }
+      }
+ 
+      return res.status(200).json({
+        success: true,
+        kycTier: fresh.kycTier,
+        identity: {
+          hasSession: !!fresh.diditSessionId,
+          sessionId: fresh.diditSessionId,
+          status: identityStatus,
+          complete: (fresh.kycTier ?? 0) >= 2,
+        },
+        address: {
+          hasSession: !!fresh.diditAddressSessionId,
+          sessionId: fresh.diditAddressSessionId,
+          status: addressStatus,
+          complete: (fresh.kycTier ?? 0) >= 3,
+          available: (fresh.kycTier ?? 0) >= 2, // can't start until identity is done
+        },
+      });
+ 
+    } catch (error) {
+      console.log(error);
+      return res.status(500).json({ msg: 'Internal Server Error', success: false });
+    }
+  }
+
 }
 
 export default new KycController();

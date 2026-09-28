@@ -31,7 +31,10 @@ const config = {
 
     DIDIT_API_KEY: process.env.DIDIT_API_KEY || '',
     DIDIT_WEBHOOK_SECRET: process.env.DIDIT_WEBHOOK_SECRET || '',
-    DIDIT_WORKFLOW_ID: process.env.DIDIT_WORKFLOW_ID || '',
+    // DIDIT_WORKFLOW_ID: process.env.DIDIT_WORKFLOW_ID || '',
+
+    DIDIT_IDENTITY_WORKFLOW_ID: process.env.DIDIT_IDENTITY_WORKFLOW_ID ?? 'ba34438d-1a87-4ab5-86c7-f7cee1b11ebf',
+    DIDIT_ADDRESS_WORKFLOW_ID: process.env.DIDIT_ADDRESS_WORKFLOW_ID ?? 'db5f01ff-37b9-49dc-8fba-7bdf55087ad6',
 
     dialect: process.env.DB_DIALECT || 'postgres',
     dbCreds: {

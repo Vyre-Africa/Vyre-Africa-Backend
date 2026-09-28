@@ -444,6 +444,8 @@ model User {
   dojahLivenessRef String?
 
   diditSessionId  String?
+  diditAddressSessionId  String?
+  diditAddressKycStatus  String?
   diditKycStatus  String? // mirrors Didit's real status vocabulary directly:
 
   controCardholderId String?
