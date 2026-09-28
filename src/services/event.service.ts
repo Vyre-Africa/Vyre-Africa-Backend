@@ -2967,28 +2967,8 @@ async handleDiditEvent(jobData: { body: any }) {
         return;
     }
 
-    // ─── Audit record ─────────────────────────────────────────────────
-    await prisma.kycVerification.create({
-        data: {
-            userId: user.id,
-            type: isIdentityWorkflow ? 'PHOTO_ID_SELFIE' : 'PROOF_OF_ADDRESS',
-            // ⚠️ confirm 'PROOF_OF_ADDRESS' is an allowed value on the
-            // kycVerification.type column — add it if that's an enum
-            country: user.country ?? 'GLOBAL',
-            status: status === 'Approved' ? 'APPROVED' : status === 'Declined' ? 'FAILED' : 'PENDING',
-            dojahRef: session_id,
-            dojahData: decision ?? undefined,
-            resolvedAt: ['Approved', 'Declined'].includes(status) ? new Date() : null,
-        },
-    });
-
-    // Track session state per workflow so the two don't overwrite each
-    // other. The existing diditSessionId/diditKycStatus columns are
-    // reused for the identity flow; address needs its own pair.
-    //
-    // ⚠️ SCHEMA ADDITION REQUIRED:
-    //   diditAddressSessionId  String?
-    //   diditAddressKycStatus  String?
+    // ─── Session state tracking ───────────────────────────────────────
+    // Per-workflow columns so the two flows never overwrite each other.
     await prisma.user.update({
         where: { id: user.id },
         data: isIdentityWorkflow
@@ -2999,6 +2979,23 @@ async handleDiditEvent(jobData: { body: any }) {
     // CONFIRMED status vocabulary: Not Started | In Progress | Approved |
     // Declined | In Review | Abandoned | Expired | Kyc Expired.
     if (status !== 'Approved') {
+        // Record non-approved terminal outcomes so declines/expiries are
+        // visible in the audit trail rather than vanishing.
+        if (['Declined', 'Expired', 'Abandoned', 'Kyc Expired'].includes(status)) {
+            await prisma.kycVerification.create({
+                data: {
+                    userId: user.id,
+                    type: isIdentityWorkflow ? 'PHOTO_ID_SELFIE' : 'PROOF_OF_ADDRESS',
+                    country: user.country ?? 'GLOBAL',
+                    status: 'FAILED',
+                    dojahRef: session_id,
+                    dojahData: decision ?? undefined,
+                    reviewNote: `Didit session ended with status "${status}"`,
+                    resolvedAt: new Date(),
+                },
+            });
+        }
+
         logger.info(`Didit session ${session_id} status "${status}" — no tier promotion`);
         return;
     }
@@ -3007,6 +3004,23 @@ async handleDiditEvent(jobData: { body: any }) {
     // IDENTITY WORKFLOW → Tier 2
     // ══════════════════════════════════════════════════════════════════
     if (isIdentityWorkflow) {
+
+        // FIXED — the generic audit record that used to sit above the
+        // status check has moved into each branch. Previously it wrote a
+        // PROOF_OF_ADDRESS row for every address session, and then the
+        // address branch wrote a SECOND one, producing duplicate rows of
+        // the same type for the same session.
+        await prisma.kycVerification.create({
+            data: {
+                userId: user.id,
+                type: 'PHOTO_ID_SELFIE',
+                country: user.country ?? 'GLOBAL',
+                status: 'APPROVED',
+                dojahRef: session_id,
+                dojahData: decision ?? undefined,
+                resolvedAt: new Date(),
+            },
+        });
 
         // ─── AML audit trail ──────────────────────────────────────────
         // CONFIRMED: decision.aml_screenings is a plural ARRAY with
@@ -3029,6 +3043,7 @@ async handleDiditEvent(jobData: { body: any }) {
                     type: 'AML',
                     country: user.country ?? 'GLOBAL',
                     status: amlStatus === 'Approved' ? 'APPROVED' : 'FAILED',
+                    dojahRef: session_id,
                     dojahData: amlScreening,
                     flaggedForReview: amlFlagged,
                     reviewNote: amlFlagged
@@ -3098,41 +3113,87 @@ async handleDiditEvent(jobData: { body: any }) {
     // ADDRESS WORKFLOW → Tier 3
     // ══════════════════════════════════════════════════════════════════
 
-    // Guard: address verification alone must never grant Tier 3 to
-    // someone who hasn't proven their identity first. Shouldn't be
-    // reachable (the endpoint blocks it), but the webhook is a public
-    // surface and shouldn't rely on that.
+    // Address verification alone must never grant Tier 3. The endpoint
+    // blocks this, but the webhook is a public surface and shouldn't
+    // rely on that.
     if ((user.kycTier ?? 0) < 2) {
         logger.warn(
-            `Address workflow approved for user ${user.id} who is only at kycTier ${user.kycTier} — ` +
-            `NOT promoting to Tier 3. Identity verification must come first.`,
+            `Address workflow approved for user ${user.id} at kycTier ${user.kycTier} — NOT promoting. Identity verification must come first.`,
             { session_id }
         );
         return;
     }
 
-    // CONFIRMED: poa_verifications[0] carries a Google-geocoded parsed
-    // address plus name_match_score_id_verification.
+    // CONFIRMED from a real standalone-address payload: poa_verifications
+    // is a plural array; id_verifications / aml_screenings / face_matches
+    // / liveness_checks are all null in this workflow.
     const poa = decision?.poa_verifications?.[0];
     const parsedAddress = poa?.poa_parsed_address;
 
-    if (poa?.status !== 'Approved') {
-        logger.warn(`Address session ${session_id} overall status Approved but poa_verifications[0].status is "${poa?.status}" — not promoting`, { userId: user.id });
+    if (!poa || poa.status !== 'Approved') {
+        logger.warn(
+            `Address session ${session_id} overall status Approved but poa_verifications[0].status is "${poa?.status ?? 'missing'}" — not promoting`,
+            { userId: user.id }
+        );
         return;
     }
 
-    // The POA document's name must match the verified ID. Didit scores
-    // this directly (100 on the confirmed payload). A low score means
-    // the bank statement belongs to someone else — a real fraud signal,
-    // not a formatting quirk.
-    const nameMatchScore = poa.name_match_score_id_verification ?? null;
-    const NAME_MATCH_THRESHOLD = 80; // ⚠️ tune against real data
+    // ─── Fraud check 1: document tampering ────────────────────────────
+    // CONFIRMED present in document_metadata. A tampered or manipulated
+    // document must never auto-promote to uncapped volume.
+    const meta = poa.document_metadata ?? {};
+    const tamperSignals: string[] = [];
 
-    if (nameMatchScore !== null && nameMatchScore < NAME_MATCH_THRESHOLD) {
+    if (meta.is_tampered === true) tamperSignals.push('is_tampered');
+    if (meta.image_anomalies?.detected === true) tamperSignals.push('image_anomalies');
+    if (meta.overlay_manipulation?.detected === true) tamperSignals.push('overlay_manipulation');
+    if (meta.processed_by_known_editor) tamperSignals.push(`edited_by:${meta.processed_by_known_editor}`);
+
+    // ─── Fraud check 2: name on document matches verified identity ────
+    // name_match_score_id_verification is CONFIRMED null on the
+    // standalone address workflow — there's no ID in that session for
+    // Didit to compare against. Falls back to comparing name_on_document
+    // against the legal name captured during the identity session.
+    const nameOnDoc = String(poa.name_on_document ?? '').toUpperCase().trim();
+    const legalFirstRaw = String(user.legalFirstName ?? '').toUpperCase().trim();
+    const legalLastRaw = String(user.legalLastName ?? '').toUpperCase().trim();
+
+    // legalFirstName can hold multiple given names ("HARVEY ONYEKA") —
+    // match on the first token, which appears consistently.
+    const legalFirstToken = legalFirstRaw.split(/\s+/)[0] ?? '';
+
+    const NAME_MATCH_THRESHOLD = 80; // ⚠️ tune against real data
+    const diditScore = poa.name_match_score_id_verification;
+
+    let nameMatches: boolean;
+    let nameCheckMethod: string;
+
+    if (typeof diditScore === 'number') {
+        // Bundled workflow — trust Didit's own scoring
+        nameMatches = diditScore >= NAME_MATCH_THRESHOLD;
+        nameCheckMethod = `didit_score=${diditScore}`;
+    } else if (legalFirstToken && legalLastRaw && nameOnDoc) {
+        // Standalone address workflow — compare ourselves
+        nameMatches =
+            nameOnDoc.includes(legalFirstToken) &&
+            nameOnDoc.includes(legalLastRaw);
+        nameCheckMethod = `local_compare(doc="${nameOnDoc}", expected="${legalFirstToken} ${legalLastRaw}")`;
+    } else {
+        // Nothing to compare against — fail closed. Promoting to uncapped
+        // volume without any name check is not a safe default.
+        nameMatches = false;
+        nameCheckMethod = `insufficient_data(doc="${nameOnDoc}", legalFirst="${legalFirstRaw}", legalLast="${legalLastRaw}")`;
+    }
+
+    // ─── Hold for review if anything looks wrong ──────────────────────
+    if (tamperSignals.length > 0 || !nameMatches) {
+        const reasons = [
+            ...(tamperSignals.length ? [`tamper signals: ${tamperSignals.join(', ')}`] : []),
+            ...(!nameMatches ? [`name mismatch via ${nameCheckMethod}`] : []),
+        ];
+
         logger.warn(
-            `Address POA name match score ${nameMatchScore} below threshold ${NAME_MATCH_THRESHOLD} — ` +
-            `flagging for review instead of auto-promoting`,
-            { userId: user.id, session_id }
+            `Address POA held for review — user ${user.id}, session ${session_id}: ${reasons.join(' | ')}`
         );
 
         await prisma.kycVerification.create({
@@ -3144,13 +3205,27 @@ async handleDiditEvent(jobData: { body: any }) {
                 dojahRef: session_id,
                 dojahData: poa,
                 flaggedForReview: true,
-                reviewNote: `POA name match score ${nameMatchScore} below ${NAME_MATCH_THRESHOLD}. Document name: "${poa.name_on_document ?? 'unknown'}". Verified ID name: "${user.legalFirstName} ${user.legalLastName}".`,
+                reviewNote:
+                    `Tier 3 POA held: ${reasons.join(' | ')}. ` +
+                    `Document: ${poa.document_type ?? 'unknown'} issued by ${poa.issuer ?? 'unknown'} on ${poa.issue_date ?? 'unknown'}. ` +
+                    `Address: ${poa.poa_formatted_address ?? 'unparsed'}.`,
+                // FIXED — was omitted entirely. Explicitly null: this is
+                // genuinely unresolved, awaiting human review, unlike
+                // every other record here which resolves immediately.
+                // ⚠️ If kycVerification.resolvedAt is NOT nullable in the
+                // schema, this write will throw — make it nullable, since
+                // "pending review" is a real state that needs representing.
+                resolvedAt: null,
             },
         });
 
+        // Deliberately NOT promoting, and deliberately NOT notifying the
+        // user — a fraud hold shouldn't tell the holder which check
+        // caught them.
         return;
     }
 
+    // ─── Promote ──────────────────────────────────────────────────────
     const alreadyAtTier3 = (user.kycTier ?? 0) >= 3;
 
     await prisma.user.update({
@@ -3158,8 +3233,16 @@ async handleDiditEvent(jobData: { body: any }) {
         data: {
             ...(alreadyAtTier3 ? {} : { kycTier: 3, kycTier3At: new Date() }),
 
-            // Populate the address columns — currently all null on every
-            // user, and needed by whichever card provider replaces Contro.
+            // NOTE: kycTier2At is deliberately NOT touched here. The old
+            // handler rewrote it on every approval, destroying the real
+            // date the user completed identity verification.
+            //
+            // Same for legalFirstName / legalLastName / legalNameVerifiedAt
+            // / dojahLivenessRef / diditSessionId — all identity-flow
+            // fields. The address payload has id_verifications: null, so
+            // writing them here would either no-op or wipe good data.
+
+            // Capture the verified address — the actual point of this flow.
             ...(parsedAddress
                 ? {
                       address: parsedAddress.formatted_address ?? poa.poa_formatted_address ?? undefined,
@@ -3169,6 +3252,20 @@ async handleDiditEvent(jobData: { body: any }) {
                       postalCode: parsedAddress.postal_code ?? undefined,
                   }
                 : {}),
+        },
+    });
+
+    await prisma.kycVerification.create({
+        data: {
+            userId: user.id,
+            type: 'PROOF_OF_ADDRESS',
+            country: parsedAddress?.country ?? user.country ?? 'GLOBAL',
+            status: 'APPROVED',
+            dojahRef: session_id,
+            dojahData: poa,
+            flaggedForReview: false,
+            reviewNote: `POA approved via ${nameCheckMethod}. ${poa.document_type ?? 'document'} from ${poa.issuer ?? 'unknown issuer'}.`,
+            resolvedAt: new Date(),
         },
     });
 
