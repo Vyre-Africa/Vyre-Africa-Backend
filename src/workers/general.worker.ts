@@ -104,6 +104,9 @@ export function startGeneralWorker() {
 
                     case 'Didit_Event':
                         return await eventService.handleDiditEvent(job.data);
+                        
+                    case 'Ramp_Event':
+                        return await eventService.processRampWebhook(job.data.body);
 
                     default:
                         throw new Error(`Unknown job type: ${job.name}`);
