@@ -37,6 +37,7 @@ import nuvionController from '../controllers/nuvion.controller';
 import diditController from '../controllers/didit.controller';
 import beneficiaryController from '../controllers/beneficiary.controller';
 import walletFundingController from '../controllers/walletFunding.controller';
+import InternalOfframpController from '../controllers/InternalOfframp.controller';
 
 
 const router = Router();
@@ -970,6 +971,12 @@ router.get(
   authMiddleware, 
   walletFundingController.listRecent
 );
+
+// INTERNAL OFFRAMP ROUTES
+router.get('/offramp/internal/quote', requireAuthWithCORS(), authMiddleware, InternalOfframpController.quote);
+router.post('/offramp/internal/initiate',  requireAuthWithCORS(), authMiddleware, InternalOfframpController.initiate);
+router.get('/offramp/internal/:requestId', requireAuthWithCORS(), authMiddleware, InternalOfframpController.getStatus);
+router.get('/offramp/internal', requireAuthWithCORS(), authMiddleware, InternalOfframpController.listRecent);
  
 
 // router.get(

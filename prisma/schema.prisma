@@ -760,6 +760,42 @@ model WalletFundingRequest {
   @@index([status])
 }
 
+model InternalOfframpRequest {
+  id                  String   @id @default(cuid())
+  userId              String
+ 
+  // Source — the stablecoin being sold
+  cryptoCurrencyId    String
+  cryptoCurrency      String   // 'USDC'
+  chain               String   // 'BASE', 'ETHEREUM', etc.
+  cryptoAmount        Decimal  @db.Decimal(38, 18)
+ 
+  // Destination — the fiat being received
+  fiatCurrency        String   // 'NGN'
+  expectedFiatAmount  Decimal? @db.Decimal(38, 18)  // Quidax's to_amount at initiate
+  actualFiatAmount    Decimal? @db.Decimal(38, 18)  // what actually landed
+ 
+  // References
+  merchantReference   String   @unique   // WALLETOFFRAMP_<ulid>
+  quidaxReference     String?
+  depositAddress      String?            // address Quidax told us to send to
+  txHash              String?            // our on-chain send
+ 
+  // The block freezing the user's crypto
+  blockId             String?
+  virtualTransactionId String?
+ 
+  status              String   @default("PENDING")
+  // PENDING | AWAITING_DEPOSIT | PROCESSING | COMPLETED | FAILED
+  failureReason       String?
+ 
+  createdAt           DateTime @default(now())
+  completedAt         DateTime?
+ 
+  @@index([userId])
+  @@index([status])
+}
+
 model NuvionTreasuryAccount {
   id              String   @id @default(cuid())
   currency        String
@@ -1668,6 +1704,16 @@ model DiditWebhookEvent {
   receivedAt DateTime @default(now())
  
   @@index([eventType])
+}
+
+model RampWebhookEvent {
+  id         String   @id @default(cuid())
+  eventId    String   @unique
+  eventType  String
+  rawPayload Json
+  createdAt  DateTime @default(now())
+ 
+  @@index([createdAt])
 }
 
 

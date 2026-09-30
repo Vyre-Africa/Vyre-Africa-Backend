@@ -22,6 +22,7 @@ import { currency } from '../globals';
 import { trackKycUsage } from '../services/kycLimits.service';
 import { getAccount } from './nuvion.service';
 import { toNuvionCurrencyCode } from './nuvionpayout.service';
+import internalOfframpService from './internalOfframp.service';
 
 
 
@@ -2266,6 +2267,10 @@ class eventService {
     if (data.merchant_reference?.startsWith('WALLETFUND_')) {
         return this.processWalletFundingWebhook(event, data)
     }
+
+    if (data.merchant_reference?.startsWith('WALLETOFFRAMP_')) {
+        return this.processInternalOfframpWebhook(event, data)
+    }
  
     // Find the awaiting by merchant reference
     // Include pair + currencies so trackKycUsage can convert to USD
@@ -2633,6 +2638,91 @@ class eventService {
       });
   }
 
+  private async processInternalOfframpWebhook(event: string, data: any) {
+      const record = await prisma.internalOfframpRequest.findUnique({
+          where: { merchantReference: data.merchant_reference },
+      })
+ 
+      if (!record) {
+          logger.warn('Internal offramp webhook — record not found', {
+              reference: data.merchant_reference,
+          })
+          return
+      }
+ 
+      switch (event) {
+ 
+          case 'sell_transaction.processing':
+              // Quidax has seen our on-chain deposit and is processing
+              // the fiat payout. Nothing to move yet.
+              if (record.status !== 'COMPLETED') {
+                  await prisma.internalOfframpRequest.update({
+                      where: { id: record.id },
+                      data: { status: 'PROCESSING' },
+                  })
+              }
+              logger.info('Internal offramp processing', { id: record.id })
+              break
+ 
+          case 'sell_transaction.successful':
+              await internalOfframpService.complete({
+                  merchantReference: data.merchant_reference,
+                  // ⚠️ FIELD NAME UNVERIFIED — confirm what Quidax actually
+                  // sends for the settled fiat amount on a real successful
+                  // sell webhook. Falls back to the expected amount
+                  // captured at initiate if absent.
+                  actualFiatAmount: data.to_amount ?? data.amount ?? undefined,
+              })
+ 
+              // KYC usage — the stablecoin amount IS the USD value
+              trackKycUsage({
+                  userId:      record.userId,
+                  amount:      Number(record.cryptoAmount),
+                  currencyIso: record.cryptoCurrency,
+                  ratePerUsd:  1,
+                  context:     `internalOfframp | id=${record.id}`,
+              })
+ 
+              await notificationService.queue({
+                  userId: record.userId,
+                  title: 'Withdrawal Complete',
+                  type: 'GENERAL',
+                  content: `Your ${record.cryptoAmount} ${record.cryptoCurrency} has been converted and credited to your ${record.fiatCurrency} wallet.`,
+              })
+              break
+ 
+          case 'sell_transaction.failed':
+              // ⚠️ SERIOUS CASE: our crypto may already be sitting with
+              // Quidax. Releasing the user's block makes them whole, but
+              // Vyre is then short the crypto until it's recovered.
+              // Deliberately flagged loudly rather than handled silently.
+              logger.error(
+                  'Internal offramp FAILED at Quidax — crypto may already have been sent. MANUAL RECONCILIATION REQUIRED.',
+                  {
+                      id: record.id,
+                      txHash: record.txHash,
+                      merchantReference: record.merchantReference,
+                  }
+              )
+ 
+              await internalOfframpService.failRequest(
+                  record.id,
+                  'Quidax reported the sell transaction failed'
+              )
+ 
+              await notificationService.queue({
+                  userId: record.userId,
+                  title: 'Withdrawal Failed',
+                  type: 'GENERAL',
+                  content: 'Your withdrawal could not be completed and your funds have been returned to your wallet. Please contact support if you have questions.',
+              })
+              break
+ 
+          default:
+              logger.warn('Internal offramp webhook — unhandled event', { event })
+      }
+  }
+
   async handleNuvionEvent(jobData: { eventType: string; data: any; rawBody: any }) {
       const { eventType, data, rawBody } = jobData;
  
@@ -2939,25 +3029,25 @@ class eventService {
 async handleDiditEvent(jobData: { body: any }) {
     const { body } = jobData;
     const { session_id, status, vendor_data, decision, workflow_id } = body;
-
+ 
     logger.info('Processing Didit event (async)', { session_id, status, vendor_data, workflow_id });
     logger.info('Didit webhook raw payload', { body });
-
+ 
     if (!vendor_data) {
         logger.warn('Didit webhook has no vendor_data — cannot identify which Vyre user this belongs to', { session_id });
         return;
     }
-
+ 
     const user = await prisma.user.findUnique({ where: { id: vendor_data } });
     if (!user) {
         logger.warn(`No Vyre user found for Didit vendor_data ${vendor_data}`);
         return;
     }
-
+ 
     // ─── Which workflow fired? ────────────────────────────────────────
     const isIdentityWorkflow = workflow_id === config.DIDIT_IDENTITY_WORKFLOW_ID;
     const isAddressWorkflow  = workflow_id === config.DIDIT_ADDRESS_WORKFLOW_ID;
-
+ 
     if (!isIdentityWorkflow && !isAddressWorkflow) {
         logger.warn(
             `Didit webhook for unrecognised workflow_id "${workflow_id}" — no tier action taken. ` +
@@ -2966,7 +3056,7 @@ async handleDiditEvent(jobData: { body: any }) {
         );
         return;
     }
-
+ 
     // ─── Session state tracking ───────────────────────────────────────
     // Per-workflow columns so the two flows never overwrite each other.
     await prisma.user.update({
@@ -2975,7 +3065,7 @@ async handleDiditEvent(jobData: { body: any }) {
             ? { diditSessionId: session_id, diditKycStatus: status }
             : { diditAddressSessionId: session_id, diditAddressKycStatus: status },
     });
-
+ 
     // CONFIRMED status vocabulary: Not Started | In Progress | Approved |
     // Declined | In Review | Abandoned | Expired | Kyc Expired.
     if (status !== 'Approved') {
@@ -2995,16 +3085,16 @@ async handleDiditEvent(jobData: { body: any }) {
                 },
             });
         }
-
+ 
         logger.info(`Didit session ${session_id} status "${status}" — no tier promotion`);
         return;
     }
-
+ 
     // ══════════════════════════════════════════════════════════════════
     // IDENTITY WORKFLOW → Tier 2
     // ══════════════════════════════════════════════════════════════════
     if (isIdentityWorkflow) {
-
+ 
         // FIXED — the generic audit record that used to sit above the
         // status check has moved into each branch. Previously it wrote a
         // PROOF_OF_ADDRESS row for every address session, and then the
@@ -3021,22 +3111,22 @@ async handleDiditEvent(jobData: { body: any }) {
                 resolvedAt: new Date(),
             },
         });
-
+ 
         // ─── AML audit trail ──────────────────────────────────────────
         // CONFIRMED: decision.aml_screenings is a plural ARRAY with
         // hits[] / score / status / total_hits / entity_type / screened_data.
         const amlScreening = decision?.aml_screenings?.[0];
-
+ 
         if (amlScreening) {
             const totalHits = amlScreening.total_hits ?? amlScreening.hits?.length ?? 0;
             const amlScore  = amlScreening.score ?? 0;
             const amlStatus = amlScreening.status ?? null;
-
+ 
             const amlFlagged =
                 totalHits > 0 ||
                 amlScore > 0 ||
                 (!!amlStatus && amlStatus !== 'Approved');
-
+ 
             await prisma.kycVerification.create({
                 data: {
                     userId: user.id,
@@ -3052,7 +3142,7 @@ async handleDiditEvent(jobData: { body: any }) {
                     resolvedAt: new Date(),
                 },
             });
-
+ 
             if (amlFlagged) {
                 logger.warn(`Didit AML flagged for review — user ${user.id}, session ${session_id}, hits=${totalHits}, score=${amlScore}`);
             }
@@ -3062,24 +3152,24 @@ async handleDiditEvent(jobData: { body: any }) {
                 { decisionKeys: decision ? Object.keys(decision) : null }
             );
         }
-
+ 
         // CONFIRMED: id_verifications[0] carries first_name / last_name /
         // date_of_birth / gender / document_number / nationality.
         const idVerification = decision?.id_verifications?.[0];
-
+ 
         const alreadyAtTier2 = (user.kycTier ?? 0) >= 2;
-
+ 
         await prisma.user.update({
             where: { id: user.id },
             data: {
                 // Never demote: an existing Tier 3 user re-running identity
                 // verification must not drop back to 2.
                 ...(alreadyAtTier2 ? {} : { kycTier: 2, kycTier2At: new Date() }),
-
+ 
                 legalFirstName: idVerification?.first_name ?? user.legalFirstName,
                 legalLastName: idVerification?.last_name ?? user.legalLastName,
                 legalNameVerifiedAt: new Date(),
-
+ 
                 // Gender arrives as "M"/"F"; existing column holds lowercase
                 legalDateOfBirth: idVerification?.date_of_birth
                     ? new Date(idVerification.date_of_birth)
@@ -3087,32 +3177,32 @@ async handleDiditEvent(jobData: { body: any }) {
                 legalGender: idVerification?.gender
                     ? String(idVerification.gender).toLowerCase()
                     : user.legalGender,
-
+ 
                 dojahLivenessRef: `didit_${session_id}`, // legacy field name, reused
             },
         });
-
+ 
         if (alreadyAtTier2) {
             logger.info(`User ${user.id} already at kycTier ${user.kycTier} — identity session ${session_id} processed without re-promotion`);
             return;
         }
-
+ 
         logger.info(`User ${user.id} upgraded to kycTier 2 via Didit identity session ${session_id}`);
-
+ 
         await notificationService.queue({
             userId: user.id,
             title: "You're verified",
             type: 'GENERAL',
             content: 'Your identity is verified — you now have access to $50,000/month in transaction volume. Verify your address any time to remove the limit entirely.',
         });
-
+ 
         return;
     }
-
+ 
     // ══════════════════════════════════════════════════════════════════
     // ADDRESS WORKFLOW → Tier 3
     // ══════════════════════════════════════════════════════════════════
-
+ 
     // Address verification alone must never grant Tier 3. The endpoint
     // blocks this, but the webhook is a public surface and shouldn't
     // rely on that.
@@ -3123,13 +3213,13 @@ async handleDiditEvent(jobData: { body: any }) {
         );
         return;
     }
-
+ 
     // CONFIRMED from a real standalone-address payload: poa_verifications
     // is a plural array; id_verifications / aml_screenings / face_matches
     // / liveness_checks are all null in this workflow.
     const poa = decision?.poa_verifications?.[0];
     const parsedAddress = poa?.poa_parsed_address;
-
+ 
     if (!poa || poa.status !== 'Approved') {
         logger.warn(
             `Address session ${session_id} overall status Approved but poa_verifications[0].status is "${poa?.status ?? 'missing'}" — not promoting`,
@@ -3137,18 +3227,18 @@ async handleDiditEvent(jobData: { body: any }) {
         );
         return;
     }
-
+ 
     // ─── Fraud check 1: document tampering ────────────────────────────
     // CONFIRMED present in document_metadata. A tampered or manipulated
     // document must never auto-promote to uncapped volume.
     const meta = poa.document_metadata ?? {};
     const tamperSignals: string[] = [];
-
+ 
     if (meta.is_tampered === true) tamperSignals.push('is_tampered');
     if (meta.image_anomalies?.detected === true) tamperSignals.push('image_anomalies');
     if (meta.overlay_manipulation?.detected === true) tamperSignals.push('overlay_manipulation');
     if (meta.processed_by_known_editor) tamperSignals.push(`edited_by:${meta.processed_by_known_editor}`);
-
+ 
     // ─── Fraud check 2: name on document matches verified identity ────
     // name_match_score_id_verification is CONFIRMED null on the
     // standalone address workflow — there's no ID in that session for
@@ -3157,17 +3247,17 @@ async handleDiditEvent(jobData: { body: any }) {
     const nameOnDoc = String(poa.name_on_document ?? '').toUpperCase().trim();
     const legalFirstRaw = String(user.legalFirstName ?? '').toUpperCase().trim();
     const legalLastRaw = String(user.legalLastName ?? '').toUpperCase().trim();
-
+ 
     // legalFirstName can hold multiple given names ("HARVEY ONYEKA") —
     // match on the first token, which appears consistently.
     const legalFirstToken = legalFirstRaw.split(/\s+/)[0] ?? '';
-
+ 
     const NAME_MATCH_THRESHOLD = 80; // ⚠️ tune against real data
     const diditScore = poa.name_match_score_id_verification;
-
+ 
     let nameMatches: boolean;
     let nameCheckMethod: string;
-
+ 
     if (typeof diditScore === 'number') {
         // Bundled workflow — trust Didit's own scoring
         nameMatches = diditScore >= NAME_MATCH_THRESHOLD;
@@ -3184,18 +3274,18 @@ async handleDiditEvent(jobData: { body: any }) {
         nameMatches = false;
         nameCheckMethod = `insufficient_data(doc="${nameOnDoc}", legalFirst="${legalFirstRaw}", legalLast="${legalLastRaw}")`;
     }
-
+ 
     // ─── Hold for review if anything looks wrong ──────────────────────
     if (tamperSignals.length > 0 || !nameMatches) {
         const reasons = [
             ...(tamperSignals.length ? [`tamper signals: ${tamperSignals.join(', ')}`] : []),
             ...(!nameMatches ? [`name mismatch via ${nameCheckMethod}`] : []),
         ];
-
+ 
         logger.warn(
             `Address POA held for review — user ${user.id}, session ${session_id}: ${reasons.join(' | ')}`
         );
-
+ 
         await prisma.kycVerification.create({
             data: {
                 userId: user.id,
@@ -3218,21 +3308,21 @@ async handleDiditEvent(jobData: { body: any }) {
                 resolvedAt: null,
             },
         });
-
+ 
         // Deliberately NOT promoting, and deliberately NOT notifying the
         // user — a fraud hold shouldn't tell the holder which check
         // caught them.
         return;
     }
-
+ 
     // ─── Promote ──────────────────────────────────────────────────────
     const alreadyAtTier3 = (user.kycTier ?? 0) >= 3;
-
+ 
     await prisma.user.update({
         where: { id: user.id },
         data: {
             ...(alreadyAtTier3 ? {} : { kycTier: 3, kycTier3At: new Date() }),
-
+ 
             // NOTE: kycTier2At is deliberately NOT touched here. The old
             // handler rewrote it on every approval, destroying the real
             // date the user completed identity verification.
@@ -3241,7 +3331,7 @@ async handleDiditEvent(jobData: { body: any }) {
             // / dojahLivenessRef / diditSessionId — all identity-flow
             // fields. The address payload has id_verifications: null, so
             // writing them here would either no-op or wipe good data.
-
+ 
             // Capture the verified address — the actual point of this flow.
             ...(parsedAddress
                 ? {
@@ -3254,7 +3344,7 @@ async handleDiditEvent(jobData: { body: any }) {
                 : {}),
         },
     });
-
+ 
     await prisma.kycVerification.create({
         data: {
             userId: user.id,
@@ -3268,14 +3358,14 @@ async handleDiditEvent(jobData: { body: any }) {
             resolvedAt: new Date(),
         },
     });
-
+ 
     if (alreadyAtTier3) {
         logger.info(`User ${user.id} already at kycTier 3 — address session ${session_id} processed, address data refreshed`);
         return;
     }
-
+ 
     logger.info(`User ${user.id} upgraded to kycTier 3 via Didit address session ${session_id}`);
-
+ 
     await notificationService.queue({
         userId: user.id,
         title: 'Address verified',
