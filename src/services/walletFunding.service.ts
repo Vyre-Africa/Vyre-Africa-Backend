@@ -66,7 +66,7 @@ class WalletFundingService {
                 userId,
                 currencyId,
                 chain: currency.chain,
-                fiatAmount,
+                fiatAmount: rampConfirm.amount_expected,
                 fiatCurrency: fiatCurrency.toUpperCase(),
                 expectedCryptoAmount: rampInit.to_amount,
                 merchantReference: reference,
@@ -80,7 +80,7 @@ class WalletFundingService {
 
         logger.info('Wallet funding initiated', {
             userId, reference, currency: currency.ISO, chain: currency.chain,
-            fiatAmount, expectedCryptoAmount: rampInit.to_amount,
+            fiatAmount:rampConfirm.amount_expected, expectedCryptoAmount: rampInit.to_amount,
         });
 
         return {
@@ -88,7 +88,7 @@ class WalletFundingService {
             bankName: rampConfirm.bank_name,
             bankAccountNumber: rampConfirm.account_number,
             bankAccountName: rampConfirm.account_name,
-            fiatAmount: rampConfirm.amount,
+            fiatAmount: rampConfirm.amount_expected,
             expectedCryptoAmount: rampInit.to_amount,
             currency: currency.ISO,
         };
