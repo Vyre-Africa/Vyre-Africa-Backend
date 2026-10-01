@@ -1138,7 +1138,6 @@ class eventService {
     }
   }
 
-
   private async handleCreditTransaction(params: {
       wallet: any;
       amount: string;
@@ -1149,9 +1148,9 @@ class eventService {
       contractAddress: string;
   }) {
       const { wallet, sender, awaiting, txId, amount, chain, contractAddress } = params;
-
+ 
       logger.info('Processing credit transaction', { walletId: wallet.id, amount, txId });
-
+ 
       // ── 1. Credit virtual account (has its own transaction) ───
       await virtualAccountService.cryptoDeposit({
           userId:          wallet.userId,
@@ -1167,13 +1166,13 @@ class eventService {
               subscriptionId: wallet.subscriptionId
           }
       });
-
+ 
       logger.info('Virtual account credited', { walletId: wallet.id, amount, txId });
-
+ 
       // ── 2. Sync wallet balance ────────────────────────────────
       const syncedWallet = await walletService.getAccount(wallet.id);
       if (!syncedWallet) throw new Error(`Failed to sync wallet ${wallet.id}`);
-
+ 
       // ── 3. Record transaction — no tx needed ─────────────────
       const transaction = await prisma.transaction.create({
           data: {
@@ -1192,12 +1191,38 @@ class eventService {
               }
           }
       });
-
+ 
       logger.info('Transaction recorded', { transactionId: transaction.id, txId });
-
+ 
+      // ── 3b. NEW — settle any wallet fundings waiting on this deposit ──
+      //
+      // Quidax delivers wallet-funding crypto to the ADMIN (master)
+      // address. If its webhook arrived before this on-chain credit, the
+      // funding deferred to AWAITING_DEPOSIT because admin didn't hold
+      // the balance yet. Now it does — settle them.
+      //
+      // Placement matters: this runs AFTER cryptoDeposit has committed
+      // and the wallet has been synced, so settleWalletFunding re-reads a
+      // balance that already includes this deposit. Any earlier and it
+      // would defer again.
+      //
+      // Wrapped so a settlement failure can never break the deposit
+      // itself — the credit above has already succeeded and must stand.
+      if (wallet.userId === config.Admin_Id) {
+          try {
+              await this.settleDeferredWalletFundings(wallet);
+          } catch (err: any) {
+              logger.error('Deferred wallet funding sweep failed (non-critical to this deposit)', {
+                  walletId: wallet.id,
+                  txId,
+                  error: err.message,
+              });
+          }
+      }
+ 
       // ── 4. Queue sweep ────────────────────────────────────────
       this.queueSweep({ wallet, txId, amount, chain, contractAddress });
-
+ 
       // ── 5. Route — awaiting order or plain deposit ────────────
       if (awaiting) {
           return await this.handleAwaitingOrder({
@@ -1208,19 +1233,70 @@ class eventService {
               transaction
           });
       }
-
-      await notificationService.queue({
-          userId:  wallet.userId,
-          title:   'Transaction Notification',
-          type:    'GENERAL',
-          content: `<strong>${DecimalUtil.formatWithCurrency(amount, wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
-      });
-
+ 
+      // CHANGED — suppressed for admin wallets.
+      //
+      // This fires for every plain deposit, including the master address
+      // receiving wallet-funding crypto from Quidax. That produced a
+      // second, confusing notification on top of the funding one, and on
+      // a real shared admin account it would notify on every user's
+      // funding deposit.
+      //
+      // settleWalletFunding sends the user-facing notification for that
+      // flow instead.
+      if (wallet.userId !== config.Admin_Id) {
+          await notificationService.queue({
+              userId:  wallet.userId,
+              title:   'Transaction Notification',
+              type:    'GENERAL',
+              content: `<strong>${DecimalUtil.formatWithCurrency(amount, wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
+          });
+      }
+ 
       return {
           status:        'success',
           action:        'credit-completed',
           transactionId: transaction.id
       };
+  }
+ 
+  // ── NEW — settle fundings that were waiting on an admin deposit ────
+  private async settleDeferredWalletFundings(wallet: any) {
+ 
+      // Filtering on currencyId (a real scalar FK on this table) rather
+      // than a nested `currency: { ISO: ... }` relation filter. Two
+      // reasons: it can use the composite index, and the wallet already
+      // carries currencyId so there's nothing extra to resolve.
+      const awaitingFundings = await prisma.walletFundingRequest.findMany({
+          where: {
+              status: 'AWAITING_DEPOSIT',
+              quidaxConfirmedAt: { not: null },
+              currencyId: wallet.currencyId,
+              chain: wallet.currency?.chain,
+          },
+          include: { currency: true },
+          orderBy: { createdAt: 'asc' },   // oldest claim settles first
+      });
+ 
+      if (!awaitingFundings.length) return;
+ 
+      logger.info('Admin credit received — settling deferred wallet fundings', {
+          count: awaitingFundings.length,
+          currency: wallet.currency?.ISO,
+          chain: wallet.currency?.chain,
+      });
+ 
+      for (const req of awaitingFundings) {
+          try {
+              // settleWalletFunding does its own findUnique WITH the
+              // include, so the records here don't need it.
+              await this.settleWalletFunding(req.id);
+          } catch (err: any) {
+              logger.error('Deferred wallet funding settlement failed', {
+                  requestId: req.id, error: err.message,
+              });
+          }
+      }
   }
 
   private async handleDebitTransaction(params: {
@@ -2489,8 +2565,10 @@ class eventService {
   // ═══════════════════════════════════════════════════════════════════════
   
   private async processWalletFundingWebhook(event: string, data: any) {
+    
       const record = await prisma.walletFundingRequest.findUnique({
           where: { merchantReference: data.merchant_reference },
+          include: { currency: true },
       })
   
       if (!record) {
@@ -2530,112 +2608,189 @@ class eventService {
       }
   }
 
-  private async handleWalletFundingCompleted(record: { id: string }) {
-      // FIXED — the whole check-and-credit sequence now runs inside one
-      // transaction, with the WalletFundingRequest row locked FIRST. A
-      // second, concurrent webhook delivery for the same event physically
-      // cannot read the row until this transaction commits — so it will
-      // always see status: 'COMPLETED' once it does get in, not the stale
-      // 'PENDING' both deliveries would otherwise race to see.
-      const result = await prisma.$transaction(async (tx) => {
-          await tx.$queryRaw`
-              SELECT id FROM "WalletFundingRequest"
+  private async handleWalletFundingCompleted(record: any) {
+ 
+      // Claim the record so a duplicate webhook can't double-process.
+      // Only COMPLETED is terminal here — PROCESSING and
+      // AWAITING_DEPOSIT must both still be claimable.
+      const claimed = await prisma.$transaction(async (tx) => {
+          const rows = await tx.$queryRaw<Array<{ id: string; status: string }>>`
+              SELECT id, status FROM "WalletFundingRequest"
               WHERE id = ${record.id}
               FOR UPDATE
           `;
-  
-          const locked = await tx.walletFundingRequest.findUnique({ where: { id: record.id } });
-          if (!locked) throw new Error('WalletFundingRequest not found');
-  
-          if (locked.status === 'COMPLETED') {
-              logger.info('Wallet funding webhook — already completed, skipping', { id: locked.id });
-              return null; // signals "already handled" to the caller below
-          }
-  
-          const wallet = await tx.wallet.findFirst({
-              where: { userId: locked.userId, currencyId: locked.currencyId },
-          });
-          if (!wallet) throw new Error('User wallet not found at completion time');
-  
-          const currency = await tx.currency.findUnique({ where: { id: locked.currencyId } });
-  
-          // Mark COMPLETED inside the SAME transaction as the credit below —
-          // if anything after this point throws, the whole transaction
-          // rolls back together, so the status flip and the actual credit
-          // can never drift apart from each other.
+ 
+          if (!rows.length) return null;
+          if (rows[0].status === 'COMPLETED') return null;
+ 
           await tx.walletFundingRequest.update({
-              where: { id: locked.id },
+              where: { id: record.id },
+              data: { quidaxConfirmedAt: new Date() },
+          });
+ 
+          return true;
+      }, { isolationLevel: 'Serializable' });
+ 
+      if (!claimed) {
+          logger.info('Wallet funding already completed — skipping', { id: record.id });
+          return;
+      }
+ 
+      await this.settleWalletFunding(record.id);
+  }
+
+  private async settleWalletFunding(requestId: string) {
+ 
+      const record = await prisma.walletFundingRequest.findUnique({
+          where: { id: requestId },
+          include: { currency: true },      // REQUIRED — see note above
+      });
+ 
+      if (!record) {
+          logger.warn('settleWalletFunding — record not found', { requestId });
+          return;
+      }
+ 
+      if (record.status === 'COMPLETED') {
+          logger.info('Wallet funding already settled', { requestId });
+          return;
+      }
+ 
+      if (record.status === 'FAILED') {
+          logger.info('Wallet funding previously failed — not retrying automatically', { requestId });
+          return;
+      }
+ 
+      if (!record.quidaxConfirmedAt) {
+          logger.info('Wallet funding — Tatum credited but Quidax has not confirmed, deferring', { requestId });
+          return;
+      }
+ 
+      // Guard the relation itself. If the include were ever dropped in a
+      // refactor this fails loudly here rather than throwing an opaque
+      // "cannot read ISO of undefined" three lines later.
+      if (!record.currency?.ISO) {
+          logger.error('Wallet funding — currency relation missing or not included', { requestId });
+          await prisma.walletFundingRequest.update({
+              where: { id: record.id },
+              data: { status: 'FAILED', failureReason: 'Currency record missing' },
+          });
+          return;
+      }
+ 
+      const currencyISO = record.currency.ISO;
+      const amount = record.expectedCryptoAmount.toString();
+ 
+      // ── Has the deposit reached admin yet? ────────────────────────
+      let adminAccount;
+      try {
+          adminAccount = await virtualAccountService.getAccount(
+              config.Admin_Id,
+              currencyISO,
+              'STANDARD',
+              record.chain ?? undefined
+          );
+      } catch (err: any) {
+          // getAccount THROWS when no account exists — it doesn't return
+          // null. Without this catch the handler blows up on a
+          // misconfigured currency rather than failing cleanly.
+          logger.error('Wallet funding — admin account not found', {
+              requestId, currency: currencyISO, chain: record.chain, error: err.message,
+          });
+          await prisma.walletFundingRequest.update({
+              where: { id: record.id },
+              data: { status: 'FAILED', failureReason: `Admin account not found for ${currencyISO}` },
+          });
+          return;
+      }
+ 
+      if (new Decimal(adminAccount.available).lt(new Decimal(amount))) {
+          await prisma.walletFundingRequest.update({
+              where: { id: record.id },
+              data: { status: 'AWAITING_DEPOSIT' },
+          });
+ 
+          logger.info('Wallet funding — admin balance insufficient, awaiting on-chain deposit', {
+              requestId,
+              required: amount,
+              adminAvailable: adminAccount.available.toString(),
+          });
+          return;
+      }
+ 
+      try {
+          const result = await virtualAccountService.p2pTransfer({
+              fromUserId:  config.Admin_Id,
+              toUserId:    record.userId,
+              amount,
+              currency:    currencyISO,
+              blockchain:  record.chain ?? undefined,
+              description: `Wallet funding — ${record.merchantReference}`,
+              metadata: {
+                  walletFundingRequestId: record.id,
+                  merchantReference:      record.merchantReference,
+                  quidaxReference:        record.quidaxReference,
+                  fiatAmount:             record.fiatAmount?.toString(),
+                  fiatCurrency:           record.fiatCurrency,
+              },
+          });
+ 
+          await prisma.walletFundingRequest.update({
+              where: { id: record.id },
               data: { status: 'COMPLETED', completedAt: new Date() },
           });
-  
-          return { locked, wallet, currency };
-      }, { isolationLevel: 'Serializable' });
-  
-      if (!result) return; // already handled by a prior delivery
-  
-      const { locked, wallet, currency } = result;
-  
-      // creditAccount runs its own separate transaction (locking the
-      // VirtualAccount row) — deliberately kept outside the transaction
-      // above, since that one's job was purely to win the race on the
-      // WalletFundingRequest row, not to hold a lock across two accounts
-      // at once.
-      await virtualAccountService.creditAccount({
-          accountId: wallet.id,
-          amount: locked.expectedCryptoAmount.toString(),
-          description: `Wallet funded via Quidax onramp — ${locked.merchantReference}`,
-          metadata: {
-              source: 'QUIDAX_ONRAMP',
-              fiatAmount: locked.fiatAmount.toString(),
-              fiatCurrency: locked.fiatCurrency,
-              merchantReference: locked.merchantReference,
-          },
-      });
-  
-      await prisma.virtualTransaction.create({
-          data: {
-              toAccountId: wallet.id,
-              amount: locked.expectedCryptoAmount,
-              fee: 0,
-              netAmount: locked.expectedCryptoAmount,
-              currency: currency?.ISO ?? '',
-              type: 'CRYPTO_DEPOSIT',
-              status: 'COMPLETED',
-              reference: locked.merchantReference,
-              blockchain: locked.chain,
-              metadata: {
-                  source: 'QUIDAX_ONRAMP',
-                  fiatAmount: locked.fiatAmount.toString(),
-                  fiatCurrency: locked.fiatCurrency,
-              },
-              completedAt: new Date(),
-          },
-      });
-  
-      await notificationService.queue({
-          userId: locked.userId,
-          title: 'Wallet Funded',
-          type: 'GENERAL',
-          content: `Your wallet has been credited with <strong>${locked.expectedCryptoAmount} ${currency?.ISO}</strong>. Thanks for choosing Vyre.`,
-      });
-
-      // NEW — records usage against the user's monthly KYC tier limit.
-      // Reuses the exact call shape from handleOfframpCompleted. Amount is
-      // expressed in the STABLECOIN itself with ratePerUsd: 1 rather than
-      // converting the raw fiat amount — USDC/USDT are USD-pegged, so this
-      // is both simpler and more accurate than routing through a separate
-      // fiat→USD rate this function doesn't otherwise need.
-      trackKycUsage({
-          userId:      locked.userId,
-          amount:      Number(locked.expectedCryptoAmount),
-          currencyIso: currency?.ISO ?? 'USDC',
-          ratePerUsd:  1,
-          context:     `handleWalletFundingCompleted | id=${locked.id}`,
-      });
-  
-      logger.info('Wallet funding completed — user credited', {
-          id: locked.id, userId: locked.userId, amount: locked.expectedCryptoAmount.toString(),
-      });
+ 
+          trackKycUsage({
+              userId:      record.userId,
+              amount:      Number(record.expectedCryptoAmount),
+              currencyIso: currencyISO,
+              ratePerUsd:  1,
+              context:     `walletFunding | id=${record.id}`,
+          });
+ 
+          await notificationService.queue({
+              userId: record.userId,
+              title: 'Wallet Funded',
+              type: 'GENERAL',
+              content: `Your wallet has been credited with <strong>${amount} ${currencyISO}</strong>. Thanks for choosing Vyre.`,
+          });
+ 
+          logger.info('Wallet funding settled — admin→user transfer complete', {
+              requestId, reference: result.reference, amount,
+          });
+ 
+      } catch (error: any) {
+          // Distinguish a balance race from a real failure. p2pTransfer
+          // re-checks balance inside its own transaction, so a concurrent
+          // debit can fail it even though the check above passed. That's
+          // retryable, not terminal.
+          const isBalanceIssue =
+              error?.message?.includes('Insufficient balance') ||
+              error?.message?.includes('could not serialize access');
+ 
+          if (isBalanceIssue) {
+              await prisma.walletFundingRequest.update({
+                  where: { id: record.id },
+                  data: { status: 'AWAITING_DEPOSIT' },
+              });
+              logger.warn('Wallet funding — transfer hit a balance race, will retry on next admin credit', {
+                  requestId, error: error.message,
+              });
+              return;
+          }
+ 
+          logger.error('Wallet funding settlement FAILED', { requestId, error: error.message });
+ 
+          await prisma.walletFundingRequest.update({
+              where: { id: record.id },
+              data: { status: 'FAILED', failureReason: error.message },
+          });
+ 
+          logger.error(
+              'MANUAL ACTION REQUIRED — funds held by admin but user not credited',
+              { requestId, userId: record.userId, amount, currency: currencyISO }
+          );
+      }
   }
 
   private async processInternalOfframpWebhook(event: string, data: any) {
@@ -3019,12 +3174,12 @@ class eventService {
  
 
   // event.service.ts — handleDiditEvent
-// Two-workflow model:
-//   Workflow A (identity): ID + liveness + face match + AML  → Tier 2
-//   Workflow B (address):  POA only                          → Tier 3
-//
-// Branches on workflow_id, which is CONFIRMED present in every webhook
-// payload (e.g. "ba34438d-1a87-4ab5-86c7-f7cee1b11ebf").
+  // Two-workflow model:
+  //   Workflow A (identity): ID + liveness + face match + AML  → Tier 2
+  //   Workflow B (address):  POA only                          → Tier 3
+  //
+  // Branches on workflow_id, which is CONFIRMED present in every webhook
+  // payload (e.g. "ba34438d-1a87-4ab5-86c7-f7cee1b11ebf").
 
 async handleDiditEvent(jobData: { body: any }) {
     const { body } = jobData;
