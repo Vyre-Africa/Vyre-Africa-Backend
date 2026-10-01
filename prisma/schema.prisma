@@ -754,10 +754,12 @@ model WalletFundingRequest {
   status                String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
   failureReason         String?
   createdAt             DateTime @default(now())
+  quidaxConfirmedAt     DateTime?
   completedAt           DateTime?
  
   @@index([userId])
   @@index([status])
+  @@index([status, currencyId, chain])
 }
 
 model InternalOfframpRequest {
