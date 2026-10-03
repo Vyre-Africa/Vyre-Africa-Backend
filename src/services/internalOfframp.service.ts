@@ -396,6 +396,8 @@ class InternalOfframpService {
 
         // Idempotency: lock the row and re-check status inside the
         // transaction, so a duplicate webhook can't double-credit.
+        console.log('🔍 TRACE [12] complete() entered', { merchantReference, actualFiatAmount });
+
         return await prisma.$transaction(async (tx) => {
 
             const rows = await tx.$queryRaw<Array<{ id: string; status: string }>>`
@@ -405,11 +407,17 @@ class InternalOfframpService {
             `;
 
             if (!rows.length) {
+                console.log('🔍 TRACE [12a] ❌ STOPPED — no row found inside transaction lock');
+
                 logger.warn('Internal offramp complete — request not found', { merchantReference });
                 return null;
             }
 
+            console.log('🔍 TRACE [12b] row locked', { id: rows[0].id, status: rows[0].status });
+
             if (rows[0].status === 'COMPLETED') {
+                console.log('🔍 TRACE [12c] STOPPED (expected) — already COMPLETED, idempotent no-op');
+
                 logger.info('Internal offramp already completed — skipping', { merchantReference });
                 return null;
             }
@@ -423,7 +431,12 @@ class InternalOfframpService {
 
         }, { isolationLevel: 'Serializable' }).then(async (request) => {
 
-            if (!request) return null;
+            if (!request) {
+              console.log('🔍 TRACE [13] exiting early — request was null (see TRACE 12a/12c above)');
+              return null;
+            }
+
+            console.log('🔍 TRACE [13] proceeding to settle', { id: request.id });
 
             // The two calls below are the real money movement. They use
             // their own internal transactions, so they sit outside the
@@ -431,28 +444,61 @@ class InternalOfframpService {
 
             // 1. User's frozen crypto → admin's crypto account
             if (request.blockId && request.virtualTransactionId) {
-                await virtualAccountService.completeGlobalPayoutBlock({
-                    transactionId: request.virtualTransactionId,
+
+                console.log('🔍 TRACE [14] calling completeGlobalPayoutBlock', {
                     blockId: request.blockId,
-                    externalRef: request.quidaxReference ?? undefined,
+                    virtualTransactionId: request.virtualTransactionId,
                 });
-            }
+
+                try {
+                  await virtualAccountService.completeGlobalPayoutBlock({
+                      transactionId: request.virtualTransactionId,
+                      blockId: request.blockId,
+                      externalRef: request.quidaxReference ?? undefined,
+                  });
+                  console.log('🔍 TRACE [14a] completeGlobalPayoutBlock succeeded');
+                } catch (err: any) {
+                    console.log('🔍 TRACE [14b] ❌ completeGlobalPayoutBlock THREW', { error: err?.message });
+                    throw err;
+                }
+
+            } else {
+              console.log('🔍 TRACE [14c] ⚠️  missing blockId or virtualTransactionId — crypto-side release skipped', {
+                blockId: request.blockId, virtualTransactionId: request.virtualTransactionId,
+              });
+           }
 
             // 2. Credit the user's fiat wallet
             const fiatAmount = actualFiatAmount ?? request.expectedFiatAmount?.toString();
+            console.log('🔍 TRACE [15] resolved fiat amount to credit', { fiatAmount });
+
             if (!fiatAmount) {
+                console.log('🔍 TRACE [15a] ❌ STOPPED — no fiat amount available at all');
                 throw new Error('No fiat amount available to credit');
             }
 
             const fiatCurrencyRecord = await prisma.currency.findFirst({
                 where: { ISO: request.fiatCurrency, type: 'FIAT' },
             });
-            if (!fiatCurrencyRecord) throw new Error('Fiat currency record not found');
+            if (!fiatCurrencyRecord) {
+              console.log('🔍 TRACE [15b] ❌ STOPPED — fiat currency record not found', {
+                  fiatCurrency: request.fiatCurrency,
+              });
+              throw new Error('Fiat currency record not found');
+            }
 
             const fiatWallet = await prisma.wallet.findFirst({
                 where: { userId: request.userId, currencyId: fiatCurrencyRecord.id },
             });
-            if (!fiatWallet) throw new Error('User fiat wallet not found');
+
+            if (!fiatWallet) {
+              console.log('🔍 TRACE [15c] ❌ STOPPED — user has no fiat wallet for this currency', {
+                  userId: request.userId,
+              });
+              throw new Error('User fiat wallet not found');
+            }
+
+            console.log('🔍 TRACE [16] crediting fiat wallet', { walletId: fiatWallet.id, amount: fiatAmount });
 
             await virtualAccountService.creditAccount({
                 accountId: fiatWallet.id,
@@ -460,6 +506,8 @@ class InternalOfframpService {
                 description: `Offramp from ${request.cryptoAmount} ${request.cryptoCurrency}`,
                 metadata: { internalOfframpId: request.id, merchantReference },
             });
+
+            console.log('🔍 TRACE [16a] fiat credit succeeded');
 
             await prisma.internalOfframpRequest.update({
                 where: { id: request.id },
@@ -480,6 +528,8 @@ class InternalOfframpService {
                 merchantReference,
                 fiatAmount,
             });
+
+            console.log('🔍 TRACE [17] ✅ DONE — request marked COMPLETED', { id: request.id });
 
             return request;
         });

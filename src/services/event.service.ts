@@ -2340,13 +2340,24 @@ class eventService {
     // the existing logic below would just log "awaiting not found" and
     // silently drop the webhook, exactly the same class of bug as the
     // Nuvion outflows.completed dedup collision from earlier.
+    console.log('🔍 TRACE [9] processRampWebhook entered', {
+        event,
+        merchantReference: data?.merchant_reference,
+    });
+ 
     if (data.merchant_reference?.startsWith('WALLETFUND_')) {
+        console.log('🔍 TRACE [9a] routing to processWalletFundingWebhook');
         return this.processWalletFundingWebhook(event, data)
     }
-
+ 
     if (data.merchant_reference?.startsWith('WALLETOFFRAMP_')) {
+        console.log('🔍 TRACE [9b] routing to processInternalOfframpWebhook');
         return this.processInternalOfframpWebhook(event, data)
     }
+ 
+    console.log('🔍 TRACE [9c] falling through to Awaiting-based P2P order logic', {
+        reference: data.merchant_reference,
+    });
  
     // Find the awaiting by merchant reference
     // Include pair + currencies so trackKycUsage can convert to USD
@@ -2408,7 +2419,7 @@ class eventService {
         default:
             logger.warn('Ramp webhook — unhandled event', { event })
     }
-}
+  }
 
   // ── ONRAMP: Quidax received the fiat, processing now ───────
   private async handleOnrampProcessing(awaiting: any) {
@@ -2794,6 +2805,12 @@ class eventService {
   }
 
   private async processInternalOfframpWebhook(event: string, data: any) {
+     
+    console.log('🔍 TRACE [10] processInternalOfframpWebhook entered', {
+          event,
+          merchantReference: data.merchant_reference,
+      });
+
       const record = await prisma.internalOfframpRequest.findUnique({
           where: { merchantReference: data.merchant_reference },
       })
@@ -2804,12 +2821,16 @@ class eventService {
           })
           return
       }
+
+      console.log('🔍 TRACE [10b] found record', { id: record.id, currentStatus: record.status });
  
       switch (event) {
  
           case 'sell_transaction.processing':
               // Quidax has seen our on-chain deposit and is processing
               // the fiat payout. Nothing to move yet.
+              console.log('🔍 TRACE [11-processing] handling sell_transaction.processing');
+
               if (record.status !== 'COMPLETED') {
                   await prisma.internalOfframpRequest.update({
                       where: { id: record.id },
@@ -2820,14 +2841,19 @@ class eventService {
               break
  
           case 'sell_transaction.successful':
-              await internalOfframpService.complete({
-                  merchantReference: data.merchant_reference,
-                  // ⚠️ FIELD NAME UNVERIFIED — confirm what Quidax actually
-                  // sends for the settled fiat amount on a real successful
-                  // sell webhook. Falls back to the expected amount
-                  // captured at initiate if absent.
-                  actualFiatAmount: data.to_amount ?? data.amount ?? undefined,
-              })
+           console.log('🔍 TRACE [11-success] handling sell_transaction.successful — calling complete()');
+
+
+              try {
+                  await internalOfframpService.complete({
+                      merchantReference: data.merchant_reference,
+                      actualFiatAmount: data.to_amount ?? data.amount ?? undefined,
+                  })
+                  console.log('🔍 TRACE [11-success-a] complete() returned without throwing');
+              } catch (err: any) {
+                  console.log('🔍 TRACE [11-success-b] ❌ complete() THREW', { error: err?.message });
+                  throw err;
+              }
  
               // KYC usage — the stablecoin amount IS the USD value
               trackKycUsage({
@@ -2851,6 +2877,7 @@ class eventService {
               // Quidax. Releasing the user's block makes them whole, but
               // Vyre is then short the crypto until it's recovered.
               // Deliberately flagged loudly rather than handled silently.
+              console.log('🔍 TRACE [11-failed] handling sell_transaction.failed');
               logger.error(
                   'Internal offramp FAILED at Quidax — crypto may already have been sent. MANUAL RECONCILIATION REQUIRED.',
                   {
@@ -2874,9 +2901,12 @@ class eventService {
               break
  
           default:
+            console.log('🔍 TRACE [11-unhandled] unrecognised event type', { event });
               logger.warn('Internal offramp webhook — unhandled event', { event })
       }
   }
+
+
 
   async handleNuvionEvent(jobData: { eventType: string; data: any; rawBody: any }) {
       const { eventType, data, rawBody } = jobData;
