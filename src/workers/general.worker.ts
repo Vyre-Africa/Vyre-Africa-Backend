@@ -106,7 +106,22 @@ export function startGeneralWorker() {
                         return await eventService.handleDiditEvent(job.data);
                         
                     case 'Ramp_Event':
-                        return await eventService.processRampWebhook(job.data.body);
+                        console.log('🔍 TRACE [8] worker picked up Ramp_Event job', {
+                            jobId: job.id,
+                            attemptsMade: job.attemptsMade,
+                        });
+                        try {
+                            await eventService.processRampWebhook(job.data.body);
+                            console.log('🔍 TRACE [8a] processRampWebhook returned without throwing');
+                        } catch (err: any) {
+                            console.log('🔍 TRACE [8b] ❌ processRampWebhook THREW inside worker', {
+                                error: err?.message,
+                                stack: err?.stack,
+                            });
+                            throw err; // let BullMQ's retry/failure handling see this
+                        }
+                        break;
+
 
                     default:
                         throw new Error(`Unknown job type: ${job.name}`);

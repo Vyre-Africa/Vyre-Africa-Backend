@@ -760,102 +760,208 @@ class EventController {
       }
   }
 
-  async ramp_WebHook(req: Request & Record<string, any>, res: Response) {
-      try {
-          const rawBody: Buffer = req.body;
-          const signature = req.headers['x-ramp-signature'] as string | undefined;
+//   async ramp_WebHook(req: Request & Record<string, any>, res: Response) {
+//       try {
+//           const rawBody: Buffer = req.body;
+//           const signature = req.headers['x-ramp-signature'] as string | undefined;
   
-          // FIXED — was JSON.stringify(req.body), which re-serializes a
-          // parsed object rather than using the bytes Quidax actually
-          // signed. Key order, whitespace and number formatting all have
-          // to match exactly, and they usually don't. Same raw-buffer
-          // approach the Didit webhook already uses correctly.
-          if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
-              logger.warn('Ramp webhook body is not a raw Buffer — check express.raw() is mounted before any global express.json()');
-              return res.status(401).json({ error: 'Invalid signature' });
-          }
+//           // FIXED — was JSON.stringify(req.body), which re-serializes a
+//           // parsed object rather than using the bytes Quidax actually
+//           // signed. Key order, whitespace and number formatting all have
+//           // to match exactly, and they usually don't. Same raw-buffer
+//           // approach the Didit webhook already uses correctly.
+//           if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
+//               logger.warn('Ramp webhook body is not a raw Buffer — check express.raw() is mounted before any global express.json()');
+//               return res.status(401).json({ error: 'Invalid signature' });
+//           }
   
-          if (!signature) {
-              logger.warn('Ramp webhook — missing x-ramp-signature header');
-              return res.status(401).json({ error: 'Invalid signature' });
-          }
+//           if (!signature) {
+//               logger.warn('Ramp webhook — missing x-ramp-signature header');
+//               return res.status(401).json({ error: 'Invalid signature' });
+//           }
   
-          const bodyString = rawBody.toString('utf8');
-          const isValid = liquidityRampService.verifyWebhookSignature(bodyString, signature);
+//           const bodyString = rawBody.toString('utf8');
+//           const isValid = liquidityRampService.verifyWebhookSignature(bodyString, signature);
   
-          if (!isValid) {
-              logger.warn('Ramp webhook — invalid signature');
-              return res.status(401).json({ error: 'Invalid signature' });
-          }
+//           if (!isValid) {
+//               logger.warn('Ramp webhook — invalid signature');
+//               return res.status(401).json({ error: 'Invalid signature' });
+//           }
   
-          const body = JSON.parse(bodyString);
-          const { event, data } = body;
+//           const body = JSON.parse(bodyString);
+//           const { event, data } = body;
   
-          logger.info('Ramp webhook received', {
-              event,
-              merchantReference: data?.merchant_reference,
-              rawKeys: Object.keys(body),
-          });
+//           logger.info('Ramp webhook received', {
+//               event,
+//               merchantReference: data?.merchant_reference,
+//               rawKeys: Object.keys(body),
+//           });
   
-          // ─── Idempotency key ──────────────────────────────────────────
-          // ⚠️ UNVERIFIED: Quidax's payload shape hasn't been confirmed
-          // against a real delivery here. This tries the most likely
-          // identifiers in order. Check the logged rawKeys above on a real
-          // webhook and pin this to whatever genuinely unique field exists.
-          //
-          // NOTE: merchant_reference alone is NOT sufficient — the same
-          // reference fires for .processing AND .successful, so keying on
-          // it alone would drop the second event entirely. This is exactly
-          // the Nuvion outflows.completed bug from earlier in this project.
-          // The event type MUST be part of the key.
-          let derivedEventId: string;
+//           // ─── Idempotency key ──────────────────────────────────────────
+//           // ⚠️ UNVERIFIED: Quidax's payload shape hasn't been confirmed
+//           // against a real delivery here. This tries the most likely
+//           // identifiers in order. Check the logged rawKeys above on a real
+//           // webhook and pin this to whatever genuinely unique field exists.
+//           //
+//           // NOTE: merchant_reference alone is NOT sufficient — the same
+//           // reference fires for .processing AND .successful, so keying on
+//           // it alone would drop the second event entirely. This is exactly
+//           // the Nuvion outflows.completed bug from earlier in this project.
+//           // The event type MUST be part of the key.
+//           let derivedEventId: string;
   
-          if (body?.id) {
-              derivedEventId = `ramp_${body.id}`;
-          } else if (body?.event_id) {
-              derivedEventId = `ramp_${body.event_id}`;
-          } else if (event && data?.merchant_reference) {
-              derivedEventId = `ramp_${event}_${data.merchant_reference}`;
-          } else {
-              logger.error('Ramp webhook — no stable identifier to key idempotency on', { body });
-              return res.status(400).json({ error: 'Missing event identifier' });
-          }
+//           if (body?.id) {
+//               derivedEventId = `ramp_${body.id}`;
+//           } else if (body?.event_id) {
+//               derivedEventId = `ramp_${body.event_id}`;
+//           } else if (event && data?.merchant_reference) {
+//               derivedEventId = `ramp_${event}_${data.merchant_reference}`;
+//           } else {
+//               logger.error('Ramp webhook — no stable identifier to key idempotency on', { body });
+//               return res.status(400).json({ error: 'Missing event identifier' });
+//           }
   
-          // ─── Dedup via the unique constraint itself ───────────────────
-          // Same race-safe pattern as the Didit webhook: let the DB be the
-          // guard rather than a findUnique that two retries could both pass.
-          try {
-              await prisma.rampWebhookEvent.create({
-                  data: {
-                      eventId: derivedEventId,
-                      eventType: event ?? 'unknown',
-                      rawPayload: body,
-                  },
-              });
-          } catch (e: any) {
-              if (e?.code === 'P2002') {
-                  logger.info(`Ramp webhook ${derivedEventId} already processed — skipping`);
-                  return res.status(200).json({ received: true, duplicate: true });
-              }
-              throw e;
-          }
+//           // ─── Dedup via the unique constraint itself ───────────────────
+//           // Same race-safe pattern as the Didit webhook: let the DB be the
+//           // guard rather than a findUnique that two retries could both pass.
+//           try {
+//               await prisma.rampWebhookEvent.create({
+//                   data: {
+//                       eventId: derivedEventId,
+//                       eventType: event ?? 'unknown',
+//                       rawPayload: body,
+//                   },
+//               });
+//           } catch (e: any) {
+//               if (e?.code === 'P2002') {
+//                   logger.info(`Ramp webhook ${derivedEventId} already processed — skipping`);
+//                   return res.status(200).json({ received: true, duplicate: true });
+//               }
+//               throw e;
+//           }
   
-          // ─── Hand off to the queue ────────────────────────────────────
-          // FIXED — was setImmediate(), which runs in-process. A crash or
-          // deploy mid-processing lost the event entirely, with no retry
-          // and no record it had arrived. Every other webhook in this
-          // codebase queues; this one now does too.
-          await generalQueue.add('Ramp_Event', { body });
+//           // ─── Hand off to the queue ────────────────────────────────────
+//           // FIXED — was setImmediate(), which runs in-process. A crash or
+//           // deploy mid-processing lost the event entirely, with no retry
+//           // and no record it had arrived. Every other webhook in this
+//           // codebase queues; this one now does too.
+//           await generalQueue.add('Ramp_Event', { body });
   
-          return res.status(200).json({ received: true });
+//           return res.status(200).json({ received: true });
   
-      } catch (error: any) {
-          logger.error('Ramp webhook error:', error.message);
-          if (!res.headersSent) {
-              return res.status(500).json({ error: 'Internal Server Error' });
-          }
-      }
-  }
+//       } catch (error: any) {
+//           logger.error('Ramp webhook error:', error.message);
+//           if (!res.headersSent) {
+//               return res.status(500).json({ error: 'Internal Server Error' });
+//           }
+//       }
+//   }
+
+async ramp_WebHook(req: Request | any, res: Response) {
+    try {
+        const rawBody: Buffer = req.body;
+        const signature = req.headers['x-ramp-signature'] as string | undefined;
+ 
+        console.log('🔍 TRACE [1] controller received request', {
+            hasBuffer: Buffer.isBuffer(rawBody),
+            bodyLength: rawBody?.length,
+            hasSignature: !!signature,
+        });
+ 
+        if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
+            console.log('🔍 TRACE [1a] STOPPED — body is not a raw Buffer');
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+ 
+        if (!signature) {
+            console.log('🔍 TRACE [1b] STOPPED — missing x-ramp-signature header');
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+ 
+        const bodyString = rawBody.toString('utf8');
+        const isValid = liquidityRampService.verifyWebhookSignature(bodyString, signature);
+ 
+        console.log('🔍 TRACE [2] signature check', { isValid });
+ 
+        if (!isValid) {
+            console.log('🔍 TRACE [2a] STOPPED — signature verification failed');
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+ 
+        const body = JSON.parse(bodyString);
+        const { event, data } = body;
+ 
+        console.log('🔍 TRACE [3] parsed body', {
+            event,
+            merchantReference: data?.merchant_reference,
+        });
+ 
+        let derivedEventId: string;
+        if (body?.id) {
+            derivedEventId = `ramp_${body.id}`;
+        } else if (body?.event_id) {
+            derivedEventId = `ramp_${body.event_id}`;
+        } else if (event && data?.merchant_reference) {
+            derivedEventId = `ramp_${event}_${data.merchant_reference}`;
+        } else {
+            console.log('🔍 TRACE [3a] STOPPED — no stable identifier to key idempotency on');
+            return res.status(400).json({ error: 'Missing event identifier' });
+        }
+ 
+        console.log('🔍 TRACE [4] derived idempotency key', { derivedEventId });
+ 
+        try {
+            await prisma.rampWebhookEvent.create({
+                data: { eventId: derivedEventId, eventType: event ?? 'unknown', rawPayload: body },
+            });
+            console.log('🔍 TRACE [5] idempotency record created — new event, proceeding');
+        } catch (e: any) {
+            if (e?.code === 'P2002') {
+                console.log('🔍 TRACE [5a] STOPPED (expected) — duplicate event, already processed');
+                return res.status(200).json({ received: true, duplicate: true });
+            }
+            console.log('🔍 TRACE [5b] STOPPED — unexpected DB error creating idempotency record', {
+                error: e?.message,
+            });
+            throw e;
+        }
+ 
+        // ── THE LIKELY BREAK POINT — this is the Redis-dependent call ──
+        try {
+            console.log('🔍 TRACE [6] attempting generalQueue.add(Ramp_Event)...');
+            const job = await generalQueue.add('Ramp_Event', { body });
+            console.log('🔍 TRACE [6a] generalQueue.add SUCCEEDED', {
+                jobId: job?.id,
+                jobName: job?.name,
+            });
+        } catch (queueError: any) {
+            // THIS is almost certainly what happened to the test
+            // transaction — if Redis was unreachable, THIS throw is
+            // where it happened, and depending on what wraps this call,
+            // it may have been silently swallowed before reaching here.
+            console.log('🔍 TRACE [6b] ❌ STOPPED — generalQueue.add THREW', {
+                error: queueError?.message,
+                code: queueError?.code,
+                stack: queueError?.stack,
+            });
+            // Re-throwing so it's NOT silently swallowed — if the
+            // current code doesn't do this, THAT'S PART OF THE BUG.
+            // A failed enqueue should not result in a 200 response,
+            // because Quidax will then consider the webhook delivered
+            // and never retry it.
+            throw queueError;
+        }
+ 
+        console.log('🔍 TRACE [7] returning 200 — webhook accepted and queued');
+        return res.status(200).json({ received: true });
+ 
+    } catch (error: any) {
+        console.log('🔍 TRACE [X] ❌ UNCAUGHT in controller', { error: error?.message });
+        if (!res.headersSent) {
+            return res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+}
  
 
 

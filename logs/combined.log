@@ -4577,3 +4577,7 @@ Error: Admin wallet not found
 2026-10-03 11:04:57 [info] Offramp confirmed 
 2026-10-03 11:04:57 [info] Internal offramp initiated 
 2026-10-03 11:11:21 [info] Internal offramp — crypto sent to Quidax 
+2026-10-03 20:51:18 [info] Server running on port 4000 
+2026-10-03 20:51:18 [info] Connected to Ably! 
+2026-10-03 20:51:37 [info] Server running on port 4000 
+2026-10-03 20:51:37 [info] Connected to Ably! 
