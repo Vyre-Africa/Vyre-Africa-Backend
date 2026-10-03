@@ -78,10 +78,10 @@ router.post(
   eventController.tatum_WebHook
 );
 
-router.post(
-  '/webhook/moralis', 
-  eventController.moralis_WebHook
-);
+// router.post(
+//   '/webhook/moralis', 
+//   eventController.moralis_WebHook
+// );
 
 router.post(
   '/webhook/ramp', 

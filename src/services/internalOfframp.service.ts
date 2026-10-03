@@ -16,21 +16,26 @@ class InternalOfframpService {
     private async getSettlementAccount(fiatCurrency: string): Promise<{
         bankCode: string;
         accountNumber: string;
+        holderFirstName: string;
+        holderLastName: string;
+        holderEmail: string; // NEW
     }> {
-        // Currently NGN-only. When a second fiat corridor opens, branch
-        // here rather than scattering currency checks through the flow.
         if (fiatCurrency.toUpperCase() !== 'NGN') {
             throw new Error(`No settlement account configured for ${fiatCurrency}`);
         }
-
+ 
         const bankCode = config.OFFRAMP_SETTLEMENT_BANK_CODE;
         const accountNumber = config.OFFRAMP_SETTLEMENT_ACCOUNT_NUMBER;
-
-        if (!bankCode || !accountNumber) {
-            throw new Error('Offramp settlement account is not configured');
+        const holderFirstName = config.OFFRAMP_SETTLEMENT_HOLDER_FIRST_NAME;
+        const holderLastName = config.OFFRAMP_SETTLEMENT_HOLDER_LAST_NAME;
+        // NEW — confirmed working value from the test: 'team@vyre.africa'
+        const holderEmail = config.OFFRAMP_SETTLEMENT_HOLDER_EMAIL;
+ 
+        if (!bankCode || !accountNumber || !holderFirstName || !holderLastName || !holderEmail) {
+            throw new Error('Offramp settlement account is not fully configured');
         }
-
-        return { bankCode, accountNumber };
+ 
+        return { bankCode, accountNumber, holderFirstName, holderLastName, holderEmail };
     }
 
     // ── Guard: does admin actually hold enough on-chain to fulfil? ────
@@ -209,6 +214,8 @@ class InternalOfframpService {
                 where: { id: request.id },
                 data: { blockId: block.id, virtualTransactionId: transaction.id },
             });
+
+            console.log('DEBUG settlement:', JSON.stringify(settlement));
  
             // ── Quidax: initiate ──────────────────────────────────────
             const offrampInit = await liquidityRampService.initiateOfframp({
@@ -217,9 +224,13 @@ class InternalOfframpService {
                 toCurrency: fiatCurrency.toLowerCase(),
                 fromAmount: decimalAmount.toString(),
                 network,
-                customerEmail: userEmail,
-                customerFirstName: legalFirstName,
-                customerLastName: legalLastName,
+                // CHANGED — was userEmail (the end user's own email). Every
+                // field describing the "customer" Quidax verifies against
+                // the destination bank account now comes from the same
+                // fixed settlement identity: email, first name, last name.
+                customerEmail: settlement.holderEmail,
+                customerFirstName: settlement.holderFirstName,
+                customerLastName: settlement.holderLastName,
             });
  
             // ── Quidax: attach VYRE'S settlement account ──────────────
@@ -268,9 +279,23 @@ class InternalOfframpService {
             };
  
         } catch (error: any) {
-            // Anything failed after the block was created — release it so
-            // the user's funds aren't stranded.
-            await this.failRequest(request.id, error?.message ?? 'Offramp initiation failed');
+            // CHANGED — capture the full Axios error shape, not just
+            // error.message. This is the difference between seeing
+            // "Request failed with status code 400" (useless) and
+            // seeing {"message": "Name does not match"} (immediately
+            // actionable) in the actual production logs.
+            logger.error('Internal offramp initiation failed', {
+                requestId: request.id,
+                merchantReference,
+                status: error?.response?.status,
+                quidaxResponse: error?.response?.data,
+                message: error?.message,
+            });
+ 
+            await this.failRequest(
+                request.id,
+                error?.response?.data?.message ?? error?.message ?? 'Offramp initiation failed'
+            );
             throw error;
         }
     }
