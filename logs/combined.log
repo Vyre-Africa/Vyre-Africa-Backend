@@ -4552,3 +4552,28 @@ Error: Admin wallet not found
 2026-10-01 12:40:54 [info] Connected to Ably! 
 2026-10-01 12:41:12 [info] Server running on port 4000 
 2026-10-01 12:41:13 [info] Connected to Ably! 
+2026-10-03 10:01:34 [info] Offramp initiated 
+2026-10-03 10:12:18 [info] Offramp initiated 
+2026-10-03 10:18:20 [info] Offramp initiated 
+2026-10-03 10:18:21 [info] Offramp payout account added 
+2026-10-03 10:48:35 [info] Connected to Ably! 
+2026-10-03 10:48:42 [info] Offramp initiated 
+2026-10-03 10:48:46 [error] Internal offramp FAILED 
+2026-10-03 10:53:51 [info] Connected to Ably! 
+2026-10-03 10:53:59 [info] Offramp initiated 
+2026-10-03 10:53:59 [error] Request failed with status code 400 
+2026-10-03 10:54:03 [error] Internal offramp FAILED 
+2026-10-03 10:56:15 [info] Connected to Ably! 
+2026-10-03 10:56:22 [info] Offramp initiated 
+2026-10-03 10:56:23 [error] Request failed with status code 400 
+2026-10-03 10:56:26 [error] Internal offramp FAILED 
+2026-10-03 11:01:22 [info] Connected to Ably! 
+2026-10-03 11:01:30 [info] Offramp initiated 
+2026-10-03 11:01:31 [error] Request failed with status code 400 
+2026-10-03 11:01:34 [error] Internal offramp FAILED 
+2026-10-03 11:04:48 [info] Connected to Ably! 
+2026-10-03 11:04:56 [info] Offramp initiated 
+2026-10-03 11:04:56 [info] Offramp payout account added 
+2026-10-03 11:04:57 [info] Offramp confirmed 
+2026-10-03 11:04:57 [info] Internal offramp initiated 
+2026-10-03 11:11:21 [info] Internal offramp — crypto sent to Quidax 
