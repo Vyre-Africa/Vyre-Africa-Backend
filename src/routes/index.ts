@@ -38,6 +38,7 @@ import diditController from '../controllers/didit.controller';
 import beneficiaryController from '../controllers/beneficiary.controller';
 import walletFundingController from '../controllers/walletFunding.controller';
 import InternalOfframpController from '../controllers/InternalOfframp.controller';
+import { requireKycTier } from '../middleware/requireKycTier';
 
 
 const router = Router();
@@ -280,8 +281,9 @@ router.get('/pin/transaction/check',
 // Wallet
 router.post(
   '/wallet/create/:currencyId',
-   requireAuthWithCORS(),
+  requireAuthWithCORS(),
   authMiddleware,
+  requireKycTier(2),
   walletController.createWallet
 )
 
