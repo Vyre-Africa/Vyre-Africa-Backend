@@ -231,8 +231,8 @@ class LiquidityRampService {
         BASE:     'base',
         BSC:      'bep20',
         POLYGON:  'polygon',
-        ARBITRUM: 'arbitrum',
-        OPTIMISM: 'optimism',
+        // ARBITRUM: 'arbitrum',
+        // OPTIMISM: 'optimism',
         TRON:     'trc20',
         SOLANA:   'solana'
     }
