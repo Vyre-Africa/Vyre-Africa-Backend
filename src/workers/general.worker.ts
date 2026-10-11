@@ -13,7 +13,15 @@ import prisma from '../config/prisma.client';
 import sweepService from '../services/sweep.service';
 import walletpoolService from '../services/walletpool.service';
 import { syncRampOrders } from '../services/rampOrderSync.service';
+// handleTreasuryReplenishment still comes from nuvionpayout.service: the real
+// implementation moved to treasuryReplenishment.service.ts and is re-exported
+// from there, so this import needs no change.
 import { processNuvionPayoutJob, handleTreasuryReplenishment } from '../services/nuvionpayout.service';
+// NEW — steps 5 and 6 of the replenishment, plus the sweeper that covers all of it.
+import { handleTreasuryConversion, sweepTreasury } from '../services/treasuryConversion.service';
+// NEW — checked once at boot so a wrong treasury map entry is caught on deploy
+// rather than halfway through a payout.
+import { validateTreasuryMap } from '../config/nuvionTreasury.config';
 import logger from '../config/logger';
 
 // const SWEEP_CHAINS = ['ETH', 'MATIC', 'BSC', 'BASE', 'ARB', 'OPTIMISM', 'TRON']
@@ -21,6 +29,7 @@ const SWEEP_CHAINS = [
   'ETHEREUM', 'POLYGON', 'BSC', 'TRON',   // gas pump
   'BASE', 'ARBITRUM', 'OPTIMISM'  // nonce chain
 ]
+
 export function startSweepWorkers() {
   return SWEEP_CHAINS.map((chain) => {
     const sweepWorker = new Worker(
@@ -98,13 +107,37 @@ export function startGeneralWorker() {
 
                     case 'Nuvion_Payout_Process':
                         return await processNuvionPayoutJob(job.data);
-                    
+
+                    // ── Treasury replenishment, steps 4 to 6 ──
+                    // A thrown error must reach BullMQ: that is how a genuinely
+                    // retryable failure gets retried. All three use
+                    // `return await` for exactly that reason.
+                    //
+                    // concurrency is 5 below, so two of these can run at once.
+                    // handleTreasuryReplenishment claims its row with a single
+                    // atomic update before sending, so only one can ever send
+                    // the same crypto.
+
+                    // Step 4: send the stablecoin on-chain to Nuvion.
                     case 'Nuvion_Treasury_Replenish':
                         return await handleTreasuryReplenishment(job.data);
 
+                    // NEW — step 6: convert the arrived stablecoin into the USD
+                    // treasury. Queued by handleDepositConfirmed once the
+                    // inflows.completed webhook matches a deposit.
+                    case 'Nuvion_Treasury_Convert':
+                        return await handleTreasuryConversion(job.data);
+
+                    // NEW — re-queues anything whose job was lost (a Redis
+                    // outage, a dead worker) and escalates anything stuck
+                    // mid-send or waiting too long for a deposit. Registered in
+                    // scheduleRecurringJobs below.
+                    case 'Nuvion_Treasury_Sweep':
+                        return await sweepTreasury();
+
                     case 'Didit_Event':
                         return await eventService.handleDiditEvent(job.data);
-                        
+
                     case 'Ramp_Event':
                         console.log('🔍 TRACE [8] worker picked up Ramp_Event job', {
                             jobId: job.id,
@@ -168,6 +201,10 @@ export const generalQueue = new Queue('general-process', { connection });
 
 const RAMP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+// Every 5 minutes. Frequent enough that nothing sits unnoticed for long, cheap
+// enough to ignore: most runs find nothing and do four indexed queries.
+const TREASURY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
 export async function scheduleRecurringJobs() {
     await generalQueue.add(
         'ramp-sync',
@@ -180,4 +217,28 @@ export async function scheduleRecurringJobs() {
         }
     );
     logger.info(`[Schedule] ramp-sync registered — every ${RAMP_SYNC_INTERVAL_MS / 60000} minutes`);
+
+    // NEW — the treasury sweeper. Picks up replenishments whose job was lost,
+    // and escalates anything stuck mid-send or waiting too long for a deposit.
+    // Same stable-jobId pattern as ramp-sync, so restarts do not duplicate it.
+    await generalQueue.add(
+        'Nuvion_Treasury_Sweep',
+        {},
+        {
+            repeat:  { every: TREASURY_SWEEP_INTERVAL_MS },
+            jobId:   'nuvion-treasury-sweep',
+            removeOnComplete: { count: 20 },
+            removeOnFail:     { count: 50 },
+        }
+    );
+    logger.info(`[Schedule] Nuvion_Treasury_Sweep registered — every ${TREASURY_SWEEP_INTERVAL_MS / 60000} minutes`);
+
+    // NEW — checks every STABLECOIN_TREASURY entry resolves to a real, active
+    // row on the right chain, and that no two keys point at the same account.
+    // Reports rather than throws: one bad pair must not stop the service, it
+    // just means that pair cannot be replenished automatically.
+    const treasuryProblems = await validateTreasuryMap();
+    if (treasuryProblems.length > 0) {
+        logger.warn(`[Schedule] Treasury map has ${treasuryProblems.length} problem(s) — those pairs cannot be replenished automatically`);
+    }
 }

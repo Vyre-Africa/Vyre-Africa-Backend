@@ -820,6 +820,9 @@ model NuvionTreasuryAccount {
   // ops (via a small script or manual query) whenever a real top-up is
   // actually performed via Nuvion's dashboard.
   pendingManualTopupUsd Decimal @default(0) @db.Decimal(20, 2)
+
+  conversionCounterpartyId   String?  
+  conversionPaymentDetailId  String?
  
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -827,6 +830,76 @@ model NuvionTreasuryAccount {
  
   @@index([currency])
   @@index([chain])
+}
+
+// STATUS
+//   The row is created when the payout COMPLETES, so a payout that fails never
+//   makes one at all, and there is nothing to cancel.
+//   Sending the crypto on-chain
+//     PENDING           queued, not started
+//     SUBMITTING        claimed and in flight (or the worker died mid-send)
+//     SUBMITTED         sent, waiting for the deposit to arrive
+//     RETRY             failed BEFORE any money moved, safe to try again
+//     FAILED            known NOT sent, and it will not fix itself. Needs a person
+//     MANUAL_REVIEW     it may or may not have been sent. Check the chain first
+//     RESOLVED_MANUALLY ops handled it by hand
+//   After the send
+//     DEPOSIT_OVERDUE   sent, but no deposit confirmation after a long time
+//     DEPOSITED         deposit confirmed, waiting to be converted
+//     CONVERTING        conversion in flight
+//     CONVERT_RETRY     conversion hit a temporary problem, will retry
+//     CONVERTED         done: the USD treasury is whole again
+//     CONVERT_FAILED    conversion failed for good. The stablecoin is at Nuvion
+//                       but not yet in the USD treasury. Needs a person
+//     CONVERT_UNVERIFIED a transfer with this reference already exists at Nuvion
+//                       and its answer was lost. Verify in the dashboard before
+//                       doing anything: a fresh reference would convert twice
+
+model TreasuryReplenishment {
+  id                    String    @id @default(cuid())
+ 
+  // The payout this belongs to. A plain id, on purpose (see the top of this file).
+  transferRequestId     String    @unique
+ 
+  // The hold is NOT recorded here. outflows.completed already finds the
+  // VirtualTransaction by `reference: transferRequest.idempotencyKey` and
+  // commits or releases it, so keeping a copy of those ids would be a second
+  // source of truth for something that already works.
+  cryptoCurrencyId      String    // the stablecoin that was frozen
+  usdTreasuryAccountId  String    // the NuvionTreasuryAccount that paid the recipient
+ 
+  status                String
+  statusUpdatedAt       DateTime  @default(now())
+  note                  String?   // the last error, or what ops did about it
+ 
+  // Step: send the crypto on-chain to the Nuvion stablecoin wallet
+  payload               Json?     // the whole send job, so it can always be rebuilt
+  amount                Decimal?  // what is sent, and what the deposit is matched against
+  nuvionCurrency        String?   // USC or UST
+  sendAttempts          Int       @default(0)
+  txRef                 String?   // the on-chain hash, when we have one
+  sentAt                DateTime?
+ 
+  // Step: Nuvion confirms the deposit
+  depositEventId        String?   @unique
+  depositedAt           DateTime?
+  depositedAmount       Decimal?
+  depositAccountId      String?   // the Nuvion stablecoin account it landed in
+  depositCurrency       String?
+ 
+  // Step: convert the stablecoin into the USD treasury
+  conversionAttempts    Int       @default(0)
+  conversionGeneration  Int       @default(0) // only raised to redo a conversion Nuvion recorded as failed
+  conversionTransferId  String?
+  conversionFeeUsd      Decimal?
+  convertedAt           DateTime?
+ 
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+ 
+  @@index([status, statusUpdatedAt])
+  @@index([nuvionCurrency, status])
+  @@index([txRef])
 }
 
 model fiatAccount {
@@ -1696,6 +1769,18 @@ model NuvionWebhookEvent {
   receivedAt DateTime @default(now())
  
   @@index([eventType])
+}
+
+model NuvionDepositEvent {
+  id                       String   @id // Nuvion's event id
+  accountId                String
+  currency                 String
+  amount                   Decimal
+  txHash                   String?
+  status                   String       // RECEIVED | MATCHED | UNMATCHED
+  matchedTransferRequestId String?
+  payload                  Json?
+  createdAt                DateTime @default(now())
 }
 
 model DiditWebhookEvent {

@@ -4587,3 +4587,71 @@ Error: Admin wallet not found
 2026-10-03 21:19:48 [info] Offramp confirmed 
 2026-10-03 21:19:48 [info] Internal offramp initiated 
 2026-10-03 21:20:19 [info] Internal offramp — crypto sent to Quidax 
+2026-10-08 13:34:08 [info] Nuvion payment detail created 
+2026-10-08 14:23:47 [info] Nuvion FX quote created 
+2026-10-08 14:23:48 [info] Nuvion transfer initiated (cross-currency) 
+2026-10-08 14:23:48 [info] Nuvion FX quote created 
+2026-10-08 14:23:49 [error] Nuvion call failed [initiateCrossCurrencyTransfer]: 
+2026-10-08 14:57:52 [info] Connected to Ably! 
+2026-10-08 14:59:10 [info] Connected to Ably! 
+2026-10-08 14:59:12 [info] Processing Nuvion event (async) 
+2026-10-08 14:59:12 [info] Nuvion webhook raw payload 
+2026-10-08 14:59:13 [info] NuvionTreasuryAccount created for USC (base): 01M0T7QZHBRAMKY93TC38Y3EJS 
+2026-10-08 14:59:13 [info] Processing Nuvion event (async) 
+2026-10-08 14:59:13 [info] Nuvion webhook raw payload 
+2026-10-08 14:59:14 [info] Wallet recorded (pending) on NuvionTreasuryAccount cmuzlrjag0000hdsbazo57q3c — base: 0x291545355A36cdD1966BE59d74854675DACAf456 
+2026-10-08 14:59:14 [info] Processing Nuvion event (async) 
+2026-10-08 14:59:14 [info] Nuvion webhook raw payload 
+2026-10-08 14:59:14 [info] ✅ Wallet on NuvionTreasuryAccount cmuzlrjag0000hdsbazo57q3c (base) is now ACTIVE: 0x291545355A36cdD1966BE59d74854675DACAf456 
+2026-10-08 16:12:02 [info] Nuvion FX quote created 
+2026-10-08 16:12:02 [error] Nuvion call failed [initiateCrossCurrencyTransfer]: 
+2026-10-08 16:12:02 [error] Nuvion call failed [initiateSameCurrencyTransfer]: 
+2026-10-10 15:38:33 [info] Server running on port 4000 
+2026-10-10 15:38:34 [info] Connected to Ably! 
+2026-10-10 15:38:51 [info] Server running on port 4000 
+2026-10-10 15:38:51 [info] Connected to Ably! 
+2026-10-10 15:43:57 [info] Connected to Ably! 
+2026-10-10 15:47:51 [info] Connected to Ably! 
+2026-10-10 18:07:15 [info] Connected to Ably! 
+2026-10-10 22:11:09 [info] Connected to Ably! 
+2026-10-10 22:11:24 [info] Connected to Ably! 
+2026-10-10 22:34:26 [info] Connected to Ably! 
+2026-10-10 22:38:08 [info] Connected to Ably! 
+2026-10-10 22:38:27 [info] Processing Nuvion event (async) 
+2026-10-10 22:38:27 [info] Nuvion webhook raw payload 
+2026-10-10 22:38:28 [error] [NUVION OUTFLOW — MANUAL ACTION NEEDED] TransferRequest fde6193d-2acb-42f3-8d44-334bd4a21499 has no matching VirtualTransaction/Block 
+2026-10-10 22:38:30 [info] Processing Nuvion event (async) 
+2026-10-10 22:38:30 [info] Nuvion webhook raw payload 
+2026-10-10 22:38:33 [error] [NUVION OUTFLOW — MANUAL ACTION NEEDED] TransferRequest a4d61568-d993-4783-860f-9bfd23c77963 has no matching VirtualTransaction/Block 
+2026-10-10 22:38:36 [info] Processing Nuvion event (async) 
+2026-10-10 22:38:36 [info] Nuvion webhook raw payload 
+2026-10-10 22:38:37 [error] [NUVION OUTFLOW — MANUAL ACTION NEEDED] TransferRequest 150cb7d4-ae99-4852-9622-2be85d48b14c has no matching VirtualTransaction/Block 
+2026-10-10 22:52:02 [info] Connected to Ably! 
+2026-10-10 23:07:00 [info] Connected to Ably! 
+2026-10-10 23:34:27 [info] Connected to Ably! 
+2026-10-10 23:34:29 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-HELD 
+2026-10-10 23:34:29 [info] [sweeper] Replenishment sweep done: re-queued 1, escalated 0 
+2026-10-10 23:34:31 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-HELD 
+2026-10-10 23:34:31 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-STALE 
+2026-10-10 23:34:31 [info] [sweeper] Replenishment sweep done: re-queued 2, escalated 0 
+2026-10-10 23:34:32 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-HELD 
+2026-10-10 23:34:32 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-STALE 
+2026-10-10 23:34:33 [info] [sweeper] Replenishment sweep done: re-queued 2, escalated 0 
+2026-10-10 23:34:34 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-HELD 
+2026-10-10 23:34:34 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-STALE 
+2026-10-10 23:34:34 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-RETRY 
+2026-10-10 23:34:34 [info] [sweeper] Replenishment sweep done: re-queued 3, escalated 0 
+2026-10-10 23:34:35 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-HELD 
+2026-10-10 23:34:35 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-STALE 
+2026-10-10 23:34:36 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-RETRY 
+2026-10-10 23:34:36 [error] [Replenishment stuck mid-send - check the chain before retrying] 
+2026-10-10 23:34:36 [info] [sweeper] Replenishment sweep done: re-queued 3, escalated 1 
+2026-10-10 23:34:38 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-HELD 
+2026-10-10 23:34:38 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-STALE 
+2026-10-10 23:34:38 [info] [sweeper] Re-queued replenishment for SWEEPTEST-1791671666579-RETRY 
+2026-10-10 23:34:38 [error] [Replenishment stuck mid-send - check the chain before retrying] 
+2026-10-10 23:34:38 [info] [sweeper] Replenishment sweep done: re-queued 3, escalated 1 
+2026-10-11 07:30:33 [info] Server running on port 4000 
+2026-10-11 07:30:34 [info] Connected to Ably! 
+2026-10-11 07:30:53 [info] Server running on port 4000 
+2026-10-11 07:30:54 [info] Connected to Ably! 

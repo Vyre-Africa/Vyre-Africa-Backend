@@ -22,6 +22,26 @@ function handleNuvionError(context: string, error: any) {
     };
 }
 
+function toMajorBalance(balance: any) {
+    if (!balance) return undefined;
+    const major = (v: any) => (v === null || v === undefined ? v : Number(v) / 100);
+    return { ...balance, available: major(balance.available), current: major(balance.current) };
+}
+
+// Minor units to major, for a field that may legitimately be ABSENT.
+//
+// Two traps this avoids, both of which have bitten:
+//   - `data.x / 100` on an absent field gives NaN, which survives a `?? 0`
+//     downstream and lands in the database as NaN
+//   - a truthy check (`data.x ? data.x / 100 : undefined`) turns a REAL zero
+//     into undefined, and a zero fee is confirmed real: the book transfer
+//     measured on 8 Oct charged exactly 0
+function toMajor(value: any): number | undefined {
+    if (value === null || value === undefined) return undefined;
+    const n = Number(value) / 100;
+    return Number.isFinite(n) ? n : undefined;
+}
+
 const VYRE_ENTITY_ID = config.NUVION_ENTITY_ID as string;
 
 // --------- Banks-------------//
@@ -30,7 +50,7 @@ export interface BankCodeResult {
     banks?: { bank_code: string; bank_name: string; swift_bic: string | null }[];
     error?: string; httpStatus?: number; rawData?: any;
 }
- 
+
 export async function getBankCodes(country: string): Promise<BankCodeResult> {
     try {
         const res = await nuvionApi.get(`/bank-codes/${country}`);
@@ -148,7 +168,6 @@ export async function updatePaymentDetail(
         return { success: false, error: msg, httpStatus, rawData };
     }
 }
- 
 
 export interface PaymentDetailListResult {
     success: boolean;
@@ -157,7 +176,67 @@ export interface PaymentDetailListResult {
     httpStatus?: number;
     rawData?: any;
 }
- 
+
+export interface TransferLookupResult {
+    success: boolean;
+    found?: boolean;
+    transfer?: Record<string, any>;
+    scanned?: number;
+    error?: string; httpStatus?: number; rawData?: any;
+}
+
+export async function findTransferByReference(
+    accountId: string,
+    uniqueReference: string,
+    maxPages = 5,
+): Promise<TransferLookupResult> {
+    let cursor: string | undefined;
+    let scanned = 0;
+
+    try {
+        for (let page = 0; page < maxPages; page++) {
+            const res = await nuvionApi.get('/transfers', {
+                params: {
+                    entity_id: VYRE_ENTITY_ID,
+                    account_id: accountId,
+                    limit: 100,
+                    ...(cursor && { cursor }),
+                },
+            });
+
+            // Same double-nested shape as listCounterpartyPaymentDetails.
+            const rows: any[] = res.data?.data?.data ?? [];
+            scanned += rows.length;
+
+            const hit = rows.find((t) => t.unique_reference === uniqueReference);
+            if (hit) {
+                logger.info('Nuvion transfer found by reference', { uniqueReference, id: hit.id, scanned });
+                return {
+                    success: true,
+                    found: true,
+                    // Amounts come back in minor units, like everywhere else.
+                    transfer: {
+                        ...hit,
+                        amount: toMajor(hit.amount),
+                        applicable_fee: toMajor(hit.applicable_fee),
+                    },
+                    scanned,
+                };
+            }
+
+            const pagination = res.data?.data?.meta?.pagination;
+            if (!pagination?.has_next || !pagination?.next_cursor) break;
+            cursor = pagination.next_cursor;
+        }
+
+        logger.warn('Nuvion transfer NOT found by reference', { uniqueReference, accountId, scanned });
+        return { success: true, found: false, scanned };
+    } catch (error: any) {
+        const { error: msg, httpStatus, rawData } = handleNuvionError('findTransferByReference', error);
+        return { success: false, error: msg, httpStatus, rawData };
+    }
+}
+
 export async function listCounterpartyPaymentDetails(counterpartyId: string): Promise<PaymentDetailListResult> {
     try {
         const res = await nuvionApi.get(`/counterparties/${counterpartyId}/payment-details`);
@@ -169,7 +248,6 @@ export async function listCounterpartyPaymentDetails(counterpartyId: string): Pr
         return { success: false, error: msg, httpStatus, rawData };
     }
 }
- 
 
 // ─── FX Quotes ──────────────────────────────────────────────────────────
 
@@ -204,8 +282,8 @@ export async function createFxQuote(payload: {
         return {
             success: true,
             ...data,
-            amount_from: data.amount_from / 100,
-            amount_to: data.amount_to / 100,
+            amount_from: toMajor(data.amount_from),
+            amount_to: toMajor(data.amount_to),
             rawData: res.data,
         };
     } catch (error: any) {
@@ -217,7 +295,11 @@ export async function createFxQuote(payload: {
 // ─── Transfers ──────────────────────────────────────────────────────────
 
 export interface TransferResult {
-    success: boolean; id?: string; status?: 'pending' | 'processing' | 'completed' | 'failed' | 'reversed';
+    success: boolean; id?: string;
+    // CORRECTED — 'successful', not 'completed'. Same endpoint and same field
+    // as TransferStatusResult below, which already had the real values. A
+    // comparison against 'completed' would have type-checked and never matched.
+    status?: 'pending' | 'processing' | 'successful' | 'failed' | 'reversed';
     status_reason?: string; applicable_fee?: number; error?: string; httpStatus?: number; rawData?: any;
 }
 
@@ -236,8 +318,10 @@ export async function initiateSameCurrencyTransfer(payload: {
         return {
             success: true,
             ...data,
-            amount: data.amount / 100, // converted back to dollars for the caller
-            applicable_fee: data.applicable_fee / 100, // ALSO cents — same fix needed here
+            // toMajor, not `/ 100`: an absent field used to produce NaN, which
+            // survives `?? 0` downstream and reaches actualFeeUsd.
+            amount: toMajor(data.amount),
+            applicable_fee: toMajor(data.applicable_fee),
             rawData: res.data,
         };
     } catch (error: any) {
@@ -245,7 +329,6 @@ export async function initiateSameCurrencyTransfer(payload: {
         return { success: false, error: msg, httpStatus, rawData };
     }
 }
-
 
 export async function initiateCrossCurrencyTransfer(payload: {
     account_id: string; payment_detail_id: string; counterparty_id: string; fx_quote_id: string;
@@ -262,8 +345,10 @@ export async function initiateCrossCurrencyTransfer(payload: {
         return {
             success: true,
             ...data,
-            amount: data.amount / 100, // NEW — was missing, still raw cents before this
-            applicable_fee: data.applicable_fee / 100,
+            // This call sends no amount, so the response may not carry one
+            // either. toMajor returns undefined rather than NaN for that.
+            amount: toMajor(data.amount),
+            applicable_fee: toMajor(data.applicable_fee),
             rawData: res.data,
         };
     } catch (error: any) {
@@ -272,10 +357,21 @@ export async function initiateCrossCurrencyTransfer(payload: {
     }
 }
 
+// NOTE: this and getTransferStatus call the SAME endpoint. getTransfer used to
+// return raw minor units while getTransferStatus divided by 100, so the same
+// data came back in different units depending on which you called. Both now
+// convert. Nothing currently calls this one; getTransferStatus supersedes it.
 export async function getTransfer(transferId: string): Promise<TransferResult> {
     try {
         const res = await nuvionApi.get(`/transfers/${transferId}`);
-        return { success: true, ...res.data.data, rawData: res.data };
+        const data = res.data.data;
+        return {
+            success: true,
+            ...data,
+            amount: toMajor(data.amount),
+            applicable_fee: toMajor(data.applicable_fee),
+            rawData: res.data,
+        };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('getTransfer', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -285,7 +381,7 @@ export async function getTransfer(transferId: string): Promise<TransferResult> {
 export interface TransferStatusResult {
     success: boolean;
     id?: string;
-    status?: 'pending' | 'processing' | 'successful' | 'failed' | 'reversed'; // CONFIRMED real values, distinct from TransferResult's
+    status?: 'pending' | 'processing' | 'successful' | 'failed' | 'reversed'; // CONFIRMED real values
     status_reason?: string;
     amount?: number;
     applicable_fee?: number;
@@ -293,7 +389,7 @@ export interface TransferStatusResult {
     httpStatus?: number;
     rawData?: any;
 }
- 
+
 export async function getTransferStatus(transferId: string): Promise<TransferStatusResult> {
     try {
         const res = await nuvionApi.get(`/transfers/${transferId}`);
@@ -301,8 +397,11 @@ export async function getTransferStatus(transferId: string): Promise<TransferSta
         return {
             success: true,
             ...data,
-            amount: data.amount / 100,
-            applicable_fee: data.applicable_fee ? data.applicable_fee / 100 : undefined,
+            amount: toMajor(data.amount),
+            // CHANGED — was a truthy check, which turned a REAL fee of 0 into
+            // undefined. The book transfer measured on 8 Oct charged exactly 0,
+            // so that is not a hypothetical.
+            applicable_fee: toMajor(data.applicable_fee),
             rawData: res.data,
         };
     } catch (error: any) {
@@ -324,7 +423,7 @@ export async function createTreasuryAccount(payload: {
     try {
         const res = await nuvionApi.post('/accounts', { entity_id: VYRE_ENTITY_ID, ...payload });
         logger.info('Nuvion treasury account created', { rawData: res.data });
-        return { success: true, ...res.data.data.account, rawData: res.data };
+        return { success: true, ...res.data.data.account, balance: toMajorBalance(res.data.data.account?.balance), rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('createTreasuryAccount', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -338,7 +437,7 @@ export async function getAccount(accountId: string): Promise<AccountResult> {
         // "account" (containing balance, currency, etc.) as a nested
         // key rather than flattening those fields to the top level.
         // Matches createTreasuryAccount's convention now.
-        return { success: true, ...res.data.data.account, rawData: res.data };
+        return { success: true, ...res.data.data.account, balance: toMajorBalance(res.data.data.account?.balance), rawData: res.data };
     } catch (error: any) {
         const { error: msg, httpStatus, rawData } = handleNuvionError('getAccount', error);
         return { success: false, error: msg, httpStatus, rawData };
@@ -346,12 +445,12 @@ export async function getAccount(accountId: string): Promise<AccountResult> {
 }
 
 // ─── Stablecoin Wallets ─────────────────────────────────────────────────
- 
+
 export interface TreasuryWalletResult {
     success: boolean; id?: string; account_number?: string; status?: 'pending' | 'active';
     chain?: string; error?: string; httpStatus?: number; rawData?: any;
 }
- 
+
 export async function createTreasuryWallet(payload: {
     account_id: string; chain: 'eth' | 'base' | 'matic' | 'sol'; terminate_after?: number;
 }): Promise<TreasuryWalletResult> {
