@@ -352,12 +352,6 @@ export async function handleTreasuryReplenishment(jobData: ReplenishmentJob) {
     if (result.success === false) {
       throw new ReplenishmentError(result.msg ?? 'blockchain_Transfer reported failure');
     }
-
-    // A send with no hash cannot be matched to its deposit by hash later. Not a
-    // failure, since the money may well have moved, but it must not look clean.
-    if (!result.txHash && !result.hash && !result.reference) {
-      logger.warn('[Replenishment] blockchain_Transfer returned no hash, so the deposit will have to be matched by amount', { transferRequestId });
-    }
   } catch (error: any) {
     await handleSendFailure(jobData, attempt, error);
     return;
@@ -367,10 +361,24 @@ export async function handleTreasuryReplenishment(jobData: ReplenishmentJob) {
   //    row still says SUBMITTING. That status is never retried automatically,
   //    so nothing is sent twice, and the sweeper raises it to a person.
   //
-  //    Only a real on-chain hash goes in txRef, because the
-  //    deposit webhook is matched against it. Anything else is not a hash and
-  //    would stop the fallback matching from ever picking this row up.
-  const txHash = result?.txHash ?? result?.hash ?? null;
+  //    blockchain_Transfer returns the Transaction row that executeTransfer
+  //    created, and on that row `reference` holds the ON-CHAIN HASH while `id`
+  //    holds the internal CWD reference:
+  //
+  //        id:        result.reference,   // CWD-xxxxx
+  //        reference: result.txHash,      // the chain hash
+  //
+  //    So the hash is result.reference. A Prisma Transaction row has no txHash
+  //    property at all, which is why reading one gave null on every send.
+  const txHash: string | null = result?.reference ?? null;
+
+  if (!txHash) {
+    logger.warn(
+      '[Replenishment] no hash on the transfer record, so the deposit will have to be matched by amount',
+      { transferRequestId },
+    );
+  }
+
   try {
     await transition(transferRequestId, 'SUBMITTED', {
       sentAt: new Date(),

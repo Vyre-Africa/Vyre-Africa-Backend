@@ -56,7 +56,8 @@ const STALE_CONVERTING_MINUTES = 10; // started, never finished
 // as that transfer, when there is no transaction hash to match on. Covers a
 // small fee taken on the way. Anything further off is treated as unknown and
 // goes to a person instead of being converted on a guess.
-const AMOUNT_TOLERANCE = new Decimal('0.005'); // 0.5%
+const AMOUNT_TOLERANCE = new Decimal('0.005');
+const AMOUNT_TOLERANCE_FLOOR = new Decimal('0.50');
 
 const OPEN_FOR_DEPOSIT = ['SUBMITTED', 'DEPOSIT_OVERDUE'];
 
@@ -192,9 +193,11 @@ async function claimReplenishmentForDeposit(event: DepositEvent): Promise<string
   const ranked = candidates
     .map((c) => {
       const expected = new Decimal((c.amount ?? 0).toString());
-      return { transferRequestId: c.transferRequestId, expected, diff: amount.minus(expected).abs() };
+      const proportional = expected.times(AMOUNT_TOLERANCE);
+      const allowed = proportional.gt(AMOUNT_TOLERANCE_FLOOR) ? proportional : AMOUNT_TOLERANCE_FLOOR;
+      return { transferRequestId: c.transferRequestId, expected, allowed, diff: amount.minus(expected).abs() };
     })
-    .filter((c) => c.expected.gt(0) && c.diff.lte(c.expected.times(AMOUNT_TOLERANCE)))
+    .filter((c) => c.expected.gt(0) && c.diff.lte(c.allowed))
     // Closest first. The sort is stable, so ties keep their oldest-first order.
     .sort((a, b) => a.diff.comparedTo(b.diff));
 
