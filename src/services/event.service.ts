@@ -3353,6 +3353,20 @@ class eventService {
                   logger.warn('outflows.completed — could not identify the transfer, check raw payload above');
                   break;
               }
+ 
+              // B1 — a treasury conversion's own outflow leg, not a customer
+              // payout. It has no TransferRequest by design (the replenishment
+              // row tracks it), so letting it reach the lookup below produced
+              // "No matching TransferRequest" on every successful conversion.
+              //
+              // This is also the genuine settlement confirmation: the row is
+              // marked CONVERTED when the transfer is ACCEPTED, and this event
+              // is Nuvion saying it actually settled.
+              if (uniqueReference?.startsWith('NVCONV-')) {
+                  logger.info(`${eventType}: treasury conversion ${uniqueReference} settled at Nuvion`, { nuvionOutflowId });
+                  break;
+              }
+ 
               const transferRequest = uniqueReference
                   ? await prisma.transferRequest.findUnique({ where: { idempotencyKey: uniqueReference }, include:{ currency: true } })
                   : await prisma.transferRequest.findFirst({ where: { reference: nuvionOutflowId }, include:{ currency: true } });
@@ -3460,6 +3474,45 @@ class eventService {
                   logger.warn(`${eventType} — could not identify the transfer, check raw payload above`);
                   break;
               }
+ 
+              // B2 — the conversion's own outflow leg FAILING is serious, not
+              // noise. The replenishment row is set to CONVERTED when Nuvion
+              // ACCEPTS the transfer, not when it settles, so if it later fails
+              // the row is lying and the USD treasury never received the money.
+              // Dropping this event (as "No matching TransferRequest" did)
+              // leaves a silently false CONVERTED.
+              if (uniqueReference?.startsWith('NVCONV-')) {
+                  // NVCONV-<transferRequestId> or NVCONV-<transferRequestId>-r<generation>
+                  const convTransferId = uniqueReference
+                      .slice('NVCONV-'.length)
+                      .replace(/-r\d+$/, '');
+ 
+                  // Guarded, so a repeated delivery cannot drag a row back after
+                  // a person has already recovered it.
+                  const moved = await prisma.treasuryReplenishment.updateMany({
+                      where: { transferRequestId: convTransferId, status: 'CONVERTED' },
+                      data: {
+                          status: 'CONVERT_FAILED',
+                          statusUpdatedAt: new Date(),
+                          note: `Nuvion reported ${eventType} on the conversion transfer ${nuvionOutflowId}: ${statusReason ?? 'no reason given'}`,
+                      },
+                  });
+ 
+                  logger.error(
+                      `[TREASURY CONVERSION ${eventType.toUpperCase()}] ${uniqueReference} — the USD treasury was NOT replenished`,
+                      {
+                          transferRequestId: convTransferId,
+                          nuvionOutflowId,
+                          statusReason,
+                          rowCorrected: moved.count === 1,
+                          note: moved.count === 1
+                              ? 'Row moved CONVERTED -> CONVERT_FAILED. The stablecoin should still be in the stablecoin account; confirm, then retry the conversion.'
+                              : 'Row was not in CONVERTED — check its current status before doing anything.',
+                      },
+                  );
+                  break;
+              }
+ 
               const transferRequest = uniqueReference
                   ? await prisma.transferRequest.findUnique({ where: { idempotencyKey: uniqueReference }, include:{ currency: true } })
                   : await prisma.transferRequest.findFirst({ where: { reference: nuvionOutflowId }, include:{ currency: true } });
@@ -3542,7 +3595,6 @@ class eventService {
  
           case 'inflows.completed': {
               const accountId = data?.account_id;
-              const amount = data?.amount;
  
               if (!accountId) {
                   logger.warn('inflows.completed — no account_id in payload, check raw payload above');
@@ -3559,6 +3611,10 @@ class eventService {
               // avoids any ambiguity about fee deduction or unit
               // conversion (amount here is in the smallest unit, e.g.
               // cents, and applicable_fee complicates a naive add).
+              //
+              // This part is unconditional: it copies Nuvion's own figure, which
+              // is true whatever the inflow was. The backlog counter is NOT
+              // touched here — see below for why.
               const account = await getAccount(treasury.nuvionAccountId);
               if (account.success && account.balance) {
                   await prisma.nuvionTreasuryAccount.update({
@@ -3566,19 +3622,15 @@ class eventService {
                       data: {
                           lastKnownAvailable: account.balance.available,
                           lastSyncedAt: new Date(),
-                          // Real top-up confirmed — reset the manual
-                          // tracking counter automatically, rather than
-                          // relying on ops to remember to do it.
-                          pendingManualTopupUsd: 0,
                       },
                   });
-                  logger.info(`✅ Treasury ${treasury.id} re-synced after inflow: ${account.balance.available} ${treasury.currency}. pendingManualTopupUsd reset.`);
+                  logger.info(`Treasury ${treasury.id} re-synced after inflow: ${account.balance.available} ${treasury.currency}`);
               } else {
                   logger.error(`inflows.completed — treasury ${treasury.id} found but getAccount() failed to re-sync`, { error: account.error });
               }
  
-              // NEW — is this deposit one of our own replenishments arriving?
-              // If so, this starts the conversion into the USD treasury.
+              // Is this deposit one of our own replenishments arriving? If so,
+              // this starts the conversion into the USD treasury.
               //
               // depositEventFromNuvion converts the minor-unit amount (1000 is
               // 10.00) and takes the chain hash from meta.provider_reference,
@@ -3586,14 +3638,44 @@ class eventService {
               // payload. It returns null for anything that is not a successful
               // inflow, so a pending or failed one starts nothing.
               //
-              // Runs for ANY tracked treasury inflow, including the USD one.
-              // That is deliberate: handleDepositConfirmed only acts on a
-              // deposit it can tie to a replenishment that is waiting, and
-              // leaves a manual top-up alone without raising an alert.
-              const deposit = depositEventFromNuvion(rawBody);
-              if (deposit) {
-                  const outcome = await handleDepositConfirmed(deposit);
-                  logger.info(`inflows.completed — replenishment deposit check: ${outcome}`, { eventId: deposit.eventId });
+              // ONLY FOR STABLECOIN TREASURIES. A replenishment deposit can
+              // only ever land in a stablecoin account; the USD account receives
+              // the conversion's own book transfer, which is the far end of this
+              // same flow. Running that through the matcher reported UNMATCHED on
+              // every successful conversion — noise that buries a real one.
+              if (treasury.currency !== 'USD') {
+                  const deposit = depositEventFromNuvion(rawBody);
+                  if (deposit) {
+                      const outcome = await handleDepositConfirmed(deposit);
+                      logger.info(`inflows.completed — replenishment deposit check: ${outcome}`, { eventId: deposit.eventId });
+ 
+                      // An UNMATCHED stablecoin deposit is a genuine external
+                      // top-up, so it does discharge part of the below-threshold
+                      // backlog. Decrement by what arrived rather than zeroing:
+                      // a $10 top-up against a $14 backlog leaves $4 owed, not
+                      // nothing. The counter lives on the USD row, which is
+                      // where scheduleReplenishmentForPayout increments it —
+                      // never on the stablecoin row that received this inflow.
+                      if (outcome === 'UNMATCHED') {
+                          const usdTreasury = await prisma.nuvionTreasuryAccount.findFirst({
+                              where: { currency: 'USD', isActive: true },
+                              select: { id: true, pendingManualTopupUsd: true },
+                          });
+                          if (usdTreasury) {
+                              const owed = new Decimal((usdTreasury.pendingManualTopupUsd ?? 0).toString());
+                              const arrived = new Decimal(deposit.amount);
+                              const left = owed.minus(arrived);
+                              const next = left.gt(0) ? left : new Decimal(0);
+                              await prisma.nuvionTreasuryAccount.update({
+                                  where: { id: usdTreasury.id },
+                                  data: { pendingManualTopupUsd: next as any },
+                              });
+                              logger.info(`Manual top-up of ${arrived} seen: backlog ${owed} -> ${next}`);
+                          }
+                      }
+                  }
+              } else {
+                  logger.info(`inflows.completed on the USD treasury (${treasury.id}) — balance re-synced, no deposit matching needed`);
               }
               break;
           }
