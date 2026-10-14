@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
 import logger from '../config/logger';
 import { getBankCodes, updatePaymentDetail } from '../services/nuvion.service';
+import { addressRequiredFor } from '../services/recipientparse.service';
 
 class BeneficiaryController {
 
@@ -14,11 +15,20 @@ class BeneficiaryController {
                 return res.status(400).json({ success: false, msg: 'ISO, type, and accountName are required' });
             }
 
-            if (type === 'BANK' && (!email || !country || !addressLine1 || !addressCity || !addressState || !addressPostalCode)) {
-                return res.status(400).json({
-                    success: false,
-                    msg: 'Bank beneficiaries require email, country, and a full address (line1, city, state, postal code)',
-                });
+            // if (type === 'BANK' && (!email || !country || !addressLine1 || !addressCity || !addressState || !addressPostalCode)) {
+            //     return res.status(400).json({
+            //         success: false,
+            //         msg: 'Bank beneficiaries require email, country, and a full address (line1, city, state, postal code)',
+            //     });
+            // }
+
+            const needsAddress = addressRequiredFor(ISO);
+            if (type === 'BANK' && (!email || !country)) {
+                return res.status(400).json({ success: false, msg: 'email and country are required' });
+            }
+            
+            if (type === 'BANK' && needsAddress && (!addressLine1 || !addressCity || !addressState || !addressPostalCode)) {
+                return res.status(400).json({ success: false, msg: `A full address is required for ${ISO} payouts` });
             }
 
             const beneficiary = await prisma.beneficiary.create({

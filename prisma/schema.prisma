@@ -668,6 +668,10 @@ model BeneficiaryPaymentDetail {
   iban           String?
   routingNumber  String?
   sortCode       String?
+
+  branchCode        String?   // AUD BECS, HKD CHATS
+  institutionNumber String?   // CAD, 3 digits
+  transitNumber     String?   // CAD, 5 digits
  
   nuvionPaymentDetailId String?
  

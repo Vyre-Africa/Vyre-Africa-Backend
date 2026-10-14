@@ -1455,6 +1455,10 @@ class UserController {
         }
     
         const verifyDetails = await flutterwaveService.resolveAccount(resolvedBankCode, accountNumber);
+
+        if (verifyDetails?.status === 'unavailable') {
+            return res.status(503).json({ msg: 'Account verification is temporarily unavailable', success: false });
+        }
     
         if (verifyDetails?.status !== 'success') {
             return res.status(400).json({ msg: 'wrong account details', success: false });

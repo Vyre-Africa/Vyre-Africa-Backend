@@ -249,3 +249,75 @@ Error: Admin wallet not found
 2026-10-10 22:38:37 [error] [NUVION OUTFLOW — MANUAL ACTION NEEDED] TransferRequest 150cb7d4-ae99-4852-9622-2be85d48b14c has no matching VirtualTransaction/Block 
 2026-10-10 23:34:36 [error] [Replenishment stuck mid-send - check the chain before retrying] 
 2026-10-10 23:34:38 [error] [Replenishment stuck mid-send - check the chain before retrying] 
+2026-10-12 22:31:16 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:16 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:17 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:18 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:18 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:19 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:19 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:20 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:20 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:21 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:21 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:22 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:22 [error] [RecipientParse] model call failed 
+2026-10-12 23:08:39 [error] [RecipientParse] model call errored 
+2026-10-13 05:33:07 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 06:04:48 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 06:04:48 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 06:04:48 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:20:57 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:20:59 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:40:28 [error] Flutterwave account resolution failed: Cannot read properties of undefined (reading 'Misc') 
+TypeError: Cannot read properties of undefined (reading 'Misc')
+    at Object.resolveAccount [as fn] (/Users/user/Vyre-Africa-Backend/src/services/flutterwave.service.ts:138:41)
+    at stage2 (/Users/user/Vyre-Africa-Backend/src/scripts/test-quick-send-flow.ts:437:33)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async main (/Users/user/Vyre-Africa-Backend/src/scripts/test-quick-send-flow.ts:1069:26)
+2026-10-13 08:40:34 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-13 08:40:34 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:40:35 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:40:35 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:40:36 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:57:01 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-13 08:57:01 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:57:01 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:57:02 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:57:03 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 09:53:50 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 09:53:51 [error] Nuvion call failed [createCounterparty]: 
+2026-10-14 04:11:22 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:24 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:28 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:29 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:30 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:32 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:36 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:36 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:37 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:37 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:37 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:14 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:15 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:20 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:21 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:22 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:24 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:30 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:36 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:36 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:14 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:16 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:19 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:20 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:21 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:22 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:31 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:32 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:32 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:14 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:15 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:16 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:17 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:19 [error] Nuvion call failed [createPaymentDetail]: 
