@@ -79,7 +79,7 @@ export async function createCounterparty(payload: {
     type: 'individual' | 'business';
     profile: {
         first_name: string; last_name: string; relationship?: string; email: string;
-        address: { line1: string; city: string; state_or_province: string; postal_code: string; country: string };
+        address?: { line1: string; city: string; state_or_province: string; postal_code: string; country: string };
     };
     nickname?: string; meta?: Record<string, string>;
 }): Promise<CounterpartyResult> {

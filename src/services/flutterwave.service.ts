@@ -13,26 +13,72 @@ const Flutterwave = require('flutterwave-node-v3');
 class FlutterwaveService {
     flw: any;
 
-    // constructor() {
-    //   this.flw = new Flutterwave(
-    //     config.flutterwave.FLW_PUBLIC_KEY,
-    //     config.flutterwave.FLW_SECRET_KEY
-    //   );
-    // }
+    // NEW — why the SDK is unusable, kept rather than discarded.
+    //
+    // THE BUG THIS FIXES, measured 13 Oct:
+    //   TypeError: Cannot read properties of undefined (reading 'Misc')
+    //     at resolveAccount (flutterwave.service.ts:138)
+    //
+    // The old constructor logged a warning and `return`ed when the keys were
+    // absent, which left `this.flw` undefined. Every method then crashed on
+    // its first property access — three layers away from the actual cause,
+    // with a message naming 'Misc' rather than the missing keys. A guard that
+    // turns a clear startup problem into an obscure runtime one is worse than
+    // no guard.
+    private configured = false;
+    private initError: string | null = null;
+
     constructor() {
-      const publicKey = config.flutterwave.FLW_PUBLIC_KEY;
-      const secretKey = config.flutterwave.FLW_SECRET_KEY;
-        
+      const publicKey = config.flutterwave?.FLW_PUBLIC_KEY;
+      const secretKey = config.flutterwave?.FLW_SECRET_KEY;
+
       if (!publicKey || !secretKey) {
-        console.warn('⚠️ Flutterwave keys not configured, skipping initialization');
+        this.initError =
+          'FLW_PUBLIC_KEY and/or FLW_SECRET_KEY are not set, so Flutterwave is not initialised. ' +
+          'Account-name verification will be unavailable until they are.';
+        // Warned at ERROR level, not console.warn: this silently disables the
+        // only account-name check in the product, which is not a warning.
+        logger.error(`[Flutterwave] ${this.initError}`, {
+          hasPublicKey: Boolean(publicKey),
+          hasSecretKey: Boolean(secretKey),
+        });
         return;
       }
-        
-      this.flw = new Flutterwave(publicKey, secretKey);
+
+      try {
+        this.flw = new Flutterwave(publicKey, secretKey);
+        this.configured = true;
+      } catch (error: any) {
+        this.initError = `Flutterwave SDK failed to initialise: ${error?.message}`;
+        logger.error(`[Flutterwave] ${this.initError}`);
+      }
     }
 
+    // One place that answers "can I call this at all", so no method has to
+    // find out by dereferencing undefined.
+    private unavailable(): { status: 'unavailable'; message: string } | null {
+      if (this.configured && this.flw) return null;
+      return {
+        status: 'unavailable',
+        message: this.initError ?? 'Flutterwave is not configured',
+      };
+    }
+
+    // ⚠️ THIS IS WHY THE Bank TABLE HAS NO NIGERIAN ROWS.
+    // It is hardcoded to ZA and writes country: 'South Africa'. It is the only
+    // thing that ever seeds Bank, so the `bankId` path in verifyAccountDetail
+    // — used by the domestic transfer flow — cannot resolve a Nigerian bank at
+    // all. Measured 13 Oct: 0 NG rows.
+    //
+    // Left as-is rather than quietly changed: it also calls prisma.bank.create
+    // in a loop with no upsert, so running it twice duplicates every row.
+    // Fixing it properly means a country argument and an upsert on (code,
+    // country), which is a change worth making deliberately.
     async getBanks(){
        try {
+        const down = this.unavailable();
+        if (down) { logger.error('[Flutterwave] getBanks called while unavailable', { reason: down.message }); return null; }
+
         const payload = {
           "country":"ZA" //Pass either NG, GH, KE, UG, ZA or TZ to get list of banks in Nigeria, Ghana, Kenya, Uganda, South Africa or Tanzania respectively
         }
@@ -129,7 +175,24 @@ class FlutterwaveService {
     //     }
     // }
 
+    // Three distinct outcomes, and callers need to tell them apart:
+    //
+    //   status 'success'      the bank answered, data.account_name is the name
+    //   status 'error'        the bank answered NO — wrong account details
+    //   status 'unavailable'  we never asked. Not the user's fault, and telling
+    //                         them "wrong account details" makes them retype a
+    //                         correct number
+    //
+    // The old version collapsed the last two into 'error', which the
+    // controller turns into 400 "wrong account details". On a missing-key or
+    // network failure that message is actively misleading.
     async resolveAccount(bank_code: string, account_number: string) {
+      const down = this.unavailable();
+      if (down) {
+        logger.error('[Flutterwave] resolveAccount called while unavailable', { reason: down.message });
+        return down;
+      }
+
       try {
         const payload = {
           account_number,
@@ -139,11 +202,9 @@ class FlutterwaveService {
         return response;
       } catch (error) {
         logger.error('Flutterwave account resolution failed:', error);
-        // Distinguishable from a genuine "account not found" response — the
-        // controller's `verifyDetails?.status !== 'success'` check still
-        // catches this, but now it's traceable in logs as an infra failure
-        // rather than silently returning undefined.
-        return { status: 'error', message: 'Verification request failed — please try again' };
+        // A thrown request is an infra failure, not a verdict on the account,
+        // so it reports as unavailable rather than as wrong details.
+        return { status: 'unavailable', message: 'Verification request failed — please try again' };
       }
     }
 

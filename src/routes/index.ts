@@ -39,6 +39,8 @@ import beneficiaryController from '../controllers/beneficiary.controller';
 import walletFundingController from '../controllers/walletFunding.controller';
 import InternalOfframpController from '../controllers/InternalOfframp.controller';
 import { requireKycTier } from '../middleware/requireKycTier';
+import recipientParseController from '../controllers/recipientParse.controller';
+import { parseRateLimiter, useRedisForRateLimit } from '../middleware/parseRateLimiter';
 
 
 const router = Router();
@@ -943,8 +945,40 @@ router.get(
   beneficiaryController.getBeneficiary
 );
 
-// wallet funding routes 
-// wallet funding routes
+
+
+router.post(
+  '/transfers/parse-recipient',
+  requireAuthWithCORS(),  
+  authMiddleware,                 // same middleware as /payouts/nuvion
+  // parseRateLimiter,             // SEE BELOW — this one is not optional
+  recipientParseController.parse
+);
+
+router.get(
+  '/transfers/quick-send/match',
+  requireAuthWithCORS(),  
+  authMiddleware, 
+  recipientParseController.match
+      
+);
+
+router.get(
+  '/transfers/quick-send/requirements', 
+  requireAuthWithCORS(),  
+  authMiddleware,  
+  recipientParseController.requirements
+);
+
+router.get(
+  '/transfers/quick-send/requirements/all', 
+  requireAuthWithCORS(),  
+  authMiddleware,  
+  recipientParseController.allRequirements
+);
+
+
+
 
 router.get(
   '/wallet-funding/rate', 

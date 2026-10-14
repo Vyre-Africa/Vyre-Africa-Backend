@@ -4661,3 +4661,460 @@ Error: Admin wallet not found
 2026-10-11 23:13:32 [info] Connected to Ably! 
 2026-10-11 23:13:51 [info] Server running on port 4000 
 2026-10-11 23:13:51 [info] Connected to Ably! 
+2026-10-12 22:31:16 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:16 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:17 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:18 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:18 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:19 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:19 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:20 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:20 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:21 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:21 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:22 [error] [RecipientParse] model call failed 
+2026-10-12 22:31:22 [error] [RecipientParse] model call failed 
+2026-10-12 23:08:39 [error] [RecipientParse] model call errored 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-12 23:08:49 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-13 03:40:29 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-13 03:40:30 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-13 03:41:43 [warn] [RecipientParse] dropped a value absent from the input 
+2026-10-13 05:18:51 [info] Connected to Ably! 
+2026-10-13 05:26:18 [info] Connected to Ably! 
+2026-10-13 05:33:05 [info] Connected to Ably! 
+2026-10-13 05:33:07 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 06:04:48 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 06:04:48 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 06:04:48 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 06:04:48 [info] Connected to Ably! 
+2026-10-13 06:04:48 [info] Nuvion counterparty created 
+2026-10-13 06:04:49 [info] Nuvion counterparty deactivated 
+2026-10-13 08:20:55 [info] Nuvion counterparty created 
+2026-10-13 08:20:56 [info] Connected to Ably! 
+2026-10-13 08:20:56 [info] Nuvion payment detail created 
+2026-10-13 08:20:57 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:20:58 [info] Nuvion counterparty created 
+2026-10-13 08:20:58 [info] Nuvion counterparty created 
+2026-10-13 08:20:59 [info] Nuvion counterparty created 
+2026-10-13 08:20:59 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:20:59 [info] Nuvion counterparty deactivated 
+2026-10-13 08:21:00 [info] Nuvion counterparty deactivated 
+2026-10-13 08:21:00 [info] Nuvion counterparty deactivated 
+2026-10-13 08:21:00 [info] Nuvion counterparty deactivated 
+2026-10-13 08:40:28 [error] Flutterwave account resolution failed: Cannot read properties of undefined (reading 'Misc') 
+TypeError: Cannot read properties of undefined (reading 'Misc')
+    at Object.resolveAccount [as fn] (/Users/user/Vyre-Africa-Backend/src/services/flutterwave.service.ts:138:41)
+    at stage2 (/Users/user/Vyre-Africa-Backend/src/scripts/test-quick-send-flow.ts:437:33)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async main (/Users/user/Vyre-Africa-Backend/src/scripts/test-quick-send-flow.ts:1069:26)
+2026-10-13 08:40:31 [info] Nuvion counterparty created 
+2026-10-13 08:40:32 [info] Connected to Ably! 
+2026-10-13 08:40:34 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-13 08:40:34 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:40:35 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:40:35 [info] Nuvion counterparty created 
+2026-10-13 08:40:35 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:40:35 [info] Nuvion counterparty created 
+2026-10-13 08:40:36 [info] Nuvion counterparty created 
+2026-10-13 08:40:36 [info] Nuvion counterparty created 
+2026-10-13 08:40:36 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:40:37 [info] Nuvion counterparty deactivated 
+2026-10-13 08:40:38 [info] Nuvion counterparty deactivated 
+2026-10-13 08:40:38 [info] Nuvion counterparty deactivated 
+2026-10-13 08:40:39 [info] Nuvion counterparty deactivated 
+2026-10-13 08:56:59 [info] Nuvion counterparty created 
+2026-10-13 08:57:00 [info] Connected to Ably! 
+2026-10-13 08:57:01 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-13 08:57:01 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:57:01 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:57:01 [info] Nuvion counterparty created 
+2026-10-13 08:57:02 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:57:02 [info] Nuvion counterparty created 
+2026-10-13 08:57:02 [info] Nuvion counterparty created 
+2026-10-13 08:57:03 [info] Nuvion counterparty created 
+2026-10-13 08:57:03 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 08:57:03 [info] Nuvion counterparty deactivated 
+2026-10-13 08:57:04 [info] Nuvion counterparty deactivated 
+2026-10-13 08:57:04 [info] Nuvion counterparty deactivated 
+2026-10-13 08:57:04 [info] Nuvion counterparty deactivated 
+2026-10-13 09:53:48 [info] Nuvion counterparty created 
+2026-10-13 09:53:49 [info] Nuvion payment detail created 
+2026-10-13 09:53:49 [info] Connected to Ably! 
+2026-10-13 09:53:50 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 09:53:50 [info] Nuvion counterparty created 
+2026-10-13 09:53:50 [info] Nuvion counterparty created 
+2026-10-13 09:53:51 [info] Nuvion counterparty created 
+2026-10-13 09:53:51 [error] Nuvion call failed [createCounterparty]: 
+2026-10-13 09:53:53 [info] Nuvion counterparty deactivated 
+2026-10-13 09:53:53 [info] Nuvion counterparty deactivated 
+2026-10-13 09:53:53 [info] Nuvion counterparty deactivated 
+2026-10-13 09:53:53 [info] Nuvion counterparty deactivated 
+2026-10-13 19:12:19 [info] Connected to Ably! 
+2026-10-14 04:06:35 [info] Connected to Ably! 
+2026-10-14 04:11:18 [info] Nuvion counterparty created 
+2026-10-14 04:11:18 [info] Connected to Ably! 
+2026-10-14 04:11:18 [info] Nuvion counterparty created 
+2026-10-14 04:11:18 [info] Nuvion counterparty created 
+2026-10-14 04:11:18 [info] Nuvion counterparty created 
+2026-10-14 04:11:18 [info] Nuvion counterparty created 
+2026-10-14 04:11:19 [info] Nuvion counterparty created 
+2026-10-14 04:11:19 [info] Nuvion counterparty created 
+2026-10-14 04:11:19 [info] Nuvion counterparty created 
+2026-10-14 04:11:19 [info] Nuvion counterparty created 
+2026-10-14 04:11:19 [info] Nuvion counterparty created 
+2026-10-14 04:11:20 [info] Nuvion counterparty created 
+2026-10-14 04:11:20 [info] Nuvion counterparty created 
+2026-10-14 04:11:20 [info] Nuvion counterparty created 
+2026-10-14 04:11:20 [info] Nuvion counterparty created 
+2026-10-14 04:11:20 [info] Nuvion counterparty created 
+2026-10-14 04:11:21 [info] Nuvion counterparty created 
+2026-10-14 04:11:21 [info] Nuvion counterparty created 
+2026-10-14 04:11:22 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:23 [info] Nuvion counterparty created 
+2026-10-14 04:11:24 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:24 [info] Nuvion counterparty created 
+2026-10-14 04:11:24 [info] Nuvion payment detail created 
+2026-10-14 04:11:24 [info] Nuvion counterparty created 
+2026-10-14 04:11:24 [info] Nuvion payment detail created 
+2026-10-14 04:11:25 [info] Nuvion counterparty created 
+2026-10-14 04:11:25 [info] Nuvion payment detail created 
+2026-10-14 04:11:25 [info] Nuvion counterparty created 
+2026-10-14 04:11:26 [info] Nuvion payment detail created 
+2026-10-14 04:11:27 [info] Nuvion counterparty created 
+2026-10-14 04:11:28 [info] Nuvion payment detail created 
+2026-10-14 04:11:28 [info] Nuvion counterparty created 
+2026-10-14 04:11:28 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:28 [info] Nuvion counterparty created 
+2026-10-14 04:11:29 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:29 [info] Nuvion counterparty created 
+2026-10-14 04:11:30 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:31 [info] Nuvion counterparty created 
+2026-10-14 04:11:32 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:32 [info] Nuvion counterparty created 
+2026-10-14 04:11:32 [info] Nuvion payment detail created 
+2026-10-14 04:11:32 [info] Nuvion counterparty created 
+2026-10-14 04:11:33 [info] Nuvion payment detail created 
+2026-10-14 04:11:33 [info] Nuvion counterparty created 
+2026-10-14 04:11:33 [info] Nuvion payment detail created 
+2026-10-14 04:11:33 [info] Nuvion counterparty created 
+2026-10-14 04:11:34 [info] Nuvion payment detail created 
+2026-10-14 04:11:34 [info] Nuvion counterparty created 
+2026-10-14 04:11:34 [info] Nuvion payment detail created 
+2026-10-14 04:11:34 [info] Nuvion counterparty created 
+2026-10-14 04:11:34 [info] Nuvion payment detail created 
+2026-10-14 04:11:35 [info] Nuvion counterparty created 
+2026-10-14 04:11:36 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:36 [info] Nuvion counterparty created 
+2026-10-14 04:11:36 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:36 [info] Nuvion counterparty created 
+2026-10-14 04:11:37 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:37 [info] Nuvion counterparty created 
+2026-10-14 04:11:37 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:37 [info] Nuvion counterparty created 
+2026-10-14 04:11:37 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:11:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:41 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:41 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:41 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:43 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:43 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:43 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:43 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:43 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:44 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:44 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:44 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:44 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:46 [info] Nuvion counterparty deactivated 
+2026-10-14 04:11:46 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:09 [info] Nuvion counterparty created 
+2026-10-14 04:20:09 [info] Connected to Ably! 
+2026-10-14 04:20:09 [info] Nuvion counterparty created 
+2026-10-14 04:20:10 [info] Nuvion counterparty created 
+2026-10-14 04:20:10 [info] Nuvion counterparty created 
+2026-10-14 04:20:10 [info] Nuvion counterparty created 
+2026-10-14 04:20:10 [info] Nuvion counterparty created 
+2026-10-14 04:20:10 [info] Nuvion counterparty created 
+2026-10-14 04:20:11 [info] Nuvion counterparty created 
+2026-10-14 04:20:11 [info] Nuvion counterparty created 
+2026-10-14 04:20:11 [info] Nuvion counterparty created 
+2026-10-14 04:20:11 [info] Nuvion counterparty created 
+2026-10-14 04:20:11 [info] Nuvion counterparty created 
+2026-10-14 04:20:12 [info] Nuvion counterparty created 
+2026-10-14 04:20:12 [info] Nuvion counterparty created 
+2026-10-14 04:20:13 [info] Nuvion counterparty created 
+2026-10-14 04:20:13 [info] Nuvion counterparty created 
+2026-10-14 04:20:13 [info] Nuvion counterparty created 
+2026-10-14 04:20:14 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:14 [info] Nuvion counterparty created 
+2026-10-14 04:20:15 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:15 [info] Nuvion counterparty created 
+2026-10-14 04:20:15 [info] Nuvion payment detail created 
+2026-10-14 04:20:16 [info] Nuvion counterparty created 
+2026-10-14 04:20:16 [info] Nuvion payment detail created 
+2026-10-14 04:20:16 [info] Nuvion counterparty created 
+2026-10-14 04:20:16 [info] Nuvion payment detail created 
+2026-10-14 04:20:16 [info] Nuvion counterparty created 
+2026-10-14 04:20:17 [info] Nuvion payment detail created 
+2026-10-14 04:20:18 [info] Nuvion counterparty created 
+2026-10-14 04:20:19 [info] Nuvion payment detail created 
+2026-10-14 04:20:19 [info] Nuvion counterparty created 
+2026-10-14 04:20:20 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:20 [info] Nuvion counterparty created 
+2026-10-14 04:20:21 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:21 [info] Nuvion counterparty created 
+2026-10-14 04:20:22 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:23 [info] Nuvion counterparty created 
+2026-10-14 04:20:24 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:24 [info] Nuvion counterparty created 
+2026-10-14 04:20:24 [info] Nuvion payment detail created 
+2026-10-14 04:20:24 [info] Nuvion counterparty created 
+2026-10-14 04:20:24 [info] Nuvion payment detail created 
+2026-10-14 04:20:25 [info] Nuvion counterparty created 
+2026-10-14 04:20:25 [info] Nuvion payment detail created 
+2026-10-14 04:20:25 [info] Nuvion counterparty created 
+2026-10-14 04:20:25 [info] Nuvion payment detail created 
+2026-10-14 04:20:25 [info] Nuvion counterparty created 
+2026-10-14 04:20:26 [info] Nuvion payment detail created 
+2026-10-14 04:20:27 [info] Nuvion counterparty created 
+2026-10-14 04:20:28 [info] Nuvion payment detail created 
+2026-10-14 04:20:29 [info] Nuvion counterparty created 
+2026-10-14 04:20:30 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:31 [info] Nuvion counterparty created 
+2026-10-14 04:20:31 [info] Nuvion payment detail created 
+2026-10-14 04:20:33 [info] Nuvion counterparty created 
+2026-10-14 04:20:34 [info] Nuvion payment detail created 
+2026-10-14 04:20:35 [info] Nuvion counterparty created 
+2026-10-14 04:20:36 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:36 [info] Nuvion counterparty created 
+2026-10-14 04:20:36 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:20:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:41 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:41 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:42 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:43 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:43 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:43 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:44 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:44 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:45 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:46 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:46 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:46 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:46 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:46 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:47 [info] Nuvion counterparty deactivated 
+2026-10-14 04:20:47 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:10 [info] Nuvion counterparty created 
+2026-10-14 04:26:11 [info] Nuvion counterparty created 
+2026-10-14 04:26:11 [info] Connected to Ably! 
+2026-10-14 04:26:11 [info] Nuvion counterparty created 
+2026-10-14 04:26:11 [info] Nuvion counterparty created 
+2026-10-14 04:26:11 [info] Nuvion counterparty created 
+2026-10-14 04:26:11 [info] Nuvion counterparty created 
+2026-10-14 04:26:12 [info] Nuvion counterparty created 
+2026-10-14 04:26:12 [info] Nuvion counterparty created 
+2026-10-14 04:26:12 [info] Nuvion counterparty created 
+2026-10-14 04:26:12 [info] Nuvion counterparty created 
+2026-10-14 04:26:12 [info] Nuvion counterparty created 
+2026-10-14 04:26:13 [info] Nuvion counterparty created 
+2026-10-14 04:26:13 [info] Nuvion counterparty created 
+2026-10-14 04:26:13 [info] Nuvion counterparty created 
+2026-10-14 04:26:13 [info] Nuvion counterparty created 
+2026-10-14 04:26:14 [info] Nuvion counterparty created 
+2026-10-14 04:26:14 [info] Nuvion counterparty created 
+2026-10-14 04:26:14 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:15 [info] Nuvion counterparty created 
+2026-10-14 04:26:16 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:16 [info] Nuvion counterparty created 
+2026-10-14 04:26:16 [info] Nuvion payment detail created 
+2026-10-14 04:26:16 [info] Nuvion counterparty created 
+2026-10-14 04:26:17 [info] Nuvion payment detail created 
+2026-10-14 04:26:17 [info] Nuvion counterparty created 
+2026-10-14 04:26:17 [info] Nuvion payment detail created 
+2026-10-14 04:26:17 [info] Nuvion counterparty created 
+2026-10-14 04:26:17 [info] Nuvion payment detail created 
+2026-10-14 04:26:18 [info] Nuvion counterparty created 
+2026-10-14 04:26:19 [info] Nuvion payment detail created 
+2026-10-14 04:26:19 [info] Nuvion counterparty created 
+2026-10-14 04:26:19 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:19 [info] Nuvion counterparty created 
+2026-10-14 04:26:20 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:20 [info] Nuvion counterparty created 
+2026-10-14 04:26:21 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:22 [info] Nuvion counterparty created 
+2026-10-14 04:26:22 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:23 [info] Nuvion counterparty created 
+2026-10-14 04:26:23 [info] Nuvion payment detail created 
+2026-10-14 04:26:24 [info] Nuvion counterparty created 
+2026-10-14 04:26:24 [info] Nuvion payment detail created 
+2026-10-14 04:26:25 [info] Nuvion counterparty created 
+2026-10-14 04:26:26 [info] Nuvion payment detail created 
+2026-10-14 04:26:26 [info] Nuvion counterparty created 
+2026-10-14 04:26:26 [info] Nuvion payment detail created 
+2026-10-14 04:26:26 [info] Nuvion counterparty created 
+2026-10-14 04:26:27 [info] Nuvion payment detail created 
+2026-10-14 04:26:27 [info] Nuvion counterparty created 
+2026-10-14 04:26:28 [info] Nuvion payment detail created 
+2026-10-14 04:26:30 [info] Nuvion counterparty created 
+2026-10-14 04:26:31 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:31 [info] Nuvion counterparty created 
+2026-10-14 04:26:31 [info] Nuvion payment detail created 
+2026-10-14 04:26:31 [info] Nuvion counterparty created 
+2026-10-14 04:26:31 [info] Nuvion payment detail created 
+2026-10-14 04:26:32 [info] Nuvion counterparty created 
+2026-10-14 04:26:32 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:32 [info] Nuvion counterparty created 
+2026-10-14 04:26:32 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:26:32 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:33 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:33 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:33 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:33 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:33 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:34 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:34 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:34 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:34 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:34 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:35 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:35 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:35 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:35 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:36 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:36 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:36 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:37 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:38 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:39 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:40 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:41 [info] Nuvion counterparty deactivated 
+2026-10-14 04:26:41 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:09 [info] Nuvion counterparty created 
+2026-10-14 04:30:09 [info] Connected to Ably! 
+2026-10-14 04:30:10 [info] Nuvion counterparty created 
+2026-10-14 04:30:10 [info] Nuvion counterparty created 
+2026-10-14 04:30:10 [info] Nuvion counterparty created 
+2026-10-14 04:30:10 [info] Nuvion counterparty created 
+2026-10-14 04:30:11 [info] Nuvion counterparty created 
+2026-10-14 04:30:11 [info] Nuvion counterparty created 
+2026-10-14 04:30:11 [info] Nuvion counterparty created 
+2026-10-14 04:30:11 [info] Nuvion counterparty created 
+2026-10-14 04:30:11 [info] Nuvion counterparty created 
+2026-10-14 04:30:12 [info] Nuvion counterparty created 
+2026-10-14 04:30:12 [info] Nuvion counterparty created 
+2026-10-14 04:30:12 [info] Nuvion counterparty created 
+2026-10-14 04:30:12 [info] Nuvion counterparty created 
+2026-10-14 04:30:12 [info] Nuvion counterparty created 
+2026-10-14 04:30:13 [info] Nuvion counterparty created 
+2026-10-14 04:30:13 [info] Nuvion counterparty created 
+2026-10-14 04:30:14 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:14 [info] Nuvion counterparty created 
+2026-10-14 04:30:15 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:15 [info] Nuvion counterparty created 
+2026-10-14 04:30:16 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:16 [info] Nuvion counterparty created 
+2026-10-14 04:30:17 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:18 [info] Nuvion counterparty created 
+2026-10-14 04:30:19 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-14 04:30:19 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:19 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:19 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:20 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:20 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:20 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:20 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:20 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:21 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:21 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:21 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:22 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:23 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:24 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:24 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:24 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:25 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:25 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:25 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:26 [info] Nuvion counterparty deactivated 
+2026-10-14 04:30:26 [info] Nuvion counterparty deactivated 
+2026-10-14 04:45:47 [info] Server running on port 4000 
+2026-10-14 04:45:48 [info] Connected to Ably! 
+2026-10-14 04:46:06 [info] Server running on port 4000 
+2026-10-14 04:46:08 [info] Connected to Ably! 
+2026-10-14 04:49:51 [info] Server running on port 4000 
+2026-10-14 04:49:58 [info] Connected to Ably! 
+2026-10-14 04:50:08 [info] Server running on port 4000 
+2026-10-14 04:50:13 [info] Server running on port 4000 
+2026-10-14 04:50:17 [info] Server running on port 4000 
+2026-10-14 04:50:19 [info] Connected to Ably! 
+2026-10-14 04:50:23 [info] Server running on port 4000 
+2026-10-14 04:50:26 [info] Connected to Ably! 

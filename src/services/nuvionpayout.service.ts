@@ -16,6 +16,17 @@ import notificationService from './notification.service';
 import { scheduleReplenishment, flagReplenishmentBlocked } from './treasuryReplenishment.service';
 import { resolveTreasury, thresholdFor, normaliseChain } from '../config/nuvionTreasury.config';
 import config from '../config/env.config';
+// ADDRESS_EXEMPT_CURRENCIES is now EMPTY — measured 13 Oct, live Nuvion
+// refuses an NG counterparty with no address block AND one with no email.
+// So this returns true for every currency today, and these three call sites
+// behave exactly like the original unconditional guards.
+//
+// The call is kept rather than inlined because it is the right place to ask
+// the question: if Nuvion ever confirms an exemption for a domestic rail, one
+// string in one array turns it on.
+import { addressRequiredFor } from './recipientparse.service';
+import { missingFieldsFrom, learnRequirements, confirmRequirements } from './nuvionRequirements';
+import { schemeToSend, bankCountryFor, VALID_SCHEMES, feeSchemeFor } from './railRequirements';
 
 // The real replenishment handler lives in its own file now. Re-exported from
 // here so general.worker.ts keeps importing it from the same place and nothing
@@ -143,9 +154,19 @@ export async function blockNuvionPayout(params: BlockPayoutParams): Promise<{ tr
     const paymentMethod = await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: paymentDetailId } });
     if (!paymentMethod || paymentMethod.beneficiaryId !== beneficiaryId) throw new Error('Payment method not found for this beneficiary');
 
-    if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail || !beneficiary.nuvionRecipientAddressLine1) {
-        throw new Error('This beneficiary is missing required details — please complete their profile before sending a payout');
+    // if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail || !beneficiary.nuvionRecipientAddressLine1) {
+    //     throw new Error('This beneficiary is missing required details — please complete their profile before sending a payout');
+    // }
+
+    if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail) {
+    throw new Error('This recipient is missing required details — please complete their profile before sending');
     }
+    
+    if (addressRequiredFor(paymentMethod.currency) && !beneficiary.nuvionRecipientAddressLine1) {
+    throw new Error('This recipient needs a full address for payouts in ' + paymentMethod.currency);
+    }
+
+
     if (!paymentMethod.accountNumber) throw new Error('This payment method has no account number set');
 
     const vyreCurrency = await prisma.currency.findFirst({ where: { ISO: fromCurrency } });
@@ -219,8 +240,16 @@ export async function blockCryptoPayout(params: BlockCryptoPayoutParams): Promis
     const paymentMethod = await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: paymentDetailId } });
     if (!paymentMethod || paymentMethod.beneficiaryId !== beneficiaryId) throw new Error('Payment method not found for this beneficiary');
 
-    if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail || !beneficiary.nuvionRecipientAddressLine1) {
-        throw new Error('This beneficiary is missing required details — please complete their profile before sending a payout');
+    // if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail || !beneficiary.nuvionRecipientAddressLine1) {
+    //     throw new Error('This beneficiary is missing required details — please complete their profile before sending a payout');
+    // }
+
+    if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail) {
+    throw new Error('This recipient is missing required details — please complete their profile before sending');
+    }
+
+    if (addressRequiredFor(paymentMethod.currency) && !beneficiary.nuvionRecipientAddressLine1) {
+    throw new Error('This recipient needs a full address for payouts in ' + paymentMethod.currency);
     }
 
     const cryptoCurrency = await prisma.currency.findUnique({ where: { id: cryptoCurrencyId } });
@@ -243,7 +272,12 @@ export async function blockCryptoPayout(params: BlockCryptoPayoutParams): Promis
     // 2. estimatedNuvionFee — Nuvion's own pass-through cost (our best
     //                         estimate; only confirmed real for 'wire' so far)
     // 3. vyreFee            — Vyre's own margin/revenue, never touches Nuvion
-    const estimatedNuvionFee = estimateNuvionFee(paymentMethod.scheme);
+    // Priced off the RAIL, not off whatever is stored in `scheme` — which is
+    // null for a single-rail currency and, for EUR, deliberately never sent.
+    // estimateNuvionFee(null) returns default: 7, which is the whole reason
+    // every Naira payout was quoted ~$7 against a real ~$0.04.
+    const feeScheme = feeSchemeFor(paymentMethod.currency, paymentMethod.scheme, paymentMethod.paymentMethod);
+    const estimatedNuvionFee = estimateNuvionFee(feeScheme ?? paymentMethod.scheme);
     const vyreFee = calculateVyreFee(amount);
     const totalDebit = toDecimal(amount).plus(estimatedNuvionFee).plus(vyreFee); // frozen from the USER
     const treasuryDraw = toDecimal(amount).plus(estimatedNuvionFee); // ACTUALLY drawn from Nuvion's real USD float — excludes vyreFee entirely
@@ -592,19 +626,65 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
         const [firstName, ...lastNameParts] = accountName.trim().split(' ');
         const lastName = lastNameParts.join(' ') || firstName;
 
+        const profile: any = {
+            first_name: firstName, last_name: lastName, relationship: 'vendor',
+            email: beneficiary.nuvionRecipientEmail,
+        };
+        if (addressRequiredFor(paymentMethod.currency)) {
+            profile.address = {
+                line1: beneficiary.nuvionRecipientAddressLine1,
+                city: beneficiary.nuvionRecipientAddressCity,
+                state_or_province: beneficiary.nuvionRecipientAddressState,
+                // FIXED — was `nuvionRecipientAddressPostalCode`, which is not
+                // a column. The schema field is `nuvionRecipientAddressPostal`,
+                // so Prisma returned undefined, JSON.stringify dropped the key,
+                // and every counterparty created here went to Nuvion with no
+                // postal code at all. The legacy initiateNuvionPayout further
+                // down this file always had it right.
+                postal_code: beneficiary.nuvionRecipientAddressPostal,
+                country: beneficiary.nuvionRecipientCountry,
+            };
+        }
+
         const counterparty = await createCounterparty({
             type: 'individual',
-            profile: {
-                first_name: firstName, last_name: lastName, relationship: 'vendor',
-                email: beneficiary.nuvionRecipientEmail!,
-                address: {
-                    line1: beneficiary.nuvionRecipientAddressLine1!, city: beneficiary.nuvionRecipientAddressCity!,
-                    state_or_province: beneficiary.nuvionRecipientAddressState!, postal_code: beneficiary.nuvionRecipientAddressPostal!,
-                    country: beneficiary.nuvionRecipientCountry!,
-                },
-            },
+            profile,
         });
-        if (!counterparty.success || !counterparty.id) throw new Error(`Failed to create Nuvion counterparty: ${counterparty.error}`);
+
+        // NEW — read Nuvion's answer instead of maintaining a table of what
+        // each country needs. A required-field refusal names the fields, so
+        // it is recorded against this corridor and the next person who pays
+        // into it is asked for them up front. See nuvionRequirements.ts.
+        const corridor = {
+            country: beneficiary.nuvionRecipientCountry,
+            currency: paymentMethod.currency,
+            paymentMethod: paymentMethod.paymentMethod,
+        };
+
+        if (!counterparty.success || !counterparty.id) {
+            const missing = missingFieldsFrom(counterparty.rawData);
+            if (missing.length) {
+                learnRequirements(corridor, missing.map((m) => m.field));
+                logger.warn('[NuvionPayout] Nuvion wants fields we did not send', {
+                    corridor, fields: missing.map((m) => m.nuvionPath),
+                });
+                // The field names travel with the error so a caller can ask
+                // for exactly those rather than showing "payout failed".
+                throw Object.assign(
+                    new Error(`This recipient needs: ${missing.map((m) => m.field).join(', ')}`),
+                    { needsFields: missing.map((m) => m.field), rawData: counterparty.rawData },
+                );
+            }
+            throw Object.assign(
+                new Error(`Failed to create Nuvion counterparty: ${counterparty.error}`),
+                { rawData: counterparty.rawData },
+            );
+        }
+
+        // A set that worked is recorded as sufficient — never as minimal. One
+        // success proves nothing about the fields we happened to include.
+        confirmRequirements(corridor, Object.keys(profile.address ?? {}).map((k) => `address.${k}`).concat('email'));
+
         counterpartyId = counterparty.id;
         await prisma.beneficiary.update({ where: { id: beneficiary.id }, data: { nuvionCounterpartyId: counterpartyId } });
     }
@@ -617,10 +697,14 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
         // everything else falls back to bankAddressCountry, then the
         // beneficiary's own country (correct for African bank-code
         // markets, where the bank IS in the recipient's own country).
+        // From Nuvion's own rail table now, which fixes the country for 20-odd
+        // currencies rather than special-casing two. Falls back to the bank's
+        // own address, then the recipient's country — correct for the African
+        // bank-code markets, where the bank IS in the recipient's country.
         const bankCountry =
-            paymentMethod.currency === 'GBP' ? 'GB' :
-            paymentMethod.currency === 'USD' ? 'US' :
-            paymentMethod.bankAddressCountry || beneficiary.nuvionRecipientCountry!;
+            bankCountryFor(paymentMethod.currency, paymentMethod.scheme, paymentMethod.paymentMethod) ||
+            paymentMethod.bankAddressCountry ||
+            beneficiary.nuvionRecipientCountry!;
 
         const basePayload = {
             payment_method: paymentMethod.paymentMethod,
@@ -632,12 +716,27 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
 
         let railPayload: Record<string, any> = {};
 
+        // The scheme Nuvion should receive. Sent even where Nuvion does not
+        // require it — a currency with one rail — because that is what makes
+        // the fee estimate land on the right row. NGN's rail is `nip`, and
+        // NUVION_FEE_ESTIMATES_USD.nip is 0.5 against a `default` of 7: the
+        // reason every Naira payout has been quoted ~$7 and refunded ~$6.96 is
+        // that nothing ever set this.
+        const scheme = schemeToSend(paymentMethod.currency, paymentMethod.scheme, paymentMethod.paymentMethod);
+        if (paymentMethod.scheme && !VALID_SCHEMES.has(paymentMethod.scheme)) {
+            // Refuse an unrecognised scheme here rather than letting Nuvion do
+            // it: our message can name the field, theirs names a type code.
+            throw new Error(`"${paymentMethod.scheme}" is not a payment scheme Nuvion accepts`);
+        }
+
         switch (paymentMethod.paymentMethod) {
             case 'book-transfer':
                 railPayload = { account_number: String(paymentMethod.accountNumber) };
                 break;
             case 'momo-transfer':
-                railPayload = { scheme: paymentMethod.scheme, phone_number: paymentMethod.accountNumber };
+                // scheme here is the NETWORK (mpesa, mtn, airtel, …), and the
+                // phone number is the destination.
+                railPayload = { scheme, phone_number: paymentMethod.accountNumber };
                 break;
             case 'stablecoin-transfer':
                 railPayload = { blockchain_network: paymentMethod.bankCode, wallet_address: paymentMethod.accountNumber };
@@ -645,8 +744,17 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
             case 'bank-transfer':
             default:
                 railPayload = {
-                    account_number: String(paymentMethod.accountNumber),
-                    scheme: paymentMethod.scheme ?? (paymentMethod.bankAddressCountry === 'US' ? 'wire' : undefined),
+                    // CAD interac_email is the one rail with NO account
+                    // number at all — an email address is the destination.
+                    // CAD interac_email: an email address IS the destination,
+                    // and Nuvion wants it as `email`. It is stored in
+                    // accountNumber because that column is NOT NULL and the
+                    // email is this rail's account identifier — the same
+                    // reasoning as putting an IBAN there.
+                    ...(paymentMethod.scheme === 'interac_email'
+                        ? { email: String(paymentMethod.accountNumber) }
+                        : { account_number: String(paymentMethod.accountNumber) }),
+                    scheme,
                     ...(paymentMethod.accountType && { account_type: paymentMethod.accountType }),
                     ...(paymentMethod.bankName && { bank_name: paymentMethod.bankName }),
                     ...(paymentMethod.bankCode && { bank_code: paymentMethod.bankCode }),
@@ -654,6 +762,15 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
                     ...(paymentMethod.iban && { iban: paymentMethod.iban }),
                     ...(paymentMethod.routingNumber && { routing_number: paymentMethod.routingNumber }),
                     ...(paymentMethod.sortCode && { sort_code: paymentMethod.sortCode }),
+                    // NEW, from Nuvion's rail table. These had no column and no
+                    // payload key before it arrived, so AUD, CAD and HKD could
+                    // not have worked at all:
+                    //   branch_code              AUD BECS, HKD CHATS
+                    //   bank_institution_number  CAD, 3 digits
+                    //   transit_number           CAD, 5 digits
+                    ...((paymentMethod as any).branchCode && { branch_code: (paymentMethod as any).branchCode }),
+                    ...((paymentMethod as any).institutionNumber && { bank_institution_number: (paymentMethod as any).institutionNumber }),
+                    ...((paymentMethod as any).transitNumber && { transit_number: (paymentMethod as any).transitNumber }),
                     ...(paymentMethod.bankAddressLine1 && {
                         bank_address: {
                             line1: paymentMethod.bankAddressLine1, city: paymentMethod.bankAddressCity,
@@ -693,6 +810,34 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
                     throw Object.assign(new Error(`Payment detail creation reported a duplicate, but no matching existing record was found for account ${paymentMethod.accountNumber}`), { rawData: paymentDetail.rawData });
                 }
             } else {
+                // Same learning path for the ACCOUNT fields, which differ by
+                // rail far more than the person fields do.
+                const missing = missingFieldsFrom(paymentDetail.rawData);
+                if (missing.length) {
+                    learnRequirements(
+                        { country: beneficiary.nuvionRecipientCountry, currency: paymentMethod.currency, paymentMethod: paymentMethod.paymentMethod },
+                        missing.map((m) => m.field),
+                    );
+                    throw Object.assign(
+                        new Error(`This account needs: ${missing.map((m) => m.field).join(', ')}`),
+                        { needsFields: missing.map((m) => m.field), rawData: paymentDetail.rawData },
+                    );
+                }
+
+                // NOT a missing field — a wrong one. The most common is an
+                // account number Nuvion will not accept for that bank code,
+                // which deserves its own message rather than "payout failed":
+                // it is the single most useful error in the whole flow.
+                const invalidAccount = (paymentDetail.rawData?.validations ?? []).some(
+                    (v: any) => (Object.values(v ?? {})[0] as any)?.type === 'error_counterparty_account_number_invalid',
+                );
+                if (invalidAccount) {
+                    throw Object.assign(
+                        new Error("That account number isn't valid for that bank. Please check both and try again."),
+                        { invalidAccountNumber: true, rawData: paymentDetail.rawData },
+                    );
+                }
+
                 throw Object.assign(new Error(`Failed to create Nuvion payment detail: ${paymentDetail.error}`), { rawData: paymentDetail.rawData });
             }
         } else {
