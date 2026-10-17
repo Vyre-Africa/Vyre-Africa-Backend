@@ -26,7 +26,7 @@ class BeneficiaryController {
             if (type === 'BANK' && (!email || !country)) {
                 return res.status(400).json({ success: false, msg: 'email and country are required' });
             }
-            
+
             if (type === 'BANK' && needsAddress && (!addressLine1 || !addressCity || !addressState || !addressPostalCode)) {
                 return res.status(400).json({ success: false, msg: `A full address is required for ${ISO} payouts` });
             }
@@ -47,6 +47,85 @@ class BeneficiaryController {
             return res.status(200).json({ success: true, msg: 'Beneficiary added', beneficiary });
         } catch (error: any) {
             logger.error('Failed to create beneficiary:', error);
+            return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+        }
+    }
+
+    async deleteBeneficiary(req: Request & Record<string, any>, res: Response) {
+        const { user } = req;
+        const { id } = req.params;
+        try {
+            const beneficiary = await prisma.beneficiary.findUnique({
+                where: { id },
+                include: { paymentDetails: { select: { id: true } } },
+            });
+
+            // Same shape as every other 404 here: a beneficiary belonging to
+            // someone else is reported as missing, not as forbidden. Saying
+            // "forbidden" would confirm the id exists.
+            if (!beneficiary || beneficiary.userId !== user.id || (beneficiary as any).deletedAt) {
+                return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
+            }
+
+            const paymentDetailIds = beneficiary.paymentDetails.map((pd) => pd.id);
+
+            let settled = 0;
+            if (paymentDetailIds.length) {
+                // Money in flight comes first. Removing a recipient mid-payout
+                // orphans the job that is about to pay them.
+                const inFlight = await prisma.transferRequest.count({
+                    where: {
+                        beneficiaryPaymentDetailId: { in: paymentDetailIds },
+                        status: { in: ['PENDING', 'PROCESSING'] as any },
+                    },
+                });
+
+                if (inFlight > 0) {
+                    return res.status(409).json({
+                        success: false,
+                        msg: 'This recipient has a transfer in progress. You can remove them once it has settled.',
+                    });
+                }
+
+                settled = await prisma.transferRequest.count({
+                    where: { beneficiaryPaymentDetailId: { in: paymentDetailIds } },
+                });
+            }
+
+            if (settled > 0) {
+                // ARCHIVE. The row stays, the transaction records stay pointed at
+                // it, and it leaves every list. We are required to keep these for
+                // five years and the privacy policy says we do.
+                await prisma.beneficiary.update({
+                    where: { id },
+                    data: { deletedAt: new Date() } as any,
+                });
+
+                return res.status(200).json({
+                    success: true,
+                    msg: 'Recipient removed',
+                    archived: true,
+                });
+            }
+
+            // No history: nothing to preserve, so it really goes. This is the path
+            // the duplicate rows take.
+            //
+            // Explicit deleteMany rather than relying on `onDelete: Cascade` —
+            // it works whether or not the relation declares one, and both
+            // statements land together or not at all.
+            await prisma.$transaction([
+                prisma.beneficiaryPaymentDetail.deleteMany({ where: { beneficiaryId: id } }),
+                prisma.beneficiary.delete({ where: { id } }),
+            ]);
+
+            return res.status(200).json({
+                success: true,
+                msg: 'Recipient removed',
+                archived: false,
+            });
+        } catch (error: any) {
+            logger.error('Failed to delete beneficiary:', error);
             return res.status(500).json({ success: false, msg: 'Internal Server Error' });
         }
     }
@@ -124,7 +203,11 @@ class BeneficiaryController {
         const { id } = req.params;
         try {
             const beneficiary = await prisma.beneficiary.findUnique({ where: { id } });
-            if (!beneficiary || beneficiary.userId !== user.id) {
+            // if (!beneficiary || beneficiary.userId !== user.id) {
+            //     return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
+            // }
+
+            if (!beneficiary || beneficiary.userId !== user.id || (beneficiary as any).deletedAt) {
                 return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
             }
 
@@ -167,7 +250,7 @@ class BeneficiaryController {
         const { user } = req;
         try {
             const beneficiaries = await prisma.beneficiary.findMany({
-                where: { userId: user.id },
+                where: { userId: user.id, deletedAt: null } as any,
                 orderBy: { createdAt: 'desc' },
                 include: { paymentDetails: { select: { id: true, currency: true, label: true } } },
             });
@@ -193,7 +276,11 @@ class BeneficiaryController {
         const { id } = req.params;
         try {
             const beneficiary = await prisma.beneficiary.findUnique({ where: { id }, include: { paymentDetails: true } });
-            if (!beneficiary || beneficiary.userId !== user.id) {
+            // if (!beneficiary || beneficiary.userId !== user.id) {
+            //     return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
+            // }
+
+            if (!beneficiary || beneficiary.userId !== user.id || (beneficiary as any).deletedAt) {
                 return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
             }
 
@@ -209,7 +296,11 @@ class BeneficiaryController {
         const { id, paymentDetailId } = req.params;
         try {
             const beneficiary = await prisma.beneficiary.findUnique({ where: { id } });
-            if (!beneficiary || beneficiary.userId !== user.id) {
+            // if (!beneficiary || beneficiary.userId !== user.id) {
+            //     return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
+            // }
+
+            if (!beneficiary || beneficiary.userId !== user.id || (beneficiary as any).deletedAt) {
                 return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
             }
  
