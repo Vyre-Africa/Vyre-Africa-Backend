@@ -910,6 +910,13 @@ router.post(
   beneficiaryController.addPaymentDetail
 );
 
+router.delete(
+  '/beneficiaries/:id', 
+  requireAuthWithCORS(),                    
+  authMiddleware, 
+  beneficiaryController.deleteBeneficiary
+);
+
 router.patch(
   '/beneficiaries/:id/payment-details/:paymentDetailId', 
   requireAuthWithCORS(),

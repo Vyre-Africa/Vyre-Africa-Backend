@@ -632,6 +632,7 @@ model beneficiary {
 
   userData  User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
+  deletedAt DateTime?
 
   nuvionCounterpartyId   String? // ONE per beneficiary — this is genuinely per-PERSON, not per-payment-method
   nuvionRecipientCountry String?
@@ -642,6 +643,8 @@ model beneficiary {
   nuvionRecipientAddressPostal String?
  
   paymentDetails BeneficiaryPaymentDetail[] // NEW
+
+  @@index([userId, deletedAt])
   
 }
 

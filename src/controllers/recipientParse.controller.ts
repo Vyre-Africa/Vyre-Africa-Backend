@@ -280,7 +280,8 @@ class RecipientParseController {
             const hit = await prisma.beneficiaryPaymentDetail.findFirst({
                 where: {
                     currency,
-                    beneficiary: { userId: user.id },
+                    // beneficiary: { userId: user.id },
+                    beneficiary: { userId: user.id, deletedAt: null },
                     OR: identity,
                 },
                 orderBy: { createdAt: 'desc' },
