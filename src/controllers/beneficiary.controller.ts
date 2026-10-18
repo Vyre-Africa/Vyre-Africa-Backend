@@ -144,6 +144,7 @@ class BeneficiaryController {
                 swiftCode, iban, routingNumber, sortCode,
                 paymentMethod, scheme,
                 accountType, // NEW — required for Wire/ACH/RTP
+                branchCode, institutionNumber, transitNumber,
                 bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry, // NEW — required for Wire/ACH/RTP/SWIFT
             } = req.body;
 
@@ -167,6 +168,9 @@ class BeneficiaryController {
                     routingNumber: routingNumber ? String(routingNumber) : undefined,
                     sortCode: sortCode ? String(sortCode) : undefined,
                     accountType, // NEW
+                    branchCode: branchCode ? String(branchCode) : undefined,
+                    institutionNumber: institutionNumber ? String(institutionNumber) : undefined,
+                    transitNumber: transitNumber ? String(transitNumber) : undefined,
                     bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry, // NEW
                 },
             });
@@ -296,24 +300,58 @@ class BeneficiaryController {
         const { id, paymentDetailId } = req.params;
         try {
             const beneficiary = await prisma.beneficiary.findUnique({ where: { id } });
-            // if (!beneficiary || beneficiary.userId !== user.id) {
-            //     return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
-            // }
-
             if (!beneficiary || beneficiary.userId !== user.id || (beneficiary as any).deletedAt) {
                 return res.status(404).json({ success: false, msg: 'Beneficiary not found' });
             }
- 
+
             const existing = await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: paymentDetailId } });
             if (!existing || existing.beneficiaryId !== id) {
                 return res.status(404).json({ success: false, msg: 'Payment method not found' });
             }
- 
+
             const {
                 accountName, bankName, bankCode, swiftCode, iban, routingNumber, sortCode,
-                accountType, bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry,
+                accountType,
+                branchCode, institutionNumber, transitNumber,   // NEW — AUD BECS, HKD CHATS, CAD EFT
+                bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry,
             } = req.body;
- 
+
+            // Leading zeros are significant on every one of these — a Canadian
+            // institution number is 004, not 4 — so they stay strings all the way
+            // down. An empty string means "not sent", not "clear it".
+            const asText = (v: any) => (v === undefined || v === null || v === '' ? undefined : String(v));
+
+            const routing: Record<string, string | undefined> = {
+                bankCode: asText(bankCode),
+                routingNumber: asText(routingNumber),
+                sortCode: asText(sortCode),
+                swiftCode: asText(swiftCode),
+                iban: asText(iban),
+                branchCode: asText(branchCode),
+                institutionNumber: asText(institutionNumber),
+                transitNumber: asText(transitNumber),
+            };
+
+            // WHERE THE MONEY GOES IS NOT EDITABLE once Nuvion holds the account.
+            //
+            // The sync below sends only the name, the bank name and the bank
+            // address. Nuvion keeps its own copy of the routing fields and pays
+            // against THAT. So editing a bank code here would change our row,
+            // leave Nuvion's untouched, and send the next payout to the old
+            // destination while this screen showed the new one — with nothing
+            // anywhere reporting a failure.
+            const changedRouting = Object.entries(routing)
+                .filter(([k, v]) => v !== undefined && v !== ((existing as any)[k] ?? undefined))
+                .map(([k]) => k);
+
+            if (changedRouting.length && existing.nuvionPaymentDetailId) {
+                return res.status(409).json({
+                    success: false,
+                    msg: 'Account and routing details can\'t be changed once an account has been used. Remove this account and add it again.',
+                    fields: changedRouting,
+                });
+            }
+
             // Sync to Nuvion first — if this fails, don't touch the local
             // record, so the two never drift out of sync with each other.
             if (existing.nuvionPaymentDetailId) {
@@ -332,20 +370,24 @@ class BeneficiaryController {
                     return res.status(422).json({ success: false, msg: `Could not update with Nuvion: ${nuvionUpdate.error}` });
                 }
             }
- 
+
             const updated = await prisma.beneficiaryPaymentDetail.update({
                 where: { id: paymentDetailId },
                 data: {
                     accountName, bankName,
-                    bankCode: bankCode ? String(bankCode) : undefined,
-                    swiftCode, iban,
-                    routingNumber: routingNumber ? String(routingNumber) : undefined,
-                    sortCode: sortCode ? String(sortCode) : undefined,
+                    bankCode: routing.bankCode,
+                    swiftCode: routing.swiftCode,
+                    iban: routing.iban,
+                    routingNumber: routing.routingNumber,
+                    sortCode: routing.sortCode,
                     accountType,
+                    branchCode: routing.branchCode,                 // NEW
+                    institutionNumber: routing.institutionNumber,   // NEW
+                    transitNumber: routing.transitNumber,           // NEW
                     bankAddressLine1, bankAddressCity, bankAddressState, bankAddressPostal, bankAddressCountry,
                 },
             });
- 
+
             return res.status(200).json({ success: true, msg: 'Payment method updated', paymentDetail: updated });
         } catch (error: any) {
             logger.error('Failed to update payment detail:', error);
