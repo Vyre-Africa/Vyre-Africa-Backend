@@ -33,6 +33,7 @@
 // never a misdirected payment.
 
 import logger from '../config/logger';
+import { vyreFilledFields } from './railRequirements';
 
 // ── Nuvion's field paths → our own field names ──────────────────────────
 // Left side is exactly what Nuvion puts in the validation key. Right side is
@@ -174,18 +175,52 @@ const LEARNED = new Map<string, Set<string>>();
 // This is the only corridor with a measured answer, so it is the only one
 // seeded. Everything else starts from the conservative baseline below and
 // narrows itself the first time it is used.
-// NOTE the seed is the FULL address, not the measured minimum.
-// Nuvion accepts line1 + city, but beneficiaryController.createBeneficiary
-// requires all four and that guard stays — so asking for less would be
-// rejected by our own backend before Nuvion saw it. The cache's job is to
-// stop us GUESSING, not to shave inputs past what the rest of the system
-// accepts.
+// NARROWED to the measured minimum.
+//
+// This row used to carry the FULL address, with a note saying the extra two
+// fields were there only because beneficiaryController.createBeneficiary
+// rejected a recipient without them — not because Nuvion wanted them. That
+// guard is now gated on `addressRequiredFor(ISO)` and has been relaxed to
+// line1 + city, so the padding can go.
+//
+// THE TWO MOVE TOGETHER. Ship this row on its own and the user answers two
+// address questions and then takes a 400 from our own backend. See
+// address-fields-change.md for the controller side.
+//
+// UPDATED 19 Oct 2026 — the address fields are gone from this row.
+//
+// The paragraph above said Nuvion does not validate a Naira address "but it
+// screens on it", which was the reason to keep asking. Nuvion's team has now
+// told us directly that on the African rails the field is required by the API
+// and not validated, and that a Vyre placeholder is acceptable in it. So
+// counterpartyAddressFor() fills it and the user is not asked at all: five
+// questions down to two on a Naira transfer, not three.
+//
+// `email` stays. It was measured as separately required (13 and 19 Oct), it
+// is genuinely the recipient's, and no placeholder is appropriate for it —
+// a made-up address in an unvalidated field is a different thing from a
+// made-up contact address for a real person.
+//
+// Nothing re-learns the address: we always send one, so Nuvion never refuses
+// for want of it, and confirmRequirements is handed only the fields the user
+// actually supplied.
+//
+// STILL TRUE, AND STILL THE DEPLOY HAZARD: this row and
+// beneficiaryController.createBeneficiary move together. The controller guard
+// must stop demanding an address at the same time, or the user is asked for
+// nothing and then takes a 400 from our own backend. See
+// address-fields-change.md.
+// Kept as ['email'] because that is the MEASURED truth: Nuvion does require
+// an email on an NG counterparty (13 and 19 Oct). What the user is ASKED is a
+// different question, and requirementsFor() answers it by filtering this
+// through vyreFilledFields() — so Vyre supplying the email does not require
+// rewriting what we know Nuvion demands.
+//
+// Keeping the two separate is what makes the email decision reversible:
+// delete NGN from ADDRESS_PLACEHOLDER_CURRENCIES and the measurement is still
+// here, intact, and the questions come back correctly.
 const SEED: Record<string, string[]> = {
-    'NG|NGN|bank-transfer': [
-        'recipientAddressLine1', 'recipientAddressCity',
-        'recipientAddressState', 'recipientAddressPostal',
-        'email',
-    ],
+    'NG|NGN|bank-transfer': ['email'],
 };
 
 for (const [key, fields] of Object.entries(SEED)) LEARNED.set(key, new Set(fields));
@@ -202,7 +237,24 @@ const BASELINE = [
 
 export function requirementsFor(c: Corridor): { fields: string[]; learned: boolean } {
     const hit = LEARNED.get(corridorKey(c));
-    return hit ? { fields: [...hit], learned: true } : { fields: [...BASELINE], learned: false };
+    const base = hit ? [...hit] : [...BASELINE];
+
+    // Vyre fills these on the African rails, so they are never put to the
+    // user — whatever the seed, the baseline, or a past refusal says.
+    //
+    // THIS IS THE AUTHORITATIVE FILTER, and it has to be here rather than
+    // only in the NG seed row. Only NGN was ever seeded; KES, GHS, UGX, TZS
+    // and ZAR have no row, so they fall through to BASELINE, which is the
+    // FULL address plus email. Narrowing the seed alone would have fixed
+    // Nigeria and left the other five asking for everything.
+    //
+    // It also makes the filter immune to re-learning: learnRequirements is
+    // additive and records whatever Nuvion names in a refusal, so without
+    // this a single refusal would put the questions back permanently.
+    const filled = new Set(vyreFilledFields(c.currency));
+    const fields = base.filter((f) => !filled.has(f));
+
+    return { fields, learned: hit !== undefined };
 }
 
 /**

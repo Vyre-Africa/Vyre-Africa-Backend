@@ -45,7 +45,7 @@ import logger from '../config/logger';
 import { getBankCodes } from './nuvion.service';
 import {
     railRequiredFields, needsSchemeChoice, momoSchemeFor, VALID_SCHEMES,
-    hasBankDirectory,
+    hasBankDirectory, isPlaceholderRail,
 } from './railRequirements';
 
 const PARSE_MODEL = process.env.OPENAI_PARSE_MODEL ?? 'gpt-4o-mini';
@@ -73,6 +73,51 @@ const PARSE_TIMEOUT_MS = Number(process.env.OPENAI_PARSE_TIMEOUT_MS ?? 8000);
 export const ADDRESS_EXEMPT_CURRENCIES: string[] = [];
 export const addressRequiredFor = (currency?: string) =>
     !ADDRESS_EXEMPT_CURRENCIES.includes(currency ?? '');
+
+// ── The African rails: address required by the API, not validated ───────
+//
+// AUTHORISED by the Nuvion team, 19 Oct 2026, confirmed to us verbally: on
+// these rails the counterparty address is a required API field that Nuvion
+// does NOT validate, and a Vyre placeholder is acceptable in it.
+//
+// ⚠️  GET THIS IN WRITING AND PUT THE REFERENCE HERE. Not because the
+// permission is doubted, but because the question it answers — "why do all
+// our Kenyan beneficiaries live at the same address?" — will be asked by an
+// auditor, a partner bank, or Nuvion's own compliance team long after the
+// conversation is forgotten, and the answer needs to be in the repo rather
+// than in someone's memory. One line: date, who said it, ticket or email id.
+//
+// WHAT THIS DOES NOT CHANGE
+//   - The address is still SENT. It is required; only its contents are ours.
+//   - Nothing real is overwritten. A recipient address we actually hold is
+//     always preferred — see counterpartyAddressFor().
+//   - The placeholder is Vyre's own, and is never a claim about the
+//     recipient. We do not invent a recipient's address, and we do not
+//     reuse the sender's, which would be a false statement about a person
+//     to a regulated counterparty.
+//   - Nothing outside this list changes. USD, GBP, EUR and the rest are
+//     screened on this field, so they keep collecting a real address.
+//
+// The list itself lives in railRequirements.ts — the leaf module this and the
+// payout service both already import — so there is one definition rather than
+// three copies drifting apart. Re-exported here because this is where the
+// rest of the codebase already comes for address questions.
+export { ADDRESS_PLACEHOLDER_CURRENCIES, isPlaceholderRail } from './railRequirements';
+
+/** True when the USER must supply the recipient's address for this currency. */
+export const addressCollectedFromUser = (currency?: string) =>
+    addressRequiredFor(currency) && !isPlaceholderRail(currency);
+
+/**
+ * True when the USER must supply the recipient's email for this currency.
+ *
+ * Same rails as the address, but a separate predicate on purpose: the email
+ * permission is Vyre's own extension and not part of what Nuvion confirmed,
+ * so if it has to be rolled back it is one function and not a grep for every
+ * place `addressCollectedFromUser` happens to be used.
+ */
+export const emailCollectedFromUser = (currency?: string) =>
+    !isPlaceholderRail(currency);
 
 // Currencies whose bank is picked from Nuvion's list, and the country to ask
 // for. Mirrors the frontend's BANK_CODE_LOOKUP_CURRENCIES.
@@ -174,10 +219,32 @@ const RECIPIENT_ADDRESS_FIELDS = [
 //
 // If the controller's guard is ever relaxed to line1 + city, shorten this to
 // match — not before.
+//
+// 19 Oct 2026: on the African rails it is not shortened, it is EMPTY. Vyre's
+// placeholder fills the counterparty address there (see
+// ADDRESS_PLACEHOLDER_CURRENCIES), so none of the four is asked for. The
+// paragraph above still governs every other rail, and the controller guard
+// still has to move in the same deploy — that hazard has not gone away, it
+// has only changed shape: the guard must now key on
+// addressCollectedFromUser() rather than addressRequiredFor().
 const RECIPIENT_ADDRESS_REQUIRED = [
     'recipientAddressLine1', 'recipientAddressCity',
     'recipientAddressState', 'recipientAddressPostal',
 ];
+
+/**
+ * The recipient-address fields the USER must supply for this currency.
+ *
+ * This is the list that reaches the UI as `missing`, and it is the real
+ * source of the address questions — the nuvionRequirements seed is only the
+ * other half. Clearing the seed without clearing this one leaves the
+ * questions exactly where they were.
+ */
+function recipientAddressRequiredFor(currency: string | null): string[] {
+    return addressCollectedFromUser(currency ?? undefined)
+        ? [...RECIPIENT_ADDRESS_REQUIRED]
+        : [];
+}
 
 function allowedFields(paymentMethod: string, currency: string | null): string[] {
     // Person-level fields are valid on every rail; the rail decides the rest.
@@ -213,8 +280,10 @@ function allowedFields(paymentMethod: string, currency: string | null): string[]
 // FIX 4. Keyed on the rail, not the currency, so a MoMo paste is never asked
 // for a bank code.
 function requiredFor(paymentMethod: string, currency: string | null): string[] {
-    // Same four on every rail — see RECIPIENT_ADDRESS_REQUIRED.
-    const recipientAddress = [...RECIPIENT_ADDRESS_REQUIRED];
+    // Same four on every rail EXCEPT the African ones, where Vyre's
+    // placeholder fills the counterparty address and the user is not asked.
+    // See RECIPIENT_ADDRESS_REQUIRED and recipientAddressRequiredFor.
+    const recipientAddress = recipientAddressRequiredFor(currency);
 
     if (paymentMethod === 'momo-transfer') {
         // phoneNumber, not accountNumber: Nuvion's momo rail takes

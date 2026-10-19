@@ -16,15 +16,20 @@ import notificationService from './notification.service';
 import { scheduleReplenishment, flagReplenishmentBlocked } from './treasuryReplenishment.service';
 import { resolveTreasury, thresholdFor, normaliseChain } from '../config/nuvionTreasury.config';
 import config from '../config/env.config';
-// ADDRESS_EXEMPT_CURRENCIES is now EMPTY — measured 13 Oct, live Nuvion
-// refuses an NG counterparty with no address block AND one with no email.
-// So this returns true for every currency today, and these three call sites
-// behave exactly like the original unconditional guards.
+// ADDRESS_EXEMPT_CURRENCIES is still EMPTY — measured 13 Oct and again 19
+// Oct, live Nuvion refuses an NG counterparty with no address block AND one
+// with no email. The address is REQUIRED on every rail, so it is always sent.
 //
-// The call is kept rather than inlined because it is the right place to ask
-// the question: if Nuvion ever confirms an exemption for a domestic rail, one
-// string in one array turns it on.
-import { addressRequiredFor } from './recipientparse.service';
+// What changed on 19 Oct is who fills it in. On the six African rails Nuvion
+// has confirmed the field is not validated and a Vyre placeholder is
+// acceptable, so the user is no longer asked for something we cannot verify
+// and they often do not know. See ADDRESS_PLACEHOLDER_CURRENCIES.
+import {
+    addressRequiredFor,
+    addressCollectedFromUser,
+    emailCollectedFromUser,
+    ADDRESS_PLACEHOLDER_CURRENCIES,
+} from './recipientparse.service';
 import { missingFieldsFrom, learnRequirements, confirmRequirements } from './nuvionRequirements';
 import { schemeToSend, bankCountryFor, VALID_SCHEMES, feeSchemeFor } from './railRequirements';
 
@@ -32,6 +37,206 @@ import { schemeToSend, bankCountryFor, VALID_SCHEMES, feeSchemeFor } from './rai
 // here so general.worker.ts keeps importing it from the same place and nothing
 // has to change there.
 export { handleTreasuryReplenishment } from './treasuryReplenishment.service';
+
+// ── The counterparty address ──────────────────────────────────────────────
+//
+// Nuvion requires an address block on every counterparty. On the African
+// rails it does not validate the contents, and has authorised a Vyre
+// placeholder there (19 Oct 2026 — see ADDRESS_PLACEHOLDER_CURRENCIES for
+// the standing note and the written-confirmation TODO).
+//
+// This is the ONE place the block is built, so the rules hold everywhere:
+//   1. A real recipient address always wins. The placeholder is a fallback,
+//      never an overwrite — substituting it over data we hold would destroy
+//      good data and weaken screening on a rail that may later be screened.
+//   2. All-or-nothing. A real line1 welded to a placeholder postcode is an
+//      address that belongs to nobody and reads as a data-quality fault, so
+//      either the whole block is theirs or the whole block is Vyre's.
+//   3. Vyre's own address, never the sender's and never an invented one. The
+//      placeholder is not a claim about the recipient; reusing the sender's
+//      real address would be a false statement about a person to a regulated
+//      counterparty, which is why it was never an option.
+//   4. Never a partially-populated block. `undefined` survives in an object
+//      and vanishes in JSON.stringify, which is exactly how every
+//      counterparty here went to Nuvion with no postal code for weeks. A
+//      missing placeholder value throws instead.
+
+/**
+ * The counterparty address as Nuvion actually accepts it.
+ *
+ * MEASURED 13 Oct: `line1 + city + country` was accepted, and both
+ * `state_or_province` and `postal_code` were accepted as ABSENT. So those two
+ * are optional, and this type says so.
+ *
+ * The declaration in nuvion.service.ts had all five as required-when-present,
+ * which is stricter than Nuvion. That is not a harmless inaccuracy: it is
+ * what pushed the old code into `!` assertions over three nullable columns,
+ * and a `!` silences the compiler without making the value present — so
+ * `undefined` went into the object, JSON.stringify dropped the key, and every
+ * counterparty on that path went to Nuvion with no postal code for weeks.
+ *
+ * Relax that declaration to match (see address-fields-change.md) rather than
+ * casting this through `any`, or the next person to touch it hits the same
+ * wall and reaches for the same `!`.
+ */
+export type NuvionCounterpartyAddress = {
+    line1: string;
+    city: string;
+    country: string;
+    state_or_province?: string;
+    postal_code?: string;
+};
+
+const PLACEHOLDER_ADDRESS_ENV = {
+    line1: 'VYRE_PLACEHOLDER_ADDRESS_LINE1',
+    city: 'VYRE_PLACEHOLDER_ADDRESS_CITY',
+    state_or_province: 'VYRE_PLACEHOLDER_ADDRESS_STATE',
+    postal_code: 'VYRE_PLACEHOLDER_ADDRESS_POSTAL',
+    country: 'VYRE_PLACEHOLDER_ADDRESS_COUNTRY',
+} as const;
+
+/**
+ * Vyre's placeholder address, read from env.
+ *
+ * NOT hardcoded, and deliberately not defaulted to something plausible. A
+ * made-up street address that looks real is indistinguishable from real data
+ * once it is sitting in a regulated counterparty's records — the one thing
+ * this must not become. Set these to Vyre Africa Limited's actual registered
+ * office so the block is coherent and truthful about whose address it is.
+ *
+ * `country` is Vyre's own, not the recipient's: the block is Vyre's address,
+ * and an internally coherent foreign address is less likely to trip anything
+ * than a Nigerian street in a Kenyan city.
+ */
+function placeholderAddress(currency: string): NuvionCounterpartyAddress {
+    const out: Record<string, string> = {};
+    const missing: string[] = [];
+
+    for (const [field, envVar] of Object.entries(PLACEHOLDER_ADDRESS_ENV)) {
+        const v = process.env[envVar]?.trim();
+        if (!v) missing.push(envVar);
+        else out[field] = v;
+    }
+
+    if (missing.length) {
+        // Loud, and before the API call. Sending a half-built block would be
+        // refused by Nuvion with a required-field error that points at the
+        // recipient rather than at this misconfiguration.
+        throw new Error(
+            `Cannot build the placeholder recipient address for ${currency}: ${missing.join(', ')} not set. ` +
+            `These must be Vyre Africa Limited's registered office before any African-rail payout can be created.`,
+        );
+    }
+
+    // Built explicitly rather than returned as the loose record: every one of
+    // the five is guaranteed present by the throw above, and naming them here
+    // means the compiler checks that against the type instead of taking a
+    // cast's word for it.
+    return {
+        line1: out.line1,
+        city: out.city,
+        country: out.country,
+        state_or_province: out.state_or_province,
+        postal_code: out.postal_code,
+    };
+}
+
+/**
+ * The address block to send, plus whether the USER supplied it.
+ *
+ * `userSupplied: false` means the block is Vyre's placeholder, which matters
+ * to the caller: a requirement we satisfied ourselves must not be recorded
+ * as a requirement to put to the next user in this corridor.
+ */
+export function counterpartyAddressFor(
+    beneficiary: {
+        nuvionRecipientAddressLine1?: string | null;
+        nuvionRecipientAddressCity?: string | null;
+        nuvionRecipientAddressState?: string | null;
+        nuvionRecipientAddressPostal?: string | null;
+        nuvionRecipientCountry?: string | null;
+    },
+    currency?: string,
+): { address: NuvionCounterpartyAddress; userSupplied: boolean } | null {
+    if (!addressRequiredFor(currency)) return null;
+
+    const line1 = beneficiary.nuvionRecipientAddressLine1?.trim();
+    const city = beneficiary.nuvionRecipientAddressCity?.trim();
+    const country = beneficiary.nuvionRecipientCountry?.trim();
+
+    // line1 + city + country is the measured minimum Nuvion accepts.
+    if (line1 && city && country) {
+        const address: NuvionCounterpartyAddress = { line1, city, country };
+        const state = beneficiary.nuvionRecipientAddressState?.trim();
+        const postal = beneficiary.nuvionRecipientAddressPostal?.trim();
+        if (state) address.state_or_province = state;
+        if (postal) address.postal_code = postal;
+        return { address, userSupplied: true };
+    }
+
+    if (ADDRESS_PLACEHOLDER_CURRENCIES.includes(currency ?? '')) {
+        return { address: placeholderAddress(currency!), userSupplied: false };
+    }
+
+    // Everything else is screened on this field, so an incomplete address is
+    // still a hard stop rather than something to paper over.
+    return null;
+}
+
+/**
+ * The counterparty email, and whether the user supplied it.
+ *
+ * DIFFERENT FROM THE ADDRESS IN ONE WAY THAT MATTERS. Nuvion's confirmation
+ * covered the address; the email is Vyre's own extension of it. An address in
+ * a record is inert, but an email RECEIVES MAIL — so any recipient
+ * notification Nuvion sends now arrives at Vyre rather than at the recipient.
+ * That is a product decision, made knowingly, not a side effect to discover
+ * later.
+ *
+ * Why a Vyre-controlled address and not a generated one: a fabricated
+ * `john.smith@gmail.com` can be a real stranger's inbox, and would send them
+ * another person's payment notifications. A Vyre address cannot land anywhere
+ * it should not.
+ *
+ * UNIQUENESS. If VYRE_PLACEHOLDER_EMAIL contains `{id}`, the beneficiary id
+ * is substituted, giving every counterparty a distinct address that still
+ * routes to Vyre — e.g. `beneficiary+{id}@vyre.africa`. Prefer this. A single
+ * shared address across every counterparty invites Nuvion to treat them as
+ * one person if it ever dedupes on email, and makes inbound mail impossible
+ * to trace back to a payout. Plain-address mode is supported because some
+ * validators reject `+`; if Nuvion's does, that is worth knowing before this
+ * ships at volume.
+ */
+export function counterpartyEmailFor(
+    beneficiary: { nuvionRecipientEmail?: string | null; id?: string | null },
+    currency?: string,
+): { email: string; userSupplied: boolean } | null {
+    const real = beneficiary.nuvionRecipientEmail?.trim();
+    // A real email always wins, on every rail. Same rule as the address: the
+    // placeholder is a fallback, never an overwrite.
+    if (real) return { email: real, userSupplied: true };
+
+    if (!ADDRESS_PLACEHOLDER_CURRENCIES.includes(currency ?? '')) return null;
+
+    const template = process.env.VYRE_PLACEHOLDER_EMAIL?.trim();
+    if (!template) {
+        throw new Error(
+            `Cannot build the placeholder recipient email for ${currency}: VYRE_PLACEHOLDER_EMAIL not set. ` +
+            `Use a Vyre-controlled address, ideally containing {id} for per-beneficiary uniqueness ` +
+            `(e.g. beneficiary+{id}@vyre.africa).`,
+        );
+    }
+
+    const id = beneficiary.id?.trim();
+    if (template.includes('{id}') && !id) {
+        // Substituting nothing would collapse every counterparty onto one
+        // address — the exact failure the template exists to avoid — so this
+        // refuses rather than quietly degrading to the shared form.
+        throw new Error('VYRE_PLACEHOLDER_EMAIL contains {id} but the beneficiary has no id yet');
+    }
+
+    return { email: id ? template.replace('{id}', id) : template, userSupplied: false };
+}
 
 // ── Retry policy ──────────────────────────────────────────────────────────
 // Bounded retry ONLY for transient failures (timeout, 5xx, network error),
@@ -158,11 +363,21 @@ export async function blockNuvionPayout(params: BlockPayoutParams): Promise<{ tr
     //     throw new Error('This beneficiary is missing required details — please complete their profile before sending a payout');
     // }
 
-    if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail) {
+    // Country is always needed — it drives the rail and the bank country, and
+    // nothing can stand in for it. The email is only required from the USER
+    // on the rails where Vyre does not supply it.
+    if (!beneficiary.nuvionRecipientCountry) {
     throw new Error('This recipient is missing required details — please complete their profile before sending');
     }
+
+    if (emailCollectedFromUser(paymentMethod.currency) && !beneficiary.nuvionRecipientEmail) {
+    throw new Error('This recipient needs an email address for payouts in ' + paymentMethod.currency);
+    }
     
-    if (addressRequiredFor(paymentMethod.currency) && !beneficiary.nuvionRecipientAddressLine1) {
+    // Only the rails where the USER owns this field. On the African rails
+    // Vyre's placeholder fills it, so a recipient with no address on file is
+    // no longer blocked from being paid — the whole point of the change.
+    if (addressCollectedFromUser(paymentMethod.currency) && !beneficiary.nuvionRecipientAddressLine1) {
     throw new Error('This recipient needs a full address for payouts in ' + paymentMethod.currency);
     }
 
@@ -244,11 +459,21 @@ export async function blockCryptoPayout(params: BlockCryptoPayoutParams): Promis
     //     throw new Error('This beneficiary is missing required details — please complete their profile before sending a payout');
     // }
 
-    if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail) {
+    // Country is always needed — it drives the rail and the bank country, and
+    // nothing can stand in for it. The email is only required from the USER
+    // on the rails where Vyre does not supply it.
+    if (!beneficiary.nuvionRecipientCountry) {
     throw new Error('This recipient is missing required details — please complete their profile before sending');
     }
 
-    if (addressRequiredFor(paymentMethod.currency) && !beneficiary.nuvionRecipientAddressLine1) {
+    if (emailCollectedFromUser(paymentMethod.currency) && !beneficiary.nuvionRecipientEmail) {
+    throw new Error('This recipient needs an email address for payouts in ' + paymentMethod.currency);
+    }
+
+    // Only the rails where the USER owns this field. On the African rails
+    // Vyre's placeholder fills it, so a recipient with no address on file is
+    // no longer blocked from being paid — the whole point of the change.
+    if (addressCollectedFromUser(paymentMethod.currency) && !beneficiary.nuvionRecipientAddressLine1) {
     throw new Error('This recipient needs a full address for payouts in ' + paymentMethod.currency);
     }
 
@@ -626,25 +851,26 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
         const [firstName, ...lastNameParts] = accountName.trim().split(' ');
         const lastName = lastNameParts.join(' ') || firstName;
 
+        // Both person-level fields go through their helpers, so the rules —
+        // real value always wins, placeholder only on the African rails, never
+        // a missing key — hold identically for each.
+        const emailBlock = counterpartyEmailFor(beneficiary, paymentMethod.currency);
+        if (!emailBlock) {
+            throw new Error('This recipient needs an email address for payouts in ' + paymentMethod.currency);
+        }
+
         const profile: any = {
             first_name: firstName, last_name: lastName, relationship: 'vendor',
-            email: beneficiary.nuvionRecipientEmail,
+            email: emailBlock.email,
         };
-        if (addressRequiredFor(paymentMethod.currency)) {
-            profile.address = {
-                line1: beneficiary.nuvionRecipientAddressLine1,
-                city: beneficiary.nuvionRecipientAddressCity,
-                state_or_province: beneficiary.nuvionRecipientAddressState,
-                // FIXED — was `nuvionRecipientAddressPostalCode`, which is not
-                // a column. The schema field is `nuvionRecipientAddressPostal`,
-                // so Prisma returned undefined, JSON.stringify dropped the key,
-                // and every counterparty created here went to Nuvion with no
-                // postal code at all. The legacy initiateNuvionPayout further
-                // down this file always had it right.
-                postal_code: beneficiary.nuvionRecipientAddressPostal,
-                country: beneficiary.nuvionRecipientCountry,
-            };
-        }
+        // Built in one place now — counterpartyAddressFor() prefers a real
+        // recipient address, falls back to Vyre's placeholder on the African
+        // rails, and omits every empty key rather than letting
+        // JSON.stringify silently drop it. That dropped-key bug is why every
+        // counterparty created here went to Nuvion with no postal code for
+        // weeks, from a misspelled column name.
+        const addressBlock = counterpartyAddressFor(beneficiary, paymentMethod.currency);
+        if (addressBlock) profile.address = addressBlock.address;
 
         const counterparty = await createCounterparty({
             type: 'individual',
@@ -683,7 +909,20 @@ export async function ensureNuvionCounterpartyAndPaymentDetail(
 
         // A set that worked is recorded as sufficient — never as minimal. One
         // success proves nothing about the fields we happened to include.
-        confirmRequirements(corridor, Object.keys(profile.address ?? {}).map((k) => `address.${k}`).concat('email'));
+        //
+        // Records only what the USER had to supply. A placeholder address is a
+        // requirement we satisfied ourselves, and recording it here would be
+        // actively harmful: confirmRequirements seeds a corridor it has not
+        // seen before, requirementsFor then returns those fields, and the
+        // frontend would start demanding an address again on the very rails
+        // this change exists to stop asking about — re-learned from our own
+        // placeholder on the first successful African payout.
+        confirmRequirements(corridor, [
+            ...(addressBlock?.userSupplied
+                ? Object.keys(addressBlock.address).map((k) => `address.${k}`)
+                : []),
+            ...(emailBlock.userSupplied ? ['email'] : []),
+        ]);
 
         counterpartyId = counterparty.id;
         await prisma.beneficiary.update({ where: { id: beneficiary.id }, data: { nuvionCounterpartyId: counterpartyId } });
@@ -984,8 +1223,21 @@ export async function initiateNuvionPayout(params: InitiatePayoutParams) {
     // Counterparty (identity) — create once per beneficiary, regardless
     // of how many payment methods they end up having.
     if (!counterpartyId) {
-        if (!beneficiary.nuvionRecipientCountry || !beneficiary.nuvionRecipientEmail || !beneficiary.nuvionRecipientAddressLine1) {
-            throw new Error('This beneficiary is missing required details (country, email, or address) — please complete their profile before sending a payout');
+        if (!beneficiary.nuvionRecipientCountry) {
+            throw new Error('This beneficiary is missing required details (country) — please complete their profile before sending a payout');
+        }
+        // Address and email both go through the same helpers as the main path,
+        // so the African placeholders apply here too. This legacy function is
+        // still reachable, and leaving it on the old guards would mean a
+        // beneficiary who can be paid through one path is refused through the
+        // other.
+        const legacyAddress = counterpartyAddressFor(beneficiary, paymentMethod.currency);
+        if (!legacyAddress) {
+            throw new Error('This beneficiary needs a full address for payouts in ' + paymentMethod.currency);
+        }
+        const legacyEmail = counterpartyEmailFor(beneficiary, paymentMethod.currency);
+        if (!legacyEmail) {
+            throw new Error('This beneficiary needs an email address for payouts in ' + paymentMethod.currency);
         }
         if (!(beneficiary.bank as any)?.accountName) {
             throw new Error('Beneficiary has no registered name — cannot create Nuvion counterparty');
@@ -1001,14 +1253,12 @@ export async function initiateNuvionPayout(params: InitiatePayoutParams) {
                 first_name: firstName,
                 last_name: lastName,
                 relationship: 'vendor',
-                email: beneficiary.nuvionRecipientEmail,
-                address: {
-                    line1: beneficiary.nuvionRecipientAddressLine1,
-                    city: beneficiary.nuvionRecipientAddressCity!,
-                    state_or_province: beneficiary.nuvionRecipientAddressState!,
-                    postal_code: beneficiary.nuvionRecipientAddressPostal!,
-                    country: beneficiary.nuvionRecipientCountry,
-                },
+                email: legacyEmail.email,
+                // Was four non-null assertions over three nullable columns —
+                // `!` silences the compiler without making the value present,
+                // so a missing state or postal went out as undefined and was
+                // dropped by JSON.stringify.
+                address: legacyAddress.address,
             },
         });
         if (!counterparty.success || !counterparty.id) {
