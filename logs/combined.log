@@ -5128,3 +5128,38 @@ TypeError: Cannot read properties of undefined (reading 'Misc')
 2026-10-18 17:50:02 [info] Connected to Ably! 
 2026-10-18 17:50:22 [info] Server running on port 4000 
 2026-10-18 17:50:23 [info] Connected to Ably! 
+2026-10-18 20:47:53 [error] Nuvion call failed [createCounterparty]: 
+2026-10-18 20:47:54 [error] Nuvion call failed [createCounterparty]: 
+2026-10-18 20:47:54 [error] Nuvion call failed [createCounterparty]: 
+2026-10-18 20:47:54 [info] Nuvion counterparty created 
+2026-10-18 20:47:54 [info] Nuvion counterparty deactivated 
+2026-10-19 08:18:27 [info] Nuvion counterparty created 
+2026-10-19 08:18:27 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:18:27 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:18:28 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:18:28 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:18:28 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:18:28 [info] Nuvion counterparty deactivated 
+2026-10-19 08:20:48 [info] Nuvion counterparty created 
+2026-10-19 08:20:48 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:20:48 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:20:49 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:20:49 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:20:49 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:20:49 [info] Nuvion counterparty deactivated 
+2026-10-19 08:25:28 [info] Nuvion counterparty created 
+2026-10-19 08:25:28 [info] Nuvion payment detail created 
+2026-10-19 08:25:28 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:25:28 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:25:29 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:25:29 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:25:29 [info] Nuvion counterparty deactivated 
+2026-10-19 08:26:09 [info] Nuvion counterparty created 
+2026-10-19 08:26:09 [info] Nuvion payment detail created 
+2026-10-19 08:26:09 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:26:10 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:26:10 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:26:10 [error] Nuvion call failed [createPaymentDetail]: 
+2026-10-19 08:26:10 [info] Nuvion counterparty deactivated 
+2026-10-19 08:36:28 [info] Server running on port 4000 
+2026-10-19 08:36:29 [info] Connected to Ably! 
