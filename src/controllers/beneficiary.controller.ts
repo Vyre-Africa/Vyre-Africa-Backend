@@ -2,7 +2,79 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
 import logger from '../config/logger';
 import { getBankCodes, updatePaymentDetail } from '../services/nuvion.service';
-import { addressRequiredFor } from '../services/recipientparse.service';
+import { addressCollectedFromUser, emailCollectedFromUser } from '../services/recipientparse.service';
+import { ensureNuvionCounterpartyAndPaymentDetail } from '../services/nuvionpayout.service';
+
+// ── Registering the recipient with Nuvion at the moment it is saved ──────
+//
+// THE PROBLEM. Some banks and some account numbers are refused by Nuvion.
+// Until now the first Nuvion call happened at the QUOTE step, so the refusal
+// landed after the user had chosen a recipient, typed an amount and asked
+// what it would cost — the worst possible moment, and one where the error
+// reads as "the transfer failed" rather than "that account cannot be paid".
+//
+// Nothing is ADDED to the flow. These are the same two calls that used to run
+// at quote time, moved earlier. `ensureNuvionCounterpartyAndPaymentDetail`
+// short-circuits on the stored ids, so the quote step now finds the work done
+// and gets faster.
+//
+// THE DISTINCTION THAT MATTERS. A failure here is one of two things, and they
+// need opposite handling:
+//
+//   VALIDATION — the bank is not supported, the account number is wrong, the
+//   scheme is not one Nuvion takes. This will never succeed on retry. Tell
+//   the user NOW and do not keep a row that cannot be paid.
+//
+//   TRANSIENT — Nuvion is down, slow, or the socket dropped. The account is
+//   probably fine. Blocking here would mean a short outage at Nuvion stops
+//   people saving perfectly good recipients.
+//
+// Which way to lean is NOT symmetric. Treating a validation failure as
+// transient costs nothing new: the user hits it at quote time, exactly as
+// they do today. Treating a TRANSIENT failure as validation deletes a good
+// account and tells someone their bank is unsupported when it is not — a new
+// and much worse failure. So validation requires positive evidence and
+// everything else is transient.
+function isValidationFailure(err: any): boolean {
+    // Nuvion named the fields it wanted. Unambiguous.
+    if (err?.needsFields?.length) return true;
+
+    // An HTTP status, where one survived, is the strongest signal there is.
+    const status = Number(err?.status ?? err?.response?.status ?? 0);
+    if (status >= 500) return false;                        // their fault, retryable
+    if (status === 408 || status === 429) return false;     // timeout / rate limit, retryable
+    if (status >= 400) return true;                         // our payload, not retryable
+
+    const raw = typeof err?.rawData === 'string' ? err.rawData : JSON.stringify(err?.rawData ?? '');
+    // Nuvion's own structured refusal codes — error_validation_error,
+    // error_validation_required_field_missing, error_validation_phone_invalid.
+    // Matching the PREFIX covers every member of that family.
+    //
+    // Deliberately NOT matching a bare /invalid/: "Invalid gateway response"
+    // and similar appear in transient 5xx bodies, and that false positive
+    // deletes a good account and tells the user their bank is unsupported.
+    // A missed validation error merely defers to quote time, as today.
+    if (/error_validation|not_supported|unsupported/i.test(raw)) return true;
+
+    const msg = String(err?.message ?? '');
+    // Our own pre-check in nuvionpayout.service.ts, which refuses an unknown
+    // scheme before Nuvion ever sees it.
+    if (/is not a payment scheme Nuvion accepts/i.test(msg)) return true;
+    // The field-list error thrown by ensureNuvionCounterpartyAndPaymentDetail.
+    if (/^This recipient needs:/i.test(msg)) return true;
+    // Placeholder-config errors. Not the user's problem and not their bank's —
+    // refusing the account would be a lie. Transient keeps the row, and the
+    // thrown message names the unset env var in the logs.
+    if (/Cannot build the placeholder/i.test(msg)) return false;
+
+    return false;
+}
+
+// Kill switch. This change puts a third-party call in the path of saving a
+// recipient, so there is a way to turn it off without a deploy if Nuvion
+// becomes slow enough to hurt. Off means the old behaviour exactly: the
+// registration happens at quote time instead.
+const VERIFY_ON_SAVE = process.env.VERIFY_RECIPIENT_WITH_NUVION !== 'false';
 
 class BeneficiaryController {
 
@@ -22,13 +94,31 @@ class BeneficiaryController {
             //     });
             // }
 
-            const needsAddress = addressRequiredFor(ISO);
-            if (type === 'BANK' && (!email || !country)) {
-                return res.status(400).json({ success: false, msg: 'email and country are required' });
+            // CHANGED — was addressRequiredFor(ISO), which is true on every
+            // rail because the address is always SENT. The question here is a
+            // different one: must the USER supply it? On the African rails
+            // Vyre's placeholder fills both the address and the email, so
+            // demanding them rejects recipients Nuvion will accept.
+            const needsAddress = addressCollectedFromUser(ISO);
+            const needsEmail = emailCollectedFromUser(ISO);
+
+            // Country stays unconditional — it drives the rail and the bank
+            // country, and nothing can stand in for it.
+            if (type === 'BANK' && !country) {
+                return res.status(400).json({ success: false, msg: 'country is required' });
             }
 
-            if (type === 'BANK' && needsAddress && (!addressLine1 || !addressCity || !addressState || !addressPostalCode)) {
-                return res.status(400).json({ success: false, msg: `A full address is required for ${ISO} payouts` });
+            if (type === 'BANK' && needsEmail && !email) {
+                return res.status(400).json({ success: false, msg: `An email address is required for ${ISO} payouts` });
+            }
+
+            // CHANGED — was all four address fields. Nuvion's measured minimum
+            // is line1 + city + country (13 Oct), so demanding state and postal
+            // code only rejected recipients Nuvion would have taken. Both are
+            // still STORED when supplied; this guard is about what we REFUSE,
+            // not what we keep.
+            if (type === 'BANK' && needsAddress && (!addressLine1 || !addressCity)) {
+                return res.status(400).json({ success: false, msg: `A street address and city are required for ${ISO} payouts` });
             }
 
             const beneficiary = await prisma.beneficiary.create({
@@ -175,7 +265,89 @@ class BeneficiaryController {
                 },
             });
 
-            return res.status(200).json({ success: true, msg: 'Payment method added', paymentDetail });
+            if (!VERIFY_ON_SAVE) {
+                return res.status(200).json({ success: true, msg: 'Payment method added', paymentDetail });
+            }
+
+            // ── Register with Nuvion now, not at quote time ──────────────
+            try {
+                const { counterpartyId, paymentDetailNuvionId } =
+                    await ensureNuvionCounterpartyAndPaymentDetail(beneficiary, paymentDetail);
+
+                logger.info('[Beneficiary] recipient registered with Nuvion on save', {
+                    beneficiaryId: id, paymentDetailId: paymentDetail.id,
+                    counterpartyId, paymentDetailNuvionId,
+                });
+
+                // Re-read so the response carries the nuvion ids the ensure
+                // call just wrote, rather than the pre-write row.
+                const verified = await prisma.beneficiaryPaymentDetail.findUnique({ where: { id: paymentDetail.id } });
+
+                return res.status(200).json({
+                    success: true,
+                    msg: 'Payment method added',
+                    paymentDetail: verified ?? paymentDetail,
+                    nuvionVerified: true,
+                });
+            } catch (nuvionError: any) {
+                const validation = isValidationFailure(nuvionError);
+
+                logger.warn('[Beneficiary] Nuvion refused a recipient at save time', {
+                    beneficiaryId: id, paymentDetailId: paymentDetail.id, currency,
+                    bankCode, validation, error: nuvionError?.message,
+                });
+
+                if (!validation) {
+                    // Transient. Keep the row and let the user carry on — the
+                    // quote step runs the same idempotent function and will
+                    // pick this up. This is the pre-existing behaviour, so a
+                    // Nuvion outage leaves the flow as it was rather than
+                    // newly blocking it.
+                    return res.status(200).json({
+                        success: true,
+                        msg: 'Payment method added',
+                        paymentDetail,
+                        nuvionVerified: false,
+                        nuvionPending: true,
+                    });
+                }
+
+                // Validation. This account cannot be paid, and a stored row
+                // that cannot be paid is worse than no row: it sits in the
+                // recipient list looking usable.
+                //
+                // Only the payment detail goes — NOT the beneficiary. The
+                // person may be pre-existing with other accounts hanging off
+                // them, and even when they are new they are a valid person
+                // awaiting a valid account: the retry re-finds them through
+                // the person dedupe and attaches the working account there.
+                //
+                // Hard delete, matching deletePaymentDetail. This row never
+                // became usable — no Nuvion id, no transfer can reference it —
+                // so there is no history to preserve and nothing for the
+                // archive path in deleteBeneficiary to protect.
+                try {
+                    await prisma.beneficiaryPaymentDetail.delete({ where: { id: paymentDetail.id } });
+                } catch (cleanupError: any) {
+                    // Never let a failed cleanup mask the real reason. Log it
+                    // and still tell the user what Nuvion said.
+                    logger.error('[Beneficiary] could not roll back a refused payment detail', {
+                        paymentDetailId: paymentDetail.id, error: cleanupError?.message,
+                    });
+                }
+
+                // The counterparty, if one was created, is deliberately KEPT.
+                // The person is valid; only the account was refused. Keeping
+                // it makes the retry one call instead of two.
+                return res.status(422).json({
+                    success: false,
+                    msg: nuvionError?.message ?? 'This account cannot be paid through our provider',
+                    // Present when Nuvion named fields it wanted, so the screen
+                    // can ask for exactly those instead of a generic failure.
+                    ...(nuvionError?.needsFields?.length ? { needsFields: nuvionError.needsFields } : {}),
+                    nuvionVerified: false,
+                });
+            }
         } catch (error: any) {
             logger.error('Failed to add payment detail:', error);
             return res.status(500).json({ success: false, msg: 'Internal Server Error' });
@@ -259,6 +431,19 @@ class BeneficiaryController {
                 include: { paymentDetails: { select: { id: true, currency: true, label: true } } },
             });
  
+            // `paymentMethodCount: 0` is now reachable: when Nuvion refuses an
+            // account at save time the account row is removed and the person
+            // is kept.
+            //
+            // Those rows are deliberately NOT filtered out here. This list is
+            // what feeds `knownRecipients`, and `findExistingPerson` dedupes
+            // against it — so hiding a person with no accounts would mean the
+            // retry could not find them and would create a SECOND copy, which
+            // is the duplicate-recipient bug the person dedupe exists to stop.
+            //
+            // If an empty recipient card is unwanted, that is a rendering
+            // decision: the screen can hide `paymentMethodCount === 0` from
+            // the picker while still passing the full list to the dedupe.
             return res.status(200).json({
                 success: true,
                 beneficiaries: beneficiaries.map((b) => ({
