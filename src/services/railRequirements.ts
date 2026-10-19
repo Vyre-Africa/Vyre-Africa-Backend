@@ -155,6 +155,19 @@ export const SWIFT_RAILS: Rail[] = [
 // ── Mobile money ────────────────────────────────────────────────────────
 // A phone number, a network, and a country. Nuvion lists it for KES, GHS and
 // TZS; the network values come from the scheme enum.
+//
+// PHONE FORMAT, MEASURED 19 Oct 2026 on KES/mpesa (test-momo-phone-format.ts):
+// Nuvion accepts E.164 WITH the leading + and nothing else. `+254712345678`
+// created the payment detail; `254712345678`, `0712345678`, `712345678` and
+// `+254 712 345 678` were all refused with error_validation_phone_invalid.
+// So the +, the country code and the absence of spaces are each load-bearing.
+// nuvionpayout.service.ts passes the accountNumber column straight through
+// without normalising, so whatever writes that column owns the format.
+// GHS and TZS are separate corridors and have not been measured.
+//
+// `required: ['phoneNumber']` below is the ACCOUNT-side field list — what the
+// user has to supply. `country` is also required on the payload, and it comes
+// from each rail's own `country` below via bankCountryFor(); it is not missing.
 export const MOMO_RAILS: Record<string, Rail[]> = {
     KES: [
         { scheme: 'mpesa', label: 'M-Pesa', country: 'KE', required: ['phoneNumber'] },
