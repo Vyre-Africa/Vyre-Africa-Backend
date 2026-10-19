@@ -152,6 +152,57 @@ export const SWIFT_RAILS: Rail[] = [
     { scheme: 'swift', label: 'International (SWIFT) — with account number', required: ['swiftCode', 'accountNumber', 'bankName', 'bankAddressLine1'] },
 ];
 
+// ── The African rails: what Vyre fills in, not the user ─────────────────
+//
+// AUTHORISED by the Nuvion team, 19 Oct 2026: on these rails the counterparty
+// address is a required API field that Nuvion does NOT validate, and a Vyre
+// placeholder is acceptable in it.
+//
+// ⚠️  GET THIS IN WRITING AND PUT THE REFERENCE HERE. Not because the
+// permission is doubted, but because the question it answers — "why do all
+// our Kenyan beneficiaries share an address?" — will be asked by an auditor,
+// a partner bank, or Nuvion's own compliance team long after the conversation
+// is forgotten. One line: date, who said it, ticket or email id.
+//
+// ⚠️  THE EMAIL IS A SEPARATE PERMISSION AND WAS NOT PART OF IT. What Nuvion
+// confirmed was the address. Vyre extended the same treatment to the email on
+// 19 Oct; that decision is Vyre's, not Nuvion's, and it differs in one way
+// that matters: an address in a record is inert, but an email RECEIVES MAIL.
+// Any recipient notification Nuvion sends now arrives at Vyre instead of the
+// recipient. Worth confirming with them in the same written exchange.
+//
+// This lives here, in the leaf module both the parse service and the payout
+// service already import, so there is ONE definition. It is a per-rail fact,
+// which is what this file is for.
+//
+// Deliberately an explicit list and not derived from the rail countries
+// below: a compliance exemption should widen when a human decides it does,
+// not when someone adds a new rail.
+export const ADDRESS_PLACEHOLDER_CURRENCIES = ['NGN', 'GHS', 'KES', 'UGX', 'TZS', 'ZAR'];
+
+/** True when Vyre fills the person-level fields on this rail instead of asking. */
+export const isPlaceholderRail = (currency?: string | null) =>
+    ADDRESS_PLACEHOLDER_CURRENCIES.includes(currency ?? '');
+
+/**
+ * The person-level fields Vyre fills in rather than asking for, on this rail.
+ *
+ * One list, used by the question logic and the requirements fallback alike,
+ * so "what do we not ask for" has a single answer. `addressRequiredFor` is
+ * deliberately NOT here: it lives in recipientparse.service.ts with the
+ * exempt-list mechanism, and asks a different question — whether the block is
+ * SENT at all, which on every rail today it is.
+ */
+export const VYRE_FILLED_FIELDS = [
+    'recipientAddressLine1', 'recipientAddressCity',
+    'recipientAddressState', 'recipientAddressPostal',
+    'email',
+];
+
+export function vyreFilledFields(currency?: string | null): string[] {
+    return isPlaceholderRail(currency) ? [...VYRE_FILLED_FIELDS] : [];
+}
+
 // ── Mobile money ────────────────────────────────────────────────────────
 // A phone number, a network, and a country. Nuvion lists it for KES, GHS and
 // TZS; the network values come from the scheme enum.
