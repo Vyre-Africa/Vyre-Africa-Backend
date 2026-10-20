@@ -1016,31 +1016,66 @@ class WalletController {
     }
   }
 
+  // ── Transaction history ─────────────────────────────────────────────
+  //
+  // CHANGED — reads VirtualTransaction instead of the legacy Transaction
+  // table. Nothing in virtualAccount.service.ts writes to the legacy table,
+  // so a status there could never change after the row was created: a payout
+  // stayed "pending" forever even after Nuvion's webhook settled it.
+  // VirtualTransaction is created AND updated in place by every flow, which
+  // is what makes the status users see the live one.
+  //
+  // Ownership is now verified. The previous version took walletId straight
+  // off the query string and never checked it against the caller, so any
+  // authenticated user could read anyone else's history by passing their id.
+  //
+  // The `console.log` of the full result is gone too — it printed every
+  // user's financial history, account numbers and wallet addresses included,
+  // into the logs on every page load.
   async fetchTransactions(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
-    const { walletId } = req.query;
-
-    let transactions;
+    const { walletId, page, limit, status, type } = req.query;
 
     try {
+      const query = {
+        page: Number(page) || 1,
+        limit: Number(limit) || 20,
+        status: (status as string) || undefined,
+        type: (type as string) || undefined,
+      };
 
-      if(walletId){
+      if (walletId) {
+        const result = await transactionService.getWalletLedger(
+          user.id,
+          walletId as string,
+          query,
+        );
 
-        transactions = await transactionService.getwalletRecords(walletId as string,20)
-        
-      }else{
-        transactions = await transactionService.getUserRecords(user.id as string,20)
+        // Null covers both "no such wallet" and "not yours", deliberately —
+        // a different message for each would confirm the id exists.
+        if (!result) {
+          return res.status(404).json({ success: false, msg: 'Wallet not found' });
+        }
+
+        return res
+          .status(200)
+          .json({
+            msg: 'transactions fetched Successfully',
+            success: true,
+            transactions: result.transactions,
+            pagination: result.pagination,
+          });
       }
-      
 
-      console.log('Fetched transactions: ', transactions);
+      const result = await transactionService.getUserLedger(user.id, query);
 
       return res
         .status(200)
         .json({
           msg: 'transactions fetched Successfully',
           success: true,
-          transactions
+          transactions: result.transactions,
+          pagination: result.pagination,
         });
     } catch (error) {
       console.log(error);
@@ -1048,6 +1083,31 @@ class WalletController {
     }
   }
 
+  // One transaction in full, for a deep link or a shared receipt.
+  // Route: router.get('/transactions/:id', auth, walletController.fetchTransaction)
+  async fetchTransaction(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+    const { id } = req.params;
+
+    try {
+      const transaction = await transactionService.getLedgerEntry(user.id, id);
+
+      if (!transaction) {
+        return res.status(404).json({ success: false, msg: 'Transaction not found' });
+      }
+
+      return res
+        .status(200)
+        .json({
+          msg: 'transaction fetched Successfully',
+          success: true,
+          transaction,
+        });
+    } catch (error) {
+      console.log(error);
+      return res.status(500).send({ msg: 'Internal Server Error', success: false, error });
+    }
+  }
  
 }
 
