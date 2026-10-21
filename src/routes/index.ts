@@ -366,6 +366,13 @@ router.get(
 )
 
 router.get(
+  '/wallet/fee-preview', 
+  requireAuthWithCORS(),  
+  authMiddleware, 
+  walletController.feePreview
+);
+
+router.get(
   '/beneficiary/wallet',
    requireAuthWithCORS(),
    authMiddleware,
@@ -1014,6 +1021,7 @@ router.get(
   authMiddleware, 
   walletFundingController.listRecent
 );
+
 
 // INTERNAL OFFRAMP ROUTES
 router.get('/offramp/internal/quote', requireAuthWithCORS(), authMiddleware, InternalOfframpController.quote);
