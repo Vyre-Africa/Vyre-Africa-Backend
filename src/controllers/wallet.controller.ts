@@ -18,6 +18,7 @@ import {createHmac} from 'node:crypto';
 import { generateRefCode, generateSignature, isValidSignature } from '../utils';
 import Decimal from 'decimal.js';
 import transactionService from '../services/transaction.service';
+import { previewGlobalPayoutFee } from '../services/feePreview.service';
 import fernService from '../services/fern.service';
 import { fetchBeneficiaries,deleteBeneficiary } from '../services/beneficiary.service';
 
@@ -1080,6 +1081,37 @@ class WalletController {
     } catch (error) {
       console.log(error);
       return res.status(500).send({ msg: 'Internal Server Error', success: false, error });
+    }
+  }
+
+  // ── What a transfer will cost, before anything is committed ─────────
+  //
+  // Pure arithmetic: no Nuvion call, no DB read. Safe to hit on every
+  // keystroke behind the client's debounce.
+  //
+  // Mounted on /wallet rather than /payouts on purpose — /payouts is the
+  // prefix where supported-currencies already 404s, so putting the fee
+  // preview there would have inherited a known-broken mount. Move it once
+  // that router is fixed; the client reads one URL in useFeePreview.ts.
+  async feePreview(req: Request & Record<string, any>, res: Response) {
+    const { amount, currency, scheme, paymentMethod } = req.query;
+
+    if (!currency || !amount) {
+      return res.status(400).json({ success: false, msg: 'currency and amount are required' });
+    }
+
+    try {
+      const preview = previewGlobalPayoutFee({
+        amount: String(amount),
+        currency: String(currency).toUpperCase(),
+        scheme: (scheme as string) || null,
+        paymentMethod: (paymentMethod as string) || 'bank-transfer',
+      });
+
+      return res.status(200).json({ success: true, preview });
+    } catch (error) {
+      console.log(error);
+      return res.status(500).json({ success: false, msg: 'Internal Server Error' });
     }
   }
 
