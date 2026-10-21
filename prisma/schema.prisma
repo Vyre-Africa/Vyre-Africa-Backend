@@ -909,6 +909,45 @@ model TreasuryReplenishment {
   @@index([txRef])
 }
 
+model RailFee {
+  id               String    @id @default(cuid())
+  /// The rail as feeSchemeFor() names it: nip, ke_eft, fps, mpesa…
+  rail             String    @unique
+  /// Informational only — a rail implies its currency, this just saves a join.
+  currency         String?
+
+  /// What to freeze, in USD. The number railFeeFor() returns.
+  estimateUsd      Decimal   @db.Decimal(18, 6)
+
+  /// MEASURED_FLAT | MEASURED_PERCENT | MEASURED_CEILING | FAMILY_PRIOR | UNKNOWN
+  ///
+  /// A String rather than an enum on purpose: the set of modes is a detail of
+  /// how the estimate is derived and will gain members (a p95 mode, a
+  /// per-amount-band mode). An enum would make each of those a migration.
+  mode             String
+
+  /// Only set when the rail was measured as proportional. Fee ÷ amount.
+  percentage       Decimal?  @db.Decimal(10, 8)
+
+  observationCount Int       @default(0)
+  minUsd           Decimal?  @db.Decimal(18, 6)
+  maxUsd           Decimal?  @db.Decimal(18, 6)
+  lastSeenAt       DateTime?
+
+  /// Rolling window of the last 20 observations: [{ fee, amount, at }].
+  ///
+  /// Inline rather than a second table because it is bounded at 20, always
+  /// read whole, and never queried across rails. A RailFeeObservation table
+  /// would be more "correct" and would buy nothing — there is no query it
+  /// would enable that this does not.
+  observations     Json      @default("[]")
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([mode])
+}
+
 model fiatAccount {
   id            String @id @default(cuid())
   name          String
@@ -1366,6 +1405,8 @@ model AdminRevenue {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @default(now())
 }
+
+
 
 // // VirtualAccount Service // //
 
