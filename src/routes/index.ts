@@ -366,7 +366,7 @@ router.get(
 )
 
 router.get(
-  '/wallet/fee-preview', 
+  '/wallet/fees/preview', 
   requireAuthWithCORS(),  
   authMiddleware, 
   walletController.feePreview
