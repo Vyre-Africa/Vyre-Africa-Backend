@@ -395,6 +395,13 @@ router.get(
   walletController.fetchTransactions
 )
 
+router.get(
+  '/transactions/:id',
+   requireAuthWithCORS(),
+  authMiddleware,
+  walletController.fetchTransaction
+)
+
 
 
 
@@ -867,6 +874,24 @@ router.post(
   nuvionController.initiateCryptoPayout
 );
  
+// MUST stay above GET /payouts/nuvion/:id.
+//
+// It was below it, which is why it 404'd: Express matches top-down, so
+// /payouts/nuvion/supported-currencies hit /:id with id =
+// "supported-currencies", getPayoutStatus found no such payout, and returned
+// 404. The route was registered the whole time and unreachable.
+//
+// nuvionController.getSupportedCurrencies is NOT the handler here. That one
+// lists currencies with an active treasury — the SOURCE side, the USDC/USD
+// float a payout is drawn from. This endpoint feeds the DESTINATION picker,
+// and the answer comes from the rail table.
+router.get(
+  '/payouts/nuvion/supported-currencies',
+  requireAuthWithCORS(),
+  authMiddleware,
+  payoutCurrenciesController.getSupportedCurrencies
+);
+
 router.get(
   '/payouts/nuvion/:id',   
   requireAuthWithCORS(),
@@ -881,25 +906,11 @@ router.get(
   nuvionController.listPayouts
 );
 
-router.get(
-  '/payouts/nuvion/supported-currencies', 
-  requireAuthWithCORS(),
-  authMiddleware, 
-  nuvionController.getSupportedCurrencies
-);
-
 router.post(
   '/payouts/nuvion/quote', 
   requireAuthWithCORS(),
   authMiddleware, 
   nuvionController.getPayoutQuote
-);
-
-router.get(
-  '/nuvion/supported-currencies', 
-  requireAuthWithCORS(),
-  authMiddleware, 
-  payoutCurrenciesController.getSupportedCurrencies
 );
 
 
