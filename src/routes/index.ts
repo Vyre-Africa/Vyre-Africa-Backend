@@ -41,6 +41,7 @@ import InternalOfframpController from '../controllers/InternalOfframp.controller
 import { requireKycTier } from '../middleware/requireKycTier';
 import recipientParseController from '../controllers/recipientParse.controller';
 import { parseRateLimiter, useRedisForRateLimit } from '../middleware/parseRateLimiter';
+import payoutCurrenciesController from '../controllers/payoutCurrencies.controller';
 
 
 const router = Router();
@@ -892,6 +893,13 @@ router.post(
   requireAuthWithCORS(),
   authMiddleware, 
   nuvionController.getPayoutQuote
+);
+
+router.get(
+  '/nuvion/supported-currencies', 
+  requireAuthWithCORS(),
+  authMiddleware, 
+  payoutCurrenciesController.getSupportedCurrencies
 );
 
 

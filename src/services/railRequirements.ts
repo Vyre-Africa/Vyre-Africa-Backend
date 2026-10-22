@@ -292,6 +292,36 @@ export function momoSchemeFor(rawProvider?: string | null): string | null {
 
 // ── Lookups ─────────────────────────────────────────────────────────────
 
+/**
+ * Every currency a payout can be sent in — the answer behind
+ * GET /payouts/nuvion/supported-currencies.
+ *
+ * Derived from the rail tables rather than kept as a second list, because a
+ * currency IS supported exactly when it has a rail. A hand-written list
+ * would be a second source of the same fact and would drift the first time
+ * a rail was added.
+ *
+ * NOT the same question as "which currencies have an active treasury" —
+ * that is the SOURCE side (the USDC/USD float a payout is drawn from), and
+ * answering with it would give the destination picker the wrong list.
+ *
+ * Ordered by volume, matching QuickSend's own CURRENCY_ORDER, so the picker
+ * reads the same whether this call succeeds or falls back.
+ */
+const CURRENCY_DISPLAY_ORDER = ['NGN', 'GHS', 'KES', 'UGX', 'TZS', 'ZAR', 'USD', 'GBP', 'EUR'];
+
+export function supportedPayoutCurrencies(): string[] {
+    const all = new Set([...Object.keys(RAILS), ...Object.keys(MOMO_RAILS)]);
+    return [...all].sort((a, b) => {
+        const ia = CURRENCY_DISPLAY_ORDER.indexOf(a);
+        const ib = CURRENCY_DISPLAY_ORDER.indexOf(b);
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        if (ia !== -1) return -1;
+        if (ib !== -1) return 1;
+        return a.localeCompare(b);
+    });
+}
+
 export function railsFor(currency?: string | null, paymentMethod = 'bank-transfer'): Rail[] {
     if (!currency) return [];
     const code = currency.toUpperCase();
