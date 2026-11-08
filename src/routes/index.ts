@@ -812,6 +812,7 @@ router.get('/kyc/lookup',           kycController.lookupByEmail);
 router.post('/kyc/verify/identity', requireAuthWithCORS(), authMiddleware, kycController.startIdentityVerification);
 router.post('/kyc/verify/address',  requireAuthWithCORS(), authMiddleware, kycController.startAddressVerification);
 router.get('/kyc/status',           requireAuthWithCORS(), authMiddleware, kycController.getVerificationStatus);
+router.post('/kyc/verify/request-enhanced', requireAuthWithCORS(), authMiddleware, kycController.requestEnhancedReview);
 
 
 router.post(

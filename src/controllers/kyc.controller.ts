@@ -1,46 +1,111 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma.client';
 import config from '../config/env.config';
-import {
-  verifyTier1,
-  verifyTier2,
-  screenAml,
-  screenEmail,
-  COUNTRY_ID_TYPES,
-} from '../services/dojah.service';
-import { getUsageSummary, getMonthlyUsage } from '../services/kycLimits.service';
-import type { KycCountry, Tier1IdType } from '../services/dojah.service';
+import { getUsageSummary, getMonthlyUsage, KYC_TIERS, TIER_FOR_GRANT } from '../services/kycLimits.service';
 import type { KycTier } from '../services/kycLimits.service';
 import { createDiditSession, getDiditDecision } from '../services/didit.service';
+import { requestTier3 } from '../services/manualTierUpgrade.service';
+
+// ══════════════════════════════════════════════════════════════════════
+// KYC controller, renumbered for the new tier ladder
+//
+//   0  Anonymous   nothing                    $200 / trade
+//   1  Basic       Didit identity session     $5,000 / month
+//   2  Standard    Didit address session      $100,000 / month
+//   3  Enhanced    manual review, by request  uncapped
+//
+// ── What was removed ──────────────────────────────────────────────────
+//
+// The Dojah BVN / NIN route is retired, as decided. It granted tier 1, and
+// tier 1 now means the Didit identity session — so left running it would
+// mint tier-1 users at $5,000/month who never passed identity verification.
+// `getIdTypes` and `upgradeTier1` now answer 410 Gone rather than vanishing,
+// because the web app may still call them and a 404 reads like an outage.
+// Their Dojah imports are gone; delete dojah.service too once nothing else
+// references it.
+//
+// `upgradeTier2` and `getTier2Status` are also retired. `upgradeTier2`
+// created a Didit session with NO workflowId, so it relied on the account
+// default — harmless when there was one workflow, ambiguous now there are
+// two. `startIdentityVerification` does the same job and names its workflow.
+// The large commented-out block above the old `upgradeTier2` went with it;
+// it was the pre-Didit Dojah selfie flow and is in git history if needed.
+//
+// ── What moved ────────────────────────────────────────────────────────
+//
+// Every tier comparison shifted down one. They are written against
+// TIER_FOR_GRANT rather than as literals, so the next renumber is a change
+// to the limits table and nothing else:
+//
+//   identity complete:  kycTier >= 2  ->  >= TIER_IDENTITY (1)
+//   address  allowed:   kycTier >= 2  ->  >= TIER_IDENTITY (1)
+//   address  complete:  kycTier >= 3  ->  >= TIER_ADDRESS  (2)
+// ══════════════════════════════════════════════════════════════════════
+
+const TIER_IDENTITY = TIER_FOR_GRANT.didit_identity; // 1
+const TIER_ADDRESS = TIER_FOR_GRANT.didit_address;   // 2
+const TIER_ENHANCED = TIER_FOR_GRANT.manual;         // 3
+
+const GONE = {
+  success: false,
+  msg: 'This verification route has been retired. Use POST /kyc/verify/identity.',
+};
 
 class KycController {
 
   // GET /kyc/id-types?country=NG
-  async getIdTypes(req: Request, res: Response) {
-    const country = (req.query.country as string)?.toUpperCase() as KycCountry;
-    try {
-      if (!country || !COUNTRY_ID_TYPES[country]) {
-        return res.status(400).json({
-          success: false,
-          msg: `Unsupported country: ${country}. Supported: ${Object.keys(COUNTRY_ID_TYPES).join(', ')}`,
-        });
-      }
-      return res.status(200).json({
-        success: true,
-        msg: 'ID types fetched successfully',
-        idTypes: COUNTRY_ID_TYPES[country],
-      });
-    } catch (error) {
-      console.log(error);
-      return res.status(500).json({ msg: 'Internal Server Error', success: false });
-    }
+  // RETIRED — served the Dojah BVN / NIN flow.
+  async getIdTypes(_req: Request, res: Response) {
+    return res.status(410).json(GONE);
   }
 
-  // GET /kyc/lookup?email=harvey@vyre.africa
-  // Public — no auth required.
-  // Returns ONLY kycTier + usage figures. No PII ever returned.
-  // Used by the anonymous order flow to silently apply higher limits
-  // when the email belongs to a verified registered account.
+  // POST /kyc/upgrade/tier1
+  // RETIRED — Dojah BVN / NIN. See the header note.
+  async upgradeTier1(_req: Request & Record<string, any>, res: Response) {
+    return res.status(410).json(GONE);
+  }
+
+  // POST /kyc/upgrade/tier2
+  // RETIRED — superseded by POST /kyc/verify/identity.
+  async upgradeTier2(_req: Request & Record<string, any>, res: Response) {
+    return res.status(410).json(GONE);
+  }
+
+  // GET /kyc/tier2/status
+  // RETIRED — superseded by GET /kyc/status, which reports both flows.
+  async getTier2Status(_req: Request & Record<string, any>, res: Response) {
+    return res.status(410).json({
+      success: false,
+      msg: 'This status route has been retired. Use GET /kyc/status.',
+    });
+  }
+
+  // GET /kyc/lookup?email=someone@example.com
+  //
+  // ⚠️ READ BEFORE TOUCHING THIS ENDPOINT. Two problems, neither introduced
+  // by the renumber, both worth a decision.
+  //
+  // 1. IMPERSONATION. The stated purpose is "silently apply higher limits
+  //    when the email belongs to a verified registered account" — but the
+  //    caller is anonymous and the email is unverified. Anyone who knows a
+  //    verified user's email address can type it into the anonymous order
+  //    flow and transact under that user's tier. At the new numbers that is
+  //    $100,000 a month of someone else's allowance, with no identity
+  //    check anywhere in the path. If the anonymous flow consumes the
+  //    looked-up limit, it also burns the real user's headroom.
+  //
+  //    The fix is an ownership proof — a one-time code to that address
+  //    before the limit is applied — not anything in this file.
+  //
+  // 2. VOLUME DISCLOSURE. The comment says "No PII ever returned", and no
+  //    name or ID is. But `usedUsd` tells any unauthenticated caller how
+  //    much a given email has traded this month, and there is no rate limit
+  //    in front of it. That is commercially sensitive on its own and an
+  //    account-existence oracle in aggregate.
+  //
+  // The response shape is left alone so the current caller keeps working.
+  // What IS fixed here: the limits were hardcoded inline as a third copy of
+  // the tier table (1 -> 10000, 2 -> 50000) and are now read from it.
   async lookupByEmail(req: Request, res: Response) {
     const email = (req.query.email as string)?.toLowerCase().trim();
     try {
@@ -58,7 +123,7 @@ class KycController {
         return res.status(200).json({
           success: true,
           kycTier: 0,
-          monthlyLimitUsd: null,
+          monthlyLimitUsd: KYC_TIERS[0].monthlyUsd,
           usedUsd: 0,
           remainingUsd: null,
         });
@@ -67,11 +132,9 @@ class KycController {
       const tier = Number(user.kycTier ?? 0) as KycTier;
       const usedUsd = await getMonthlyUsage(user.id);
 
-      const monthlyLimitUsd =
-        tier === 1 ? 10000 :
-        tier === 2 ? 50000 :
-        tier === 3 ? null :
-        null;
+      // From the table. The inline ternary this replaces would have kept
+      // quoting the old $10,000 and $50,000 after the renumber.
+      const monthlyLimitUsd = KYC_TIERS[tier]?.monthlyUsd ?? null;
 
       const remainingUsd =
         monthlyLimitUsd !== null ? Math.max(0, monthlyLimitUsd - usedUsd) : null;
@@ -106,385 +169,8 @@ class KycController {
     }
   }
 
-  // POST /kyc/upgrade/tier1
-  async upgradeTier1(req: Request & Record<string, any>, res: Response) {
-    const { user } = req;
-    console.log('Upgrade Tier 1 request body:', req.body);
-    try {
-      if (user.kycTier >= 1) {
-        return res.status(200).json({
-          success: true,
-          msg: 'Already verified at Tier 1 or above',
-          kycTier: user.kycTier,
-        });
-      }
-
-      const { country, idType, idNumber, tzParams, email, fullName, dateOfBirth } = req.body as {
-        country: KycCountry;
-        idType: Tier1IdType;
-        idNumber?: number | string;
-        tzParams?: {
-          firstName: string;
-          lastName: string;
-          dateOfBirth: string;
-          mothersFirstName?: string;
-          mothersLastName?: string;
-        };
-        email?: string;
-        fullName?: string;      // required for GH SSNIT / DRIVERS_LICENSE
-        dateOfBirth?: string;   // required for GH SSNIT / DRIVERS_LICENSE (yyyy-MM-dd)
-      };
-
-      if (!country || !idType) {
-        return res.status(400).json({ success: false, msg: 'country and idType are required' });
-      }
-
-      if (!COUNTRY_ID_TYPES[country]) {
-        return res.status(400).json({
-          success: false,
-          msg: `Unsupported country: ${country}. Supported: ${Object.keys(COUNTRY_ID_TYPES).join(', ')}`,
-        });
-      }
-
-      const validIdTypes = COUNTRY_ID_TYPES[country].map((t) => t.value);
-      if (!validIdTypes.includes(idType)) {
-        return res.status(400).json({
-          success: false,
-          msg: `${idType} is not supported for ${country}. Supported: ${validIdTypes.join(', ')}`,
-        });
-      }
-
-      const isTanzania = country === 'TZ' && idType === 'TZ_NIN';
-      const requiresGhNameDob =
-        country === 'GH' && (idType === 'SSNIT' || idType === 'DRIVERS_LICENSE');
-
-      if (isTanzania && (!tzParams?.firstName || !tzParams?.lastName || !tzParams?.dateOfBirth)) {
-        return res.status(400).json({
-          success: false,
-          msg: 'Tanzania NIN lookup requires tzParams with firstName, lastName, and dateOfBirth',
-        });
-      }
-
-      if (requiresGhNameDob && (!fullName || !dateOfBirth)) {
-        return res.status(400).json({
-          success: false,
-          msg: `${idType} verification for Ghana requires fullName and dateOfBirth`,
-        });
-      }
-
-      if (!isTanzania && !idNumber) {
-        return res.status(400).json({ success: false, msg: 'idNumber is required' });
-      }
-
-      const verificationRecord = await prisma.kycVerification.create({
-        data: { userId: user.id, type: idType, country, status: 'PENDING' },
-      });
-
-      const idResult = await verifyTier1({ country, idType, idNumber, tzParams, fullName, dateOfBirth });
-
-      console.log('Dojah Tier 1 result:', idResult);
-
-      if (!idResult.success) {
-        await prisma.kycVerification.update({
-          where: { id: verificationRecord.id },
-          data: { status: 'FAILED', dojahData: idResult.rawData ?? null, resolvedAt: new Date() },
-        });
-        return res.status(422).json({
-          success: false,
-          msg: idResult.error ?? 'Identity verification failed. Please check your details and try again.',
-        });
-      }
-
-      // AML/PEP/sanctions/adverse-media screening — mandatory at Tier 1
-      // upgrade per AML/CFT Policy Section 7. This does NOT hard-block the
-      // upgrade on a hit; it flags the verification record for manual
-      // compliance review instead, since PEP/adverse-media hits are common
-      // false positives on common names and a human should make the final
-      // call. If you want hits to hard-block the Tier 1 upgrade instead,
-      // say so explicitly — that's a deliberate policy choice, not
-      // something to default silently.
-      //
-      // IMPORTANT: flag on the aggregate outcome, not just isPep/isSanctioned.
-      // Dojah's own risk engine can return risk_level 'Medium' / match_status
-      // 'Potential Match' purely from an ADVERSE_MEDIA hit, with isPep and
-      // isSanctioned both false. Checking only those two booleans lets a
-      // Medium-risk potential match through with flaggedForReview: false —
-      // exactly the bug this comment is here to prevent regressing on.
-      const amlResult = await screenAml({
-        firstName: idResult.firstName ?? '',
-        lastName: idResult.lastName ?? '',
-      });
-
-      console.log('Dojah AML result:', amlResult);
-
-      const amlFlagged =
-        amlResult.isPep ||
-        amlResult.isSanctioned ||
-        amlResult.hasAdverseMedia ||
-        (!!amlResult.matchStatus && amlResult.matchStatus !== 'No Match');
-
-      await prisma.kycVerification.create({
-        data: {
-          userId: user.id,
-          type: 'AML',
-          country,
-          status: amlResult.success ? 'APPROVED' : 'FAILED',
-          dojahData: amlResult.rawData ?? null,
-          flaggedForReview: amlFlagged,
-          reviewNote: amlFlagged
-            ? `AML screen: riskLevel=${amlResult.riskLevel ?? 'unknown'}, matchStatus=${amlResult.matchStatus ?? 'unknown'}, isPep=${amlResult.isPep}, isSanctioned=${amlResult.isSanctioned}, hasAdverseMedia=${amlResult.hasAdverseMedia}`
-            : null,
-          resolvedAt: new Date(),
-        },
-      });
-
-      if (email) {
-        const emailResult = await screenEmail(email);
-        console.log('Dojah email fraud result:', emailResult);
-        await prisma.kycVerification.create({
-          data: {
-            userId: user.id,
-            type: 'EMAIL_FRAUD',
-            country,
-            status: emailResult.success ? 'APPROVED' : 'FAILED',
-            dojahData: emailResult.rawData ?? null,
-            flaggedForReview: emailResult.flags.includes('HIGH_FRAUD_SCORE'),
-            resolvedAt: new Date(),
-          },
-        });
-      }
-
-      const dojahRefField =
-        idType === 'BVN' ? 'dojahBvnRef' :
-        idType === 'NIN' || idType === 'VNIN' || idType === 'TZ_NIN' ? 'dojahNinRef' :
-        'dojahIdRef';
-
-      await prisma.kycVerification.update({
-        where: { id: verificationRecord.id },
-        data: {
-          status: 'APPROVED',
-          dojahData: idResult.rawData ?? null,
-          dojahRef: String(idNumber ?? ''),
-          resolvedAt: new Date(),
-        },
-      });
-
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { 
-            kycTier: 1, 
-            kycTier1At: new Date(), 
-            [dojahRefField]: String(idNumber ?? ''),
-            legalFirstName: idResult.firstName,
-            legalLastName: idResult.lastName,
-            legalNameVerifiedAt: new Date()
-        },
-      });
-
-      return res.status(200).json({
-        success: true,
-        msg: 'Identity verified. You now have access to $10,000/month in trading volume.',
-        kycTier: 1,
-      });
-
-    } catch (error) {
-      console.log(error);
-      return res.status(500).json({ msg: 'Internal Server Error', success: false });
-    }
-  }
-
-  // POST /kyc/upgrade/tier2
-  // async upgradeTier2(req: Request & Record<string, any>, res: Response) {
-  //   const { user } = req;
-  //   try {
-  //     if (user.kycTier < 1) {
-  //       return res.status(403).json({
-  //         success: false,
-  //         msg: 'Complete Tier 1 verification before proceeding to Tier 2.',
-  //       });
-  //     }
-
-  //     if (user.kycTier >= 2) {
-  //       return res.status(200).json({
-  //         success: true,
-  //         msg: 'Already verified at Tier 2 or above',
-  //         kycTier: user.kycTier,
-  //       });
-  //     }
-
-  //     const { selfieImageBase64, idImageBase64 } = req.body as {
-  //       selfieImageBase64: string;
-  //       idImageBase64: string;
-  //     };
-
-  //     if (!selfieImageBase64 || !idImageBase64) {
-  //       return res.status(400).json({
-  //         success: false,
-  //         msg: 'selfieImageBase64 and idImageBase64 are required',
-  //       });
-  //     }
-
-  //     const verificationRecord = await prisma.kycVerification.create({
-  //       data: {
-  //         userId: user.id,
-  //         type: 'PHOTO_ID_SELFIE',
-  //         country: user.country ?? 'GLOBAL',
-  //         status: 'PENDING',
-  //       },
-  //     });
-
-  //     const result = await verifyTier2({ selfieImageBase64, idImageBase64 });
-
-  //     if (!result.success || !result.match) {
-  //       await prisma.kycVerification.update({
-  //         where: { id: verificationRecord.id },
-  //         data: { status: 'FAILED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
-  //       });
-  //       // Dojah's confidence_value is already on a 0-100 scale — do not
-  //       // multiply by 100 again (that previously showed e.g. "8500%").
-  //       return res.status(422).json({
-  //         success: false,
-  //         msg: result.error ??
-  //           `Face match failed (confidence: ${(result.confidence ?? 0).toFixed(0)}%). Please ensure your face is clearly visible and matches your ID photo.`,
-  //       });
-  //     }
-
-  //     await prisma.kycVerification.update({
-  //       where: { id: verificationRecord.id },
-  //       data: { status: 'APPROVED', dojahData: result.rawData ?? null, resolvedAt: new Date() },
-  //     });
-
-  //     await prisma.user.update({
-  //       where: { id: user.id },
-  //       data: { kycTier: 2, kycTier2At: new Date(), dojahLivenessRef: `tier2_${Date.now()}` },
-  //     });
-
-  //     return res.status(200).json({
-  //       success: true,
-  //       msg: 'Identity fully verified. You now have access to $50,000/month in trading volume.',
-  //       kycTier: 2,
-  //     });
-
-  //   } catch (error) {
-  //     console.log(error);
-  //     return res.status(500).json({ msg: 'Internal Server Error', success: false });
-  //   }
-  // }
-
-  async upgradeTier2(req: Request & Record<string, any>, res: Response) {
-    const { user } = req;
-    try {
-      if (user.kycTier < 1) {
-        return res.status(403).json({
-          success: false,
-          msg: 'Complete Tier 1 verification before proceeding to Tier 2.',
-        });
-      }
-  
-      if (user.kycTier >= 2) {
-        return res.status(200).json({
-          success: true,
-          msg: 'Already verified at Tier 2 or above',
-          kycTier: user.kycTier,
-        });
-      }
-  
-      // CONFIRMED idempotent: if this user already has an unfinished
-      // session on the current workflow version, Didit returns the SAME
-      // session rather than creating a duplicate — safe to call this
-      // endpoint again if a user navigates away and comes back.
-      const session = await createDiditSession({
-        vendorData: user.id, // the link back to this exact Vyre user — CONFIRMED echoed in every webhook payload
-        callback: `${config.FRONTEND_URL}/kyc/tier2/callback`, // adjust to wherever the frontend actually wants the user redirected back to
-        metadata: { purpose: 'tier2_upgrade' },
-      });
-  
-      if (!session.success || !session.url || !session.session_id) {
-        console.log('Didit session creation failed:', session.error);
-        return res.status(422).json({
-          success: false,
-          msg: session.error ?? 'Failed to start identity verification. Please try again.',
-        });
-      }
-  
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          diditSessionId: session.session_id,
-          diditKycStatus: session.status, // "Not Started" on a fresh session
-        },
-      });
-  
-      return res.status(200).json({
-        success: true,
-        msg: 'Verification session created — complete it to be upgraded to Tier 2',
-        sessionUrl: session.url,
-        sessionId: session.session_id,
-      });
-  
-    } catch (error) {
-      console.log(error);
-      return res.status(500).json({ msg: 'Internal Server Error', success: false });
-    }
-  }
-
-  // GET /kyc/tier2/status
-  async getTier2Status(req: Request & Record<string, any>, res: Response) {
-    const { user } = req;
-    try {
-      const fresh = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { kycTier: true, diditSessionId: true, diditKycStatus: true },
-      });
-  
-      if (!fresh) {
-        return res.status(404).json({ success: false, msg: 'User not found' });
-      }
-  
-      if (!fresh.diditSessionId) {
-        return res.status(200).json({
-          success: true,
-          hasSession: false,
-          kycTier: fresh.kycTier,
-        });
-      }
-  
-      // Re-check real state directly for any non-terminal status, rather
-      // than trust a possibly-stale cached value — same "webhook is a
-      // trigger, not a guaranteed-arrived source of truth" discipline
-      // already used for Contro's checkProgramKycAndNotify. Covers the
-      // case where a user finished verification, closed the tab, and the
-      // webhook hasn't landed yet (or was missed) by the time they check.
-      const nonTerminal = ['Not Started', 'In Progress'].includes(fresh.diditKycStatus ?? '');
-      let currentStatus = fresh.diditKycStatus;
-  
-      if (nonTerminal) {
-        const decision = await getDiditDecision(fresh.diditSessionId);
-        if (decision.success && decision.status && decision.status !== currentStatus) {
-          await prisma.user.update({
-            where: { id: user.id },
-            data: { diditKycStatus: decision.status },
-          });
-          currentStatus = decision.status;
-        }
-      }
-  
-      return res.status(200).json({
-        success: true,
-        hasSession: true,
-        sessionId: fresh.diditSessionId,
-        diditStatus: currentStatus,
-        kycTier: fresh.kycTier, // NOTE: only reflects 2 once the webhook has actually processed an Approved status — this status check does NOT itself upgrade the tier, it only surfaces where things stand
-      });
-  
-    } catch (error) {
-      console.log(error);
-      return res.status(500).json({ msg: 'Internal Server Error', success: false });
-    }
-  }
-
   // POST /kyc/verify/identity
-  // Workflow A — ID + liveness + face match + AML → Tier 2
+  // Workflow A — ID + liveness + face match + AML → Tier 1
   async startIdentityVerification(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     try {
@@ -492,26 +178,29 @@ class KycController {
         where: { id: user.id },
         select: { id: true, kycTier: true },
       });
- 
+
       if (!fresh) {
         return res.status(404).json({ success: false, msg: 'User not found' });
       }
- 
-      if ((fresh.kycTier ?? 0) >= 2) {
+
+      // Was `>= 2`. Left at 2, a user who had just completed identity
+      // verification would sit at tier 1, fail this check, and be sent
+      // through the whole Didit flow a second time to no effect.
+      if ((fresh.kycTier ?? 0) >= TIER_IDENTITY) {
         return res.status(200).json({
           success: true,
           msg: 'Identity already verified',
           kycTier: fresh.kycTier,
         });
       }
- 
+
       const session = await createDiditSession({
         workflowId: config.DIDIT_IDENTITY_WORKFLOW_ID,
         vendorData: fresh.id,
         callback: `${config.FRONTEND_URL}/kyc/callback?flow=identity`,
         metadata: { purpose: 'identity_verification' },
       });
- 
+
       if (!session.success || !session.url || !session.session_id) {
         console.log('Didit identity session creation failed:', session.error);
         return res.status(422).json({
@@ -519,27 +208,27 @@ class KycController {
           msg: session.error ?? 'Failed to start identity verification. Please try again.',
         });
       }
- 
+
       await prisma.user.update({
         where: { id: fresh.id },
         data: { diditSessionId: session.session_id, diditKycStatus: session.status },
       });
- 
+
       return res.status(200).json({
         success: true,
         msg: 'Identity verification session created',
         sessionUrl: session.url,
         sessionId: session.session_id,
       });
- 
+
     } catch (error) {
       console.log(error);
       return res.status(500).json({ msg: 'Internal Server Error', success: false });
     }
   }
- 
+
   // POST /kyc/verify/address
-  // Workflow B — POA only → Tier 3
+  // Workflow B — POA only → Tier 2
   async startAddressVerification(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     try {
@@ -547,36 +236,40 @@ class KycController {
         where: { id: user.id },
         select: { id: true, kycTier: true },
       });
- 
+
       if (!fresh) {
         return res.status(404).json({ success: false, msg: 'User not found' });
       }
- 
+
       // Identity must come first — you can't prove where you live before
-      // proving who you are.
-      if ((fresh.kycTier ?? 0) < 2) {
+      // proving who you are. Was `< 2`; at the new numbering that would have
+      // demanded address verification before address verification.
+      if ((fresh.kycTier ?? 0) < TIER_IDENTITY) {
         return res.status(403).json({
           success: false,
           msg: 'Verify your identity before verifying your address.',
           requiresIdentityFirst: true,
         });
       }
- 
-      if ((fresh.kycTier ?? 0) >= 3) {
+
+      // Was `>= 3`. Tier 3 is now a manual grant, so a user who had finished
+      // address verification would sit at 2, fail this, and be offered the
+      // address flow again forever.
+      if ((fresh.kycTier ?? 0) >= TIER_ADDRESS) {
         return res.status(200).json({
           success: true,
           msg: 'Address already verified',
           kycTier: fresh.kycTier,
         });
       }
- 
+
       const session = await createDiditSession({
         workflowId: config.DIDIT_ADDRESS_WORKFLOW_ID,
         vendorData: fresh.id,
         callback: `${config.FRONTEND_URL}/kyc/callback?flow=address`,
         metadata: { purpose: 'address_verification' },
       });
- 
+
       if (!session.success || !session.url || !session.session_id) {
         console.log('Didit address session creation failed:', session.error);
         return res.status(422).json({
@@ -584,19 +277,65 @@ class KycController {
           msg: session.error ?? 'Failed to start address verification. Please try again.',
         });
       }
- 
+
       await prisma.user.update({
         where: { id: fresh.id },
         data: { diditAddressSessionId: session.session_id, diditAddressKycStatus: session.status },
       });
- 
+
       return res.status(200).json({
         success: true,
         msg: 'Address verification session created',
         sessionUrl: session.url,
         sessionId: session.session_id,
       });
- 
+
+    } catch (error) {
+      console.log(error);
+      return res.status(500).json({ msg: 'Internal Server Error', success: false });
+    }
+  }
+
+  // POST /kyc/request-enhanced
+  //
+  // The user asks to be considered for tier 3. Grants nothing — it creates
+  // a PENDING record for the compliance queue, and `grantTier3` (admin only,
+  // in manualTierUpgrade) is what actually promotes.
+  //
+  // Deliberately no admin grant/revoke route here. Those take `approvedBy`
+  // and must sit behind an admin guard; putting them on the user-facing KYC
+  // controller is how one ends up exposed by accident.
+  async requestEnhancedReview(req: Request & Record<string, any>, res: Response) {
+    const { user } = req;
+    try {
+      const reason = typeof req.body?.reason === 'string'
+        ? req.body.reason.slice(0, 300).trim()
+        : undefined;
+
+      const result = await requestTier3(user.id, reason || undefined);
+
+      if (!result.ok) {
+        if (result.reason === 'already_enhanced') {
+          return res.status(200).json({
+            success: true,
+            msg: 'Your account is already enhanced verified.',
+          });
+        }
+        return res.status(403).json({
+          success: false,
+          msg: 'Verify your address before requesting an enhanced review.',
+          needsTier: result.needsTier,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        msg: result.alreadyPending
+          ? "Your request is already with us — we'll be in touch."
+          : "Request received. We'll review your account and get back to you.",
+        alreadyPending: result.alreadyPending,
+      });
+
     } catch (error) {
       console.log(error);
       return res.status(500).json({ msg: 'Internal Server Error', success: false });
@@ -604,8 +343,8 @@ class KycController {
   }
 
   // GET /kyc/status
-  // Returns the state of BOTH flows so the frontend can render a real
-  // two-step ladder rather than a single opaque status.
+  // Returns the state of all three steps so the frontend can render a real
+  // ladder rather than a single opaque status.
   async getVerificationStatus(req: Request & Record<string, any>, res: Response) {
     const { user } = req;
     try {
@@ -619,16 +358,16 @@ class KycController {
           diditAddressKycStatus: true,
         },
       });
- 
+
       if (!fresh) {
         return res.status(404).json({ success: false, msg: 'User not found' });
       }
- 
+
       // Re-check non-terminal statuses directly rather than trusting a
       // possibly-stale cached value — the webhook is a trigger, not a
       // guaranteed-arrived source of truth.
       const nonTerminal = ['Not Started', 'In Progress'];
- 
+
       let identityStatus = fresh.diditKycStatus;
       if (fresh.diditSessionId && nonTerminal.includes(identityStatus ?? '')) {
         const d = await getDiditDecision(fresh.diditSessionId);
@@ -640,7 +379,7 @@ class KycController {
           identityStatus = d.status;
         }
       }
- 
+
       let addressStatus = fresh.diditAddressKycStatus;
       if (fresh.diditAddressSessionId && nonTerminal.includes(addressStatus ?? '')) {
         const d = await getDiditDecision(fresh.diditAddressSessionId);
@@ -652,25 +391,47 @@ class KycController {
           addressStatus = d.status;
         }
       }
- 
+
+      const tier = fresh.kycTier ?? 0;
+
+      // Whether an enhanced review is already in the queue. Without this the
+      // app cannot tell "not requested" from "waiting on us", and a user who
+      // has asked sees a button that invites them to ask again.
+      const pendingEnhanced = tier >= TIER_ADDRESS && tier < TIER_ENHANCED
+        ? await prisma.kycVerification.findFirst({
+            where: { userId: user.id, type: 'ENHANCED_DUE_DILIGENCE', status: 'PENDING' },
+            select: { id: true, createdAt: true },
+          })
+        : null;
+
       return res.status(200).json({
         success: true,
-        kycTier: fresh.kycTier,
+        kycTier: tier,
+        tierName: KYC_TIERS[tier as KycTier]?.name ?? KYC_TIERS[0].name,
         identity: {
           hasSession: !!fresh.diditSessionId,
           sessionId: fresh.diditSessionId,
           status: identityStatus,
-          complete: (fresh.kycTier ?? 0) >= 2,
+          complete: tier >= TIER_IDENTITY,
         },
         address: {
           hasSession: !!fresh.diditAddressSessionId,
           sessionId: fresh.diditAddressSessionId,
           status: addressStatus,
-          complete: (fresh.kycTier ?? 0) >= 3,
-          available: (fresh.kycTier ?? 0) >= 2, // can't start until identity is done
+          complete: tier >= TIER_ADDRESS,
+          available: tier >= TIER_IDENTITY, // can't start until identity is done
+        },
+        // Tier 3 has no Didit session behind it — it is requested, then
+        // granted by a human. The app needs all three states to render the
+        // top of the ladder honestly.
+        enhanced: {
+          complete: tier >= TIER_ENHANCED,
+          available: tier >= TIER_ADDRESS,
+          requested: !!pendingEnhanced,
+          requestedAt: pendingEnhanced?.createdAt ?? null,
         },
       });
- 
+
     } catch (error) {
       console.log(error);
       return res.status(500).json({ msg: 'Internal Server Error', success: false });

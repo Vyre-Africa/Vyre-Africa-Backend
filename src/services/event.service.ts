@@ -27,6 +27,12 @@ import internalOfframpService from './internalOfframp.service';
 import { scheduleReplenishmentForPayout } from './nuvionpayout.service';
 import { depositEventFromNuvion, handleDepositConfirmed } from './treasuryConversion.service';
 
+// Both the tier numbers and the notification copy come from the limits
+// table — the same file the enforcement check reads, so there is exactly one
+// place a tier or a limit is written down. Adjust the import path to
+// wherever that file lives in this repo.
+import { TIER_FOR_GRANT, upgradeMessage } from '../services/kycLimits.service';
+
 
 
   // {
@@ -3705,6 +3711,11 @@ class eventService {
 async handleDiditEvent(jobData: { body: any }) {
     const { body } = jobData;
     const { session_id, status, vendor_data, decision, workflow_id } = body;
+
+    /** Tier granted by the Didit government-ID + selfie session. */
+    const TIER_IDENTITY = TIER_FOR_GRANT.didit_identity;
+    /** Tier granted by the Didit proof-of-address session. */
+    const TIER_ADDRESS = TIER_FOR_GRANT.didit_address;
  
     logger.info('Processing Didit event (async)', { session_id, status, vendor_data, workflow_id });
     logger.info('Didit webhook raw payload', { body });
@@ -3767,15 +3778,10 @@ async handleDiditEvent(jobData: { body: any }) {
     }
  
     // ══════════════════════════════════════════════════════════════════
-    // IDENTITY WORKFLOW → Tier 2
+    // IDENTITY WORKFLOW → Tier 1  (was Tier 2)
     // ══════════════════════════════════════════════════════════════════
     if (isIdentityWorkflow) {
  
-        // FIXED — the generic audit record that used to sit above the
-        // status check has moved into each branch. Previously it wrote a
-        // PROOF_OF_ADDRESS row for every address session, and then the
-        // address branch wrote a SECOND one, producing duplicate rows of
-        // the same type for the same session.
         await prisma.kycVerification.create({
             data: {
                 userId: user.id,
@@ -3833,14 +3839,15 @@ async handleDiditEvent(jobData: { body: any }) {
         // date_of_birth / gender / document_number / nationality.
         const idVerification = decision?.id_verifications?.[0];
  
-        const alreadyAtTier2 = (user.kycTier ?? 0) >= 2;
+        const alreadyAtTier = (user.kycTier ?? 0) >= TIER_IDENTITY;
  
         await prisma.user.update({
             where: { id: user.id },
             data: {
-                // Never demote: an existing Tier 3 user re-running identity
-                // verification must not drop back to 2.
-                ...(alreadyAtTier2 ? {} : { kycTier: 2, kycTier2At: new Date() }),
+                // Never demote. Matters more than it did: a user who reached
+                // tier 2 by address, or tier 3 by manual review, can re-run
+                // identity verification at any time and must not drop to 1.
+                ...(alreadyAtTier ? {} : { kycTier: TIER_IDENTITY, kycTier1At: new Date() }),
  
                 legalFirstName: idVerification?.first_name ?? user.legalFirstName,
                 legalLastName: idVerification?.last_name ?? user.legalLastName,
@@ -3858,31 +3865,37 @@ async handleDiditEvent(jobData: { body: any }) {
             },
         });
  
-        if (alreadyAtTier2) {
+        if (alreadyAtTier) {
             logger.info(`User ${user.id} already at kycTier ${user.kycTier} — identity session ${session_id} processed without re-promotion`);
             return;
         }
  
-        logger.info(`User ${user.id} upgraded to kycTier 2 via Didit identity session ${session_id}`);
+        logger.info(`User ${user.id} upgraded to kycTier ${TIER_IDENTITY} via Didit identity session ${session_id}`);
  
         await notificationService.queue({
             userId: user.id,
             title: "You're verified",
             type: 'GENERAL',
-            content: 'Your identity is verified — you now have access to $50,000/month in transaction volume. Verify your address any time to remove the limit entirely.',
+            // Was a hardcoded "$50,000/month" sentence. Now derived, so the
+            // number a user is told is the number that is enforced.
+            content: upgradeMessage(TIER_IDENTITY),
         });
  
         return;
     }
  
     // ══════════════════════════════════════════════════════════════════
-    // ADDRESS WORKFLOW → Tier 3
+    // ADDRESS WORKFLOW → Tier 2  (was Tier 3)
     // ══════════════════════════════════════════════════════════════════
  
-    // Address verification alone must never grant Tier 3. The endpoint
-    // blocks this, but the webhook is a public surface and shouldn't
-    // rely on that.
-    if ((user.kycTier ?? 0) < 2) {
+    // Address verification alone must never grant the address tier. The
+    // endpoint blocks this, but the webhook is a public surface and
+    // shouldn't rely on that.
+    //
+    // The bar is TIER_IDENTITY, not a literal — under the old numbering this
+    // read `< 2` and meant "identity done". Renumbering without moving it
+    // would have made this check demand the very tier it grants.
+    if ((user.kycTier ?? 0) < TIER_IDENTITY) {
         logger.warn(
             `Address workflow approved for user ${user.id} at kycTier ${user.kycTier} — NOT promoting. Identity verification must come first.`,
             { session_id }
@@ -3905,8 +3918,6 @@ async handleDiditEvent(jobData: { body: any }) {
     }
  
     // ─── Fraud check 1: document tampering ────────────────────────────
-    // CONFIRMED present in document_metadata. A tampered or manipulated
-    // document must never auto-promote to uncapped volume.
     const meta = poa.document_metadata ?? {};
     const tamperSignals: string[] = [];
  
@@ -3916,16 +3927,10 @@ async handleDiditEvent(jobData: { body: any }) {
     if (meta.processed_by_known_editor) tamperSignals.push(`edited_by:${meta.processed_by_known_editor}`);
  
     // ─── Fraud check 2: name on document matches verified identity ────
-    // name_match_score_id_verification is CONFIRMED null on the
-    // standalone address workflow — there's no ID in that session for
-    // Didit to compare against. Falls back to comparing name_on_document
-    // against the legal name captured during the identity session.
     const nameOnDoc = String(poa.name_on_document ?? '').toUpperCase().trim();
     const legalFirstRaw = String(user.legalFirstName ?? '').toUpperCase().trim();
     const legalLastRaw = String(user.legalLastName ?? '').toUpperCase().trim();
  
-    // legalFirstName can hold multiple given names ("HARVEY ONYEKA") —
-    // match on the first token, which appears consistently.
     const legalFirstToken = legalFirstRaw.split(/\s+/)[0] ?? '';
  
     const NAME_MATCH_THRESHOLD = 80; // ⚠️ tune against real data
@@ -3935,18 +3940,17 @@ async handleDiditEvent(jobData: { body: any }) {
     let nameCheckMethod: string;
  
     if (typeof diditScore === 'number') {
-        // Bundled workflow — trust Didit's own scoring
         nameMatches = diditScore >= NAME_MATCH_THRESHOLD;
         nameCheckMethod = `didit_score=${diditScore}`;
     } else if (legalFirstToken && legalLastRaw && nameOnDoc) {
-        // Standalone address workflow — compare ourselves
+        // ⚠️ Substring comparison: a short surname can match inside an
+        // unrelated word, and initials or diacritics fail it. Fails closed,
+        // which is the safe direction, at the cost of review volume.
         nameMatches =
             nameOnDoc.includes(legalFirstToken) &&
             nameOnDoc.includes(legalLastRaw);
         nameCheckMethod = `local_compare(doc="${nameOnDoc}", expected="${legalFirstToken} ${legalLastRaw}")`;
     } else {
-        // Nothing to compare against — fail closed. Promoting to uncapped
-        // volume without any name check is not a safe default.
         nameMatches = false;
         nameCheckMethod = `insufficient_data(doc="${nameOnDoc}", legalFirst="${legalFirstRaw}", legalLast="${legalLastRaw}")`;
     }
@@ -3972,15 +3976,10 @@ async handleDiditEvent(jobData: { body: any }) {
                 dojahData: poa,
                 flaggedForReview: true,
                 reviewNote:
-                    `Tier 3 POA held: ${reasons.join(' | ')}. ` +
+                    `Tier ${TIER_ADDRESS} POA held: ${reasons.join(' | ')}. ` +
                     `Document: ${poa.document_type ?? 'unknown'} issued by ${poa.issuer ?? 'unknown'} on ${poa.issue_date ?? 'unknown'}. ` +
                     `Address: ${poa.poa_formatted_address ?? 'unparsed'}.`,
-                // FIXED — was omitted entirely. Explicitly null: this is
-                // genuinely unresolved, awaiting human review, unlike
-                // every other record here which resolves immediately.
-                // ⚠️ If kycVerification.resolvedAt is NOT nullable in the
-                // schema, this write will throw — make it nullable, since
-                // "pending review" is a real state that needs representing.
+                // ⚠️ Requires kycVerification.resolvedAt to be nullable.
                 resolvedAt: null,
             },
         });
@@ -3992,16 +3991,20 @@ async handleDiditEvent(jobData: { body: any }) {
     }
  
     // ─── Promote ──────────────────────────────────────────────────────
-    const alreadyAtTier3 = (user.kycTier ?? 0) >= 3;
+    const alreadyAtTier = (user.kycTier ?? 0) >= TIER_ADDRESS;
  
     await prisma.user.update({
         where: { id: user.id },
         data: {
-            ...(alreadyAtTier3 ? {} : { kycTier: 3, kycTier3At: new Date() }),
+            // Never demote — and now this guard carries real weight, because
+            // tier 3 sits above this one and is granted by hand. A manually
+            // upgraded user re-running address verification must stay at 3.
+            ...(alreadyAtTier ? {} : { kycTier: TIER_ADDRESS, kycTier2At: new Date() }),
  
-            // NOTE: kycTier2At is deliberately NOT touched here. The old
-            // handler rewrote it on every approval, destroying the real
-            // date the user completed identity verification.
+            // NOTE: kycTier1At is deliberately NOT touched here. The old
+            // handler rewrote the identity timestamp on every approval,
+            // destroying the real date the user completed identity
+            // verification.
             //
             // Same for legalFirstName / legalLastName / legalNameVerifiedAt
             // / dojahLivenessRef / diditSessionId — all identity-flow
@@ -4035,21 +4038,24 @@ async handleDiditEvent(jobData: { body: any }) {
         },
     });
  
-    if (alreadyAtTier3) {
-        logger.info(`User ${user.id} already at kycTier 3 — address session ${session_id} processed, address data refreshed`);
+    if (alreadyAtTier) {
+        logger.info(`User ${user.id} already at kycTier ${user.kycTier} — address session ${session_id} processed, address data refreshed`);
         return;
     }
  
-    logger.info(`User ${user.id} upgraded to kycTier 3 via Didit address session ${session_id}`);
+    logger.info(`User ${user.id} upgraded to kycTier ${TIER_ADDRESS} via Didit address session ${session_id}`);
  
     await notificationService.queue({
         userId: user.id,
         title: 'Address verified',
         type: 'GENERAL',
-        content: 'Your address is verified — your monthly transaction limit has been removed.',
+        // Derived. Also carries the onward step, which the old copy could
+        // not: tier 3 is now something a user has to ASK for, so the
+        // notification that lands them at tier 2 is the natural place to
+        // say so.
+        content: upgradeMessage(TIER_ADDRESS),
     });
 }
- 
 
 
 
