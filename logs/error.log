@@ -342,3 +342,20 @@ TypeError: Cannot read properties of undefined (reading 'Misc')
 2026-10-19 08:26:10 [error] Nuvion call failed [createPaymentDetail]: 
 2026-10-19 08:26:10 [error] Nuvion call failed [createPaymentDetail]: 
 2026-10-19 08:26:10 [error] Nuvion call failed [createPaymentDetail]: 
+2026-11-13 15:28:33 [error] [notify] email failed simulated SMTP failure 
+Error: simulated SMTP failure
+    at MailService.import_mail.default.general (/Users/user/Vyre-Africa-Backend/src/scripts/push/03-dispatch.ts:91:32)
+    at NotificationService.UserNotify (/Users/user/Vyre-Africa-Backend/src/services/notification.service.ts:215:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async dispatch (/Users/user/Vyre-Africa-Backend/src/scripts/push/03-dispatch.ts:137:11)
+    at async test5_partialFailure (/Users/user/Vyre-Africa-Backend/src/scripts/push/03-dispatch.ts:270:15)
+    at async main (/Users/user/Vyre-Africa-Backend/src/scripts/push/03-dispatch.ts:365:5)
+2026-11-14 13:21:50 [error] [notify] email failed simulated SMTP failure 
+Error: simulated SMTP failure
+    at MailService.import_mail.default.general (/Users/user/Vyre-Africa-Backend/src/scripts/push/03-dispatch.ts:91:32)
+    at NotificationService.deliver (/Users/user/Vyre-Africa-Backend/src/services/notification.service.ts:424:12)
+    at NotificationService.UserNotify (/Users/user/Vyre-Africa-Backend/src/services/notification.service.ts:242:33)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async dispatch (/Users/user/Vyre-Africa-Backend/src/scripts/push/03-dispatch.ts:137:11)
+    at async test5_partialFailure (/Users/user/Vyre-Africa-Backend/src/scripts/push/03-dispatch.ts:270:15)
+    at async main (/Users/user/Vyre-Africa-Backend/src/scripts/push/03-dispatch.ts:365:5)
