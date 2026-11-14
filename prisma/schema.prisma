@@ -475,6 +475,7 @@ model User {
   transfers      TransferRequest[]
   PinAttempt     PinAttempt[]
   VirtualAccount VirtualAccount[]
+  deviceTokens   DeviceToken[]
 
   // 🚀 PERFORMANCE INDEXES - ADD THESE
   @@index([userStatus]) // Fast status lookups
@@ -977,20 +978,51 @@ model NotificationSetting {
   id                String   @id @default(cuid())
   userId            String   @unique
   user              User     @relation(fields: [userId], references: [id])
-  emailNotification Boolean
-  pushNotification  Boolean
-  smsNotification   Boolean
+  emailNotification Boolean  @default(true)
+  pushNotification  Boolean  @default(true)
+  smsNotification   Boolean  @default(false)
   createdAt         DateTime @default(now())
 }
 
 model Notification {
-  id        String           @id @default(cuid())
-  userId    String?
-  user      User?            @relation(fields: [userId], references: [id])
-  type      NotificationType @default(GENERAL)
-  title     String?
-  content   String
-  createdAt DateTime         @default(now())
+  id      String           @id @default(cuid())
+  userId  String?
+  user    User?            @relation(fields: [userId], references: [id])
+  type    NotificationType @default(GENERAL)
+  title   String?
+  content String
+ 
+  /// Deep link into the app, e.g. "/transactions/clx123". Always starts
+  /// with "/" — push.service.ts refuses anything else, because `url`
+  /// reaches the client from a server payload and an absolute URL would
+  /// be an open redirect.
+  url String?
+ 
+  read   Boolean   @default(false)
+  readAt DateTime?
+ 
+  status NotificationStatus @default(PENDING)
+ 
+  /// { "push": "sent", "email": "failed", "realtime": "sent" }
+  channels Json?
+ 
+  /// One notification per domain event: "transfer:clx123:landed".
+  ///
+  /// handleNuvionEvent, handleDiditEvent and processRampWebhook all
+  /// re-deliver, and BullMQ evicts completed jobs after 100, so a late
+  /// redelivery is not caught by jobId alone. This unique index is the
+  /// backstop, and the failure it prevents is telling someone twice that
+  /// their money arrived.
+  ///
+  /// Null for free-form callers — they have nothing stable to key on.
+  dedupeKey String? @unique
+ 
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+ 
+  @@index([userId, read])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status])
 }
 
 model Transaction {
@@ -1470,6 +1502,12 @@ enum ReconciliationStatus {
   RESOLVED
 }
 
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
 // Virtual Account System
 // Double-entry bookkeeping ledger
 
@@ -1847,6 +1885,38 @@ model RampWebhookEvent {
   eventType  String
   rawPayload Json
   createdAt  DateTime @default(now())
+ 
+  @@index([createdAt])
+}
+
+model DeviceToken {
+  token String @id
+ 
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+ 
+  platform   String // "ios" | "android"
+  deviceName String?
+  osVersion  String?
+  appVersion String?
+ 
+  /// iOS push-to-start token for Live Activities. Per-install, exactly like
+  /// the push token — which is why it lives here and not on User. Spondle's
+  /// `User.liveActivityPushToStartToken` has the identical two-device bug.
+  /// Unused until Phase 4; here now so the migration does not run twice.
+  liveActivityStartToken String?
+ 
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @updatedAt
+ 
+  @@index([userId])
+}
+
+model PushReceipt {
+  id    String @id // Expo receipt id
+  token String
+ 
+  createdAt DateTime @default(now())
  
   @@index([createdAt])
 }

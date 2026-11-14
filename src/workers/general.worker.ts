@@ -22,6 +22,9 @@ import { handleTreasuryConversion, sweepTreasury } from '../services/treasuryCon
 // NEW — checked once at boot so a wrong treasury map entry is caught on deploy
 // rather than halfway through a payout.
 import { validateTreasuryMap } from '../config/nuvionTreasury.config';
+// NEW — reads Expo's delivery receipts and prunes tokens for handsets that
+// have uninstalled the app. Registered in scheduleRecurringJobs below.
+import { collectPushReceipts } from '../services/push.service';
 import logger from '../config/logger';
 
 // const SWEEP_CHAINS = ['ETH', 'MATIC', 'BSC', 'BASE', 'ARB', 'OPTIMISM', 'TRON']
@@ -69,6 +72,10 @@ export function startGeneralWorker() {
                 console.info(`Processing job ${job.id} of type ${job.name}`);
 
                 switch (job.name) {
+                    // Unchanged on purpose. The rewritten UserNotify accepts BOTH
+                    // the old { userId, title, content } shape and the new
+                    // { userId, event } one, so jobs already sitting in Redis from
+                    // the previous deploy do not poison the queue on rollout.
                     case 'user-notification':
                         return await notificationService.UserNotify(job.data);
                     case 'blockchain-transfer':
@@ -134,6 +141,17 @@ export function startGeneralWorker() {
                     // scheduleRecurringJobs below.
                     case 'Nuvion_Treasury_Sweep':
                         return await sweepTreasury();
+
+                    // NEW — reads Expo's delivery receipts.
+                    //
+                    // A send ticket saying "ok" only means Expo accepted the
+                    // message, not that a device got it. The receipt, available
+                    // ~15 minutes later, is the only thing that knows — and the
+                    // only way we ever learn a handset uninstalled the app.
+                    // Without this, DeviceToken grows forever and every send
+                    // burns message slots on phones that no longer exist.
+                    case 'Push_Receipt_Sweep':
+                        return await collectPushReceipts();
 
                     case 'Didit_Event':
                         return await eventService.handleDiditEvent(job.data);
@@ -205,6 +223,11 @@ const RAMP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 // enough to ignore: most runs find nothing and do four indexed queries.
 const TREASURY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
+// Matches Expo's own guidance: receipts are available about 15 minutes after
+// a send and are cleared after 24 hours. Anything slower than ~hourly starts
+// losing receipts entirely; faster than 15 minutes just finds nothing.
+const PUSH_RECEIPT_INTERVAL_MS = 15 * 60 * 1000;
+
 export async function scheduleRecurringJobs() {
     await generalQueue.add(
         'ramp-sync',
@@ -232,6 +255,19 @@ export async function scheduleRecurringJobs() {
         }
     );
     logger.info(`[Schedule] Nuvion_Treasury_Sweep registered — every ${TREASURY_SWEEP_INTERVAL_MS / 60000} minutes`);
+
+    // NEW — Expo delivery receipts. Same stable-jobId pattern again.
+    await generalQueue.add(
+        'Push_Receipt_Sweep',
+        {},
+        {
+            repeat:  { every: PUSH_RECEIPT_INTERVAL_MS },
+            jobId:   'push-receipt-sweep',
+            removeOnComplete: { count: 20 },
+            removeOnFail:     { count: 50 },
+        }
+    );
+    logger.info(`[Schedule] Push_Receipt_Sweep registered — every ${PUSH_RECEIPT_INTERVAL_MS / 60000} minutes`);
 
     // NEW — checks every STABLECOIN_TREASURY entry resolves to a real, active
     // row on the right chain, and that no two keys point at the same account.

@@ -1996,81 +1996,81 @@ class UserController {
         }
     }
 
-    async fundWallet(req: Request & Record<string, any>, res: Response)
-    {
-        const user = req.user
-        const {amount, transactionId } = req.body
+    // async fundWallet(req: Request & Record<string, any>, res: Response)
+    // {
+    //     const user = req.user
+    //     const {amount, transactionId } = req.body
 
-        const userData = await prisma.user.findUnique({
-            where:{id: user.id}
-        })
+    //     const userData = await prisma.user.findUnique({
+    //         where:{id: user.id}
+    //     })
 
-        try {
+    //     try {
 
-            //verify transaction
-            const verify = await paystackService.verifyTransaction(transactionId);
+    //         //verify transaction
+    //         const verify = await paystackService.verifyTransaction(transactionId);
 
-            if (!verify?.status) {
-                return res.status(400).json({
-                    msg: 'Error verifying transaction',
-                    success: false,
-                });
-            }
+    //         if (!verify?.status) {
+    //             return res.status(400).json({
+    //                 msg: 'Error verifying transaction',
+    //                 success: false,
+    //             });
+    //         }
 
-            //fund wallet
-            // const fundWallet = await walletService.fundUserWallet(amount, user.id)
-            // if(!fundWallet){
-            //     return res.status(400).json({
-            //         msg: 'Error funding wallet',
-            //         success: false,
-            //     });
-            // }
+    //         //fund wallet
+    //         // const fundWallet = await walletService.fundUserWallet(amount, user.id)
+    //         // if(!fundWallet){
+    //         //     return res.status(400).json({
+    //         //         msg: 'Error funding wallet',
+    //         //         success: false,
+    //         //     });
+    //         // }
 
-            //save transaction
-            // const transaction = await transactionService.create(
-            //     user.id,
-            //     null, 
-            //     amount, 
-            //     'SUCCESSFUL', 
-            //     'WALLET',
-            //     'CREDIT',
-            //     'Wallet Topup',
-            //     []
-            // )
+    //         //save transaction
+    //         // const transaction = await transactionService.create(
+    //         //     user.id,
+    //         //     null, 
+    //         //     amount, 
+    //         //     'SUCCESSFUL', 
+    //         //     'WALLET',
+    //         //     'CREDIT',
+    //         //     'Wallet Topup',
+    //         //     []
+    //         // )
 
-            //save notification
-            await notificationService.create(
-                user.id,
-                null,
-                'Wallet Funding',
-                'You funded your wallet with ' + amount,
-                'TOPUP'
-            )
+    //         //save notification
+    //         await notificationService.create(
+    //             user.id,
+    //             null,
+    //             'Wallet Funding',
+    //             'You funded your wallet with ' + amount,
+    //             'TOPUP'
+    //         )
 
-            //send push notification
-            // await mobilePushService.singlePush('Wallet Funding', 'You funded your wallet with ' + amount, (userData?.pushToken as string))
+    //         //send push notification
+    //         // await mobilePushService.singlePush('Wallet Funding', 'You funded your wallet with ' + amount, (userData?.pushToken as string))
 
-            // console.log(fundWallet)
-            // const updatedUser = await prisma.user.findUnique({
-            //     where:{id: user.id},
-            //     include:{wallet: true}
-            // })
+    //         // console.log(fundWallet)
+    //         // const updatedUser = await prisma.user.findUnique({
+    //         //     where:{id: user.id},
+    //         //     include:{wallet: true}
+    //         // })
 
-            // return res.status(201).json({
-            //     msg: 'Wallet funded successfully',
-            //     success: true,
-            //     user: updatedUser,
-            //     wallet: fundWallet,
-            //     transaction
-            // });
+    //         // return res.status(201).json({
+    //         //     msg: 'Wallet funded successfully',
+    //         //     success: true,
+    //         //     user: updatedUser,
+    //         //     wallet: fundWallet,
+    //         //     transaction
+    //         // });
             
-        } catch (error) {
-            console.log(error)
-            return res
-                .status(500)
-                .json({ msg: 'Internal Server Error', success: false, error });
-        }
-    }
+    //     } catch (error) {
+    //         console.log(error)
+    //         return res
+    //             .status(500)
+    //             .json({ msg: 'Internal Server Error', success: false, error });
+    //     }
+    // }
 
 
 }

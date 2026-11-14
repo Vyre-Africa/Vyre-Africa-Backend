@@ -42,6 +42,7 @@ import { requireKycTier } from '../middleware/requireKycTier';
 import recipientParseController from '../controllers/recipientParse.controller';
 import { parseRateLimiter, useRedisForRateLimit } from '../middleware/parseRateLimiter';
 import payoutCurrenciesController from '../controllers/payoutCurrencies.controller';
+import { registerDevice, unregisterDevice } from '../controllers/devices.controller';
 
 
 const router = Router();
@@ -108,7 +109,8 @@ router.post(
 );
 
 
-
+router.post('/devices',   requireAuthWithCORS(), authMiddleware, registerDevice);
+router.delete('/devices', requireAuthWithCORS(), authMiddleware, unregisterDevice);
 
 
 router.post(
@@ -707,14 +709,14 @@ router.get(
 // );
 
 //fund user wallet
-router.post(
-  '/user/wallet/fund',
-   requireAuthWithCORS(),
-  authMiddleware,
-  userValidator.fundUserWallet(),
-  middleware.handleValidationError,
-  userController.fundWallet,
-);
+// router.post(
+//   '/user/wallet/fund',
+//    requireAuthWithCORS(),
+//   authMiddleware,
+//   userValidator.fundUserWallet(),
+//   middleware.handleValidationError,
+//   userController.fundWallet,
+// );
 
 //verify carsd
 router.post(
@@ -812,7 +814,7 @@ router.get('/kyc/lookup',           kycController.lookupByEmail);
 router.post('/kyc/verify/identity', requireAuthWithCORS(), authMiddleware, kycController.startIdentityVerification);
 router.post('/kyc/verify/address',  requireAuthWithCORS(), authMiddleware, kycController.startAddressVerification);
 router.get('/kyc/status',           requireAuthWithCORS(), authMiddleware, kycController.getVerificationStatus);
-router.post('/kyc/verify/request-enhanced', requireAuthWithCORS(), authMiddleware, kycController.requestEnhancedReview);
+router.post('/kyc/request-enhanced', requireAuthWithCORS(), authMiddleware, kycController.requestEnhancedReview);
 
 
 router.post(
