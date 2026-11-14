@@ -719,12 +719,18 @@ class eventService {
   
         } else {
           // Regular deposit (no order)
-          await notificationService.queue({
-            userId,
-            title: '💰 Deposit Successful',
-            type: 'GENERAL',
-            content: `Your deposit of <strong>${processedAmount} ${currency}</strong> has been processed successfully. The funds are now available in your wallet.`
-          });
+          await notificationService.notify(
+              userId,
+              {
+                  kind:     'DEPOSIT_CREDITED',
+                  walletId,
+                  amount:   `${processedAmount} ${currency}`,
+                  ref:      reference,
+              },
+              {
+                  emailHtml: `Your deposit of <strong>${processedAmount} ${currency}</strong> has been processed successfully. The funds are now available in your wallet.`,
+              },
+          );
   
           logger.info(`Direct deposit processed and notification sent, reference: ${reference}`);
           return { status: 'processed', action: 'wallet-credit-and-notify' };
@@ -749,12 +755,18 @@ class eventService {
         })
   
         // Notify user of failed deposit
-        await notificationService.queue({
+        await notificationService.notify(
           userId,
-          title: '❌ Deposit Failed',
-          type: 'GENERAL',
-          content: `Your deposit of <strong>${processedAmount} ${currency}</strong> could not be processed. Please contact support if funds were debited from your account.`
-        });
+          {
+            kind:     'DEPOSIT_FAILED',
+            walletId,
+            amount:   `${processedAmount} ${currency}`,
+            ref:      reference,
+          },
+          {
+            emailHtml: `Your deposit of <strong>${processedAmount} ${currency}</strong> could not be processed. Please contact support if funds were debited from your account.`,
+          },
+        );
   
         logger.info(`Failed deposit processed, reference: ${reference}`);
         return { status: 'processed', action: 'deposit-failed' };
@@ -851,12 +863,18 @@ class eventService {
   
         } else {
           // Regular withdrawal (no order)
-          await notificationService.queue({
-            userId,
-            title: '✅ Withdrawal Successful',
-            type: 'GENERAL',
-            content: `Your withdrawal of <strong>${processedAmount} ${currency}</strong> has been sent to your bank account. It should arrive within 24 hours.`
-          });
+          await notificationService.notify(
+              userId,
+              {
+                  kind:   'TRANSFER_LANDED',
+                  txId:   virtualTransaction.id,
+                  amount: `${processedAmount} ${currency}`,
+                  to:     'your bank account',
+              },
+              {
+                  emailHtml: `Your withdrawal of <strong>${processedAmount} ${currency}</strong> has been sent to your bank account. It should arrive within 24 hours.`,
+              },
+          );
   
           logger.info(`Withdrawal processed and notification sent, reference: ${reference}`);
           return { status: 'processed', action: 'withdrawal-success-and-notify' };
@@ -905,12 +923,18 @@ class eventService {
   
         // Notify user of failed withdrawal
         if(!awaiting){
-          await notificationService.queue({
-            userId,
-            title: '❌ Withdrawal Failed',
-            type: 'GENERAL',
-            content: `Your withdrawal of <strong>${processedAmount} ${currency}</strong> could not be processed. Your funds remain in your wallet. Please try again or contact support.`
-          });
+          await notificationService.notify(
+              userId,
+              {
+                  kind:   'TRANSFER_FAILED',
+                  txId:   virtualTransaction.id,
+                  amount: `${processedAmount} ${currency}`,
+                  to:     'your bank account',
+              },
+              {
+                  emailHtml: `Your withdrawal of <strong>${processedAmount} ${currency}</strong> could not be processed. Your funds remain in your wallet. Please try again or contact support.`,
+              },
+          );
         }
   
         logger.info(`Failed withdrawal processed, reference: ${reference}`);
@@ -1032,12 +1056,18 @@ class eventService {
  
       console.log('transaction',transaction)
  
-      await notificationService.queue({
-        userId: transaction.userId as string,
-        title: 'Deposit Successful',
-        type: 'GENERAL',
-        content: `Your deposit of <strong>${transaction.amount} ${currency}</strong> has been processed successfully. The funds are now available in your wallet.`
-      });
+      await notificationService.notify(
+          transaction.userId as string,
+          {
+              kind:     'DEPOSIT_CREDITED',
+              walletId: wallet.id,
+              amount:   `${transaction.amount} ${currency}`,
+              ref:      reference,
+          },
+          {
+              emailHtml: `Your deposit of <strong>${transaction.amount} ${currency}</strong> has been processed successfully. The funds are now available in your wallet.`,
+          },
+      );
  
       await walletService.getAccount(wallet.id)
  
@@ -1123,12 +1153,13 @@ class eventService {
       });
 
       // 5. Send notification to user
-      await notificationService.queue({
-        userId: wallet.userId as string,
-        title: 'Bank Account Activated',
-        type: 'GENERAL',
-        content: `Your ${currency} bank account has been successfully activated! You can now deposit funds to <strong>${account_number}</strong> (${bank_name}). Deposits will be automatically credited to your wallet.`
-      });
+      await notificationService.notify(
+          wallet.userId as string,
+          { kind: 'WALLET_CREATED', walletId: wallet.id, currency },
+          {
+              emailHtml: `Your ${currency} bank account has been successfully activated! You can now deposit funds to <strong>${account_number}</strong> (${bank_name}). Deposits will be automatically credited to your wallet.`,
+          },
+      );
 
       return { 
         status: 'success', 
@@ -1258,12 +1289,18 @@ class eventService {
       // settleWalletFunding sends the user-facing notification for that
       // flow instead.
       if (wallet.userId !== config.Admin_Id) {
-          await notificationService.queue({
-              userId:  wallet.userId,
-              title:   'Transaction Notification',
-              type:    'GENERAL',
-              content: `<strong>${DecimalUtil.formatWithCurrency(amount, wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`
-          });
+          await notificationService.notify(
+              wallet.userId,
+              {
+                  kind:     'DEPOSIT_CREDITED',
+                  walletId: wallet.id,
+                  amount:   DecimalUtil.formatWithCurrency(amount, wallet.currency?.ISO as string),
+                  ref:      txId,
+              },
+              {
+                  emailHtml: `<strong>${DecimalUtil.formatWithCurrency(amount, wallet.currency?.ISO as string)}</strong> was sent to you and is available in your wallet. Thanks for choosing Vyre.`,
+              },
+          );
       }
  
       return {
@@ -1350,12 +1387,43 @@ class eventService {
 
     // 2. Send notification (skip for admin)
     if (config.Admin_Id !== wallet.userId) {
-      await notificationService.queue({
-        userId: wallet.userId,
-        title: 'Transaction Notification',
-        type: 'GENERAL',
-        content: `Transfer of <strong>${DecimalUtil.formatWithCurrency(amount,wallet.currency?.ISO as string)}</strong> was successful. Thanks for choosing Vyre.`
-      });
+      /* The deep link needs a VirtualTransaction id — that is the source of
+         truth and what /transaction/[id] loads. The row created above is a
+         `Transaction`, a different table, so its id would open nothing.
+         
+         `txId` is a BLOCKCHAIN hash (0x…), not a row id either. It is used
+         here the way handleFiatEvent uses it: as the `reference` a
+         VirtualTransaction is found by.
+         
+         Guarded, because it is not established that a crypto withdrawal
+         creates one. With a row we send a push carrying a working link;
+         without, this falls through to exactly the behaviour it had before
+         — email and an in-app row, no push. The log line says which
+         happened, so the first real withdrawal answers the question. */
+      const vtx = await prisma.virtualTransaction.findFirst({ where: { reference: txId } });
+
+      const body = `Transfer of <strong>${DecimalUtil.formatWithCurrency(amount,wallet.currency?.ISO as string)}</strong> was successful. Thanks for choosing Vyre.`;
+
+      if (vtx) {
+        await notificationService.notify(
+          wallet.userId,
+          {
+            kind:   'TRANSFER_LANDED',
+            txId:   vtx.id,
+            amount: DecimalUtil.formatWithCurrency(amount, wallet.currency?.ISO as string),
+            to:     'the destination',
+          },
+          { emailHtml: body },
+        );
+      } else {
+        logger.warn('No VirtualTransaction for debit — notifying without a deep link', { txId, walletId: wallet.id });
+        await notificationService.queue({
+          userId: wallet.userId,
+          title: 'Transaction Notification',
+          type: 'GENERAL',
+          content: body,
+        });
+      }
     }
 
     return { 
@@ -1906,13 +1974,26 @@ class eventService {
       `;
     }
 
-    // Queue the notification
-    await notificationService.queue({
+    /* The push gets one line; the email keeps the styled table built
+       above. That table is a receipt — order type, both amounts, the rate,
+       the order id — and it is exactly what should NOT go on a lock
+       screen. This is the clearest case in the file for why `emailHtml`
+       exists. */
+    await notificationService.notify(
       userId,
-      title: notificationTitle,
-      type: 'GENERAL',
-      content: notificationContent
-    });
+      {
+        kind:    'ORDER_COMPLETED',
+        orderId,
+        side:    order.type === 'BUY' ? 'BUY' : 'SELL',
+        got:     order.type === 'BUY'
+                   ? `${quoteAmount} ${quoteCurrency}`
+                   : `${baseAmount} ${baseCurrency}`,
+        paid:    order.type === 'BUY'
+                   ? `${baseAmount} ${baseCurrency}`
+                   : `${quoteAmount} ${quoteCurrency}`,
+      },
+      { emailHtml: notificationContent },
+    );
   }
 
   SUPPORTED_CONTRACTS: Record<string, string> = {
@@ -2536,12 +2617,49 @@ class eventService {
       //  Send user notification
       if (awaiting.userId) {
         try {
-            await notificationService.queue({
-                userId:  awaiting.userId,
-                title:   'Withdrawal Successful',
-                type:    'ORDER',
-                content: `Your withdrawal of ${awaiting.paymentDetails?.toAmount ?? ''} ${awaiting.order?.pair?.quoteCurrency?.ISO ?? ''} has been sent to your bank account.`
+            const payoutAmount = `${awaiting.paymentDetails?.toAmount ?? ''} ${awaiting.order?.pair?.quoteCurrency?.ISO ?? ''}`.trim();
+            const payoutBody = `Your withdrawal of ${payoutAmount} has been sent to your bank account.`;
+
+            /* The deep link needs a VirtualTransaction id. Nothing in this
+               handler holds one — `awaiting` is fetched with only its order
+               and pair included, and Awaiting carries no
+               virtualTransactionId the way InternalOfframpRequest does.
+               
+               But `awaiting.reference` IS the Quidax merchant reference,
+               and both handleFiatEvent and handleNuvionEvent find their
+               VirtualTransaction by `reference`. So the same convention is
+               tried here — guarded, because it is a convention and not a
+               foreign key. With a row the user gets a push and a working
+               receipt; without, this falls through to exactly what it did
+               before, and the log says which. The first real offramp
+               answers it. */
+            const vtx = await prisma.virtualTransaction.findFirst({
+                where: { reference: awaiting.reference },
             });
+
+            if (vtx) {
+                await notificationService.notify(
+                    awaiting.userId,
+                    {
+                        kind:   'TRANSFER_LANDED',
+                        txId:   vtx.id,
+                        amount: payoutAmount,
+                        to:     'your bank account',
+                    },
+                    { emailHtml: payoutBody },
+                );
+            } else {
+                logger.warn('No VirtualTransaction for offramp payout — notifying without a deep link', {
+                    awaitingId: awaiting.id,
+                    reference:  awaiting.reference,
+                });
+                await notificationService.queue({
+                    userId:  awaiting.userId,
+                    title:   'Withdrawal Successful',
+                    type:    'ORDER',
+                    content: payoutBody,
+                });
+            }
         } catch (notifError) {
             logger.error(`Failed to queue notification for offramp completion ${awaiting.id}`, {
                 error: notifError
@@ -2618,12 +2736,20 @@ class eventService {
                   where: { id: record.id },
                   data: { status: 'FAILED', failureReason: 'Quidax reported transaction failed' },
               })
-              await notificationService.queue({
-                  userId: record.userId,
-                  title: 'Wallet Funding Failed',
-                  type: 'GENERAL',
-                  content: 'Your wallet funding could not be processed. If you made payment, please contact support.',
-              })
+              await notificationService.notify(
+                  record.userId,
+                  {
+                      kind:   'DEPOSIT_FAILED',
+                      // No walletId on a funding request — the catalogue
+                      // falls back to the activity list, where the failed
+                      // funding is visible anyway.
+                      amount: `${record.fiatAmount ?? ''} ${record.fiatCurrency ?? ''}`.trim(),
+                      ref:    record.merchantReference,
+                  },
+                  {
+                      emailHtml: 'Your wallet funding could not be processed. If you made payment, please contact support.',
+                  },
+              )
               logger.error('Wallet funding failed', { id: record.id })
               break
   
@@ -2772,12 +2898,25 @@ class eventService {
               context:     `walletFunding | id=${record.id}`,
           });
  
-          await notificationService.queue({
-              userId: record.userId,
-              title: 'Wallet Funded',
-              type: 'GENERAL',
-              content: `Your wallet has been credited with <strong>${amount} ${currencyISO}</strong>. Thanks for choosing Vyre.`,
-          });
+          await notificationService.notify(
+              record.userId,
+              {
+                  kind:   'DEPOSIT_CREDITED',
+                  // p2pTransfer returns the VirtualTransaction itself — it
+                  // carries blockId, which only that table has. So this is
+                  // the row /transaction/[id] loads, and the tap opens the
+                  // receipt rather than just the wallet balance.
+                  txId:   result.transaction.id,
+                  amount: `${amount} ${currencyISO}`,
+                  // merchantReference, not result.reference: the dedupe key
+                  // should identify the FUNDING, which is stable however
+                  // many times Quidax redelivers this webhook.
+                  ref:    record.merchantReference,
+              },
+              {
+                  emailHtml: `Your wallet has been credited with <strong>${amount} ${currencyISO}</strong>. Thanks for choosing Vyre.`,
+              },
+          );
  
           logger.info('Wallet funding settled — admin→user transfer complete', {
               requestId, reference: result.reference, amount,
@@ -2857,8 +2996,16 @@ class eventService {
            console.log('🔍 TRACE [11-success] handling sell_transaction.successful — calling complete()');
 
 
+              let completed: Awaited<ReturnType<typeof internalOfframpService.complete>> = null;
               try {
-                  await internalOfframpService.complete({
+                  // Captured, where it used to be discarded. complete() returns
+                  // the InternalOfframpRequest — which carries
+                  // virtualTransactionId, the row /transaction/[id] loads — and
+                  // returns NULL when the request was already COMPLETED. So
+                  // this doubles as a replay guard: a redelivered Quidax
+                  // webhook gets null and sends nothing, without relying on the
+                  // dedupe key to catch it afterwards.
+                  completed = await internalOfframpService.complete({
                       merchantReference: data.merchant_reference,
                       actualFiatAmount: data.to_amount ?? data.amount ?? undefined,
                   })
@@ -2877,12 +3024,37 @@ class eventService {
                   context:     `internalOfframp | id=${record.id}`,
               })
  
-              await notificationService.queue({
-                  userId: record.userId,
-                  title: 'Withdrawal Complete',
-                  type: 'GENERAL',
-                  content: `Your ${record.cryptoAmount} ${record.cryptoCurrency} has been converted and credited to your ${record.fiatCurrency} wallet.`,
-              })
+              if (completed) {
+                  await notificationService.notify(
+                      completed.userId,
+                      {
+                          kind:   'DEPOSIT_CREDITED',
+                          // The crypto-side payout transaction. That IS the
+                          // withdrawal from the user's point of view — their
+                          // stablecoin leaving is the event, the naira arriving
+                          // is its result. Nullable on the record, and the
+                          // catalogue falls back to the activity list.
+                          txId:   completed.virtualTransactionId ?? undefined,
+                          /* The FIAT figure, not the crypto one: this
+                             notification is about money landing in their NGN
+                             wallet. The email below keeps the conversion story.
+                             
+                             NOT completed.actualFiatAmount. complete() reads
+                             the request inside its transaction, updates it,
+                             then returns the PRE-update copy — so that field
+                             is still null here and the push would have read
+                             "NGN has landed in your wallet" with no number in
+                             it. The webhook's own figure is the same one
+                             complete() just wrote, and it resolves in the same
+                             order complete() does. */
+                          amount: `${data.to_amount ?? data.amount ?? completed.expectedFiatAmount?.toString() ?? ''} ${completed.fiatCurrency}`.trim(),
+                          ref:    completed.merchantReference,
+                      },
+                      {
+                          emailHtml: `Your ${record.cryptoAmount} ${record.cryptoCurrency} has been converted and credited to your ${record.fiatCurrency} wallet.`,
+                      },
+                  );
+              }
               break
  
           case 'sell_transaction.failed':
@@ -2905,12 +3077,47 @@ class eventService {
                   'Quidax reported the sell transaction failed'
               )
  
-              await notificationService.queue({
-                  userId: record.userId,
-                  title: 'Withdrawal Failed',
-                  type: 'GENERAL',
-                  content: 'Your withdrawal could not be completed and your funds have been returned to your wallet. Please contact support if you have questions.',
-              })
+              {
+                  const failBody = 'Your withdrawal could not be completed and your funds have been returned to your wallet. Please contact support if you have questions.';
+
+                  /* TRANSFER_FAILED requires a txId, and deliberately so: its
+                     dedupe key is `transfer:<txId>:failed`. Letting that be
+                     undefined would key every failed withdrawal in the system
+                     to the same string, so the second one ever would be
+                     swallowed as a replay of the first.
+                     
+                     virtualTransactionId is set right after the payout block
+                     is created, so it is almost always present — but it is
+                     nullable on the model, and "almost always" is not a type.
+                     Without it, fall through to the old path: email and an
+                     in-app row, exactly as before, no push. */
+                  if (record.virtualTransactionId) {
+                      await notificationService.notify(
+                          record.userId,
+                          {
+                              kind:   'TRANSFER_FAILED',
+                              // The same VirtualTransaction failRequest()
+                              // releases just above.
+                              txId:   record.virtualTransactionId,
+                              amount: `${record.cryptoAmount} ${record.cryptoCurrency}`,
+                              to:     'your bank account',
+                              // Deliberately no `reason`. Quidax's wording is
+                              // for the reconciliation log above, not a lock
+                              // screen, and the catalogue already says the
+                              // money is back.
+                          },
+                          { emailHtml: failBody },
+                      );
+                  } else {
+                      logger.warn('Offramp failure has no virtualTransactionId — notifying without a deep link', { id: record.id });
+                      await notificationService.queue({
+                          userId: record.userId,
+                          title: 'Withdrawal Failed',
+                          type: 'GENERAL',
+                          content: failBody,
+                      });
+                  }
+              }
               break
  
           default:
@@ -3441,17 +3648,30 @@ class eventService {
               : 'N/A';
  
               if (completedAccount) {
-                  await notificationService.queue({
-                      userId: completedAccount.userId,
-                      title: 'Transfer Sent',
-                      // CHANGED — transferRequest is the copy read BEFORE the
-                      // update above, so on the duplicate-reference path its
-                      // reference is still null even though the row now has it.
-                      content: `Your global transfer of <strong>${displayAmount} ${readableCode}</strong> to ${(beneficiary?.bank as any)?.accountName ?? 'the recipient'} (${paymentMethod?.bankName ?? 'N/A'}) was successful.
+                  await notificationService.notify(
+                      completedAccount.userId,
+                      {
+                          kind:   'TRANSFER_LANDED',
+                          // transaction.id, NOT transferRequest.id. These are
+                          // different tables: the app's /transaction/[id] loads
+                          // a VirtualTransaction, and `transaction` above is
+                          // exactly that, looked up by the transfer's
+                          // idempotencyKey. A transferRequest id here compiles,
+                          // sends, and opens a screen that finds nothing.
+                          // Non-null: the guard above breaks out without one.
+                          txId:   transaction.id,
+                          amount: `${displayAmount} ${readableCode}`,
+                          to:     (beneficiary?.bank as any)?.accountName ?? 'the recipient',
+                      },
+                      {
+                          // CHANGED — transferRequest is the copy read BEFORE the
+                          // update above, so on the duplicate-reference path its
+                          // reference is still null even though the row now has it.
+                          emailHtml: `Your global transfer of <strong>${displayAmount} ${readableCode}</strong> to ${(beneficiary?.bank as any)?.accountName ?? 'the recipient'} (${paymentMethod?.bankName ?? 'N/A'}) was successful.
                                   <br>Reference: ${transferRequest.reference ?? nuvionOutflowId}
                                   <br>Account: ${maskedAccount}`,
-                      type: 'GENERAL',
-                  });
+                      },
+                  );
               }
  
               // NEW — the payout is done and the user is debited. Now send that
@@ -3559,14 +3779,23 @@ class eventService {
               const failedAccount = await prisma.virtualAccount.findUnique({ where: { id: transaction.fromAccountId! } });
  
               if (failedAccount) {
-                  await notificationService.queue({
-                      userId: failedAccount.userId,
-                      title: 'Transfer Unsuccessful',
-                      content: `Your global transfer of <strong>${DecimalUtil.roundForDisplay(transferRequest.amount, readableCode)} ${readableCode}</strong> could not be completed.
+                  await notificationService.notify(
+                      failedAccount.userId,
+                      {
+                          kind:   'TRANSFER_FAILED',
+                          // See the note on the completed branch — VirtualTransaction,
+                          // not TransferRequest.
+                          txId:   transaction.id,
+                          amount: `${DecimalUtil.roundForDisplay(transferRequest.amount, readableCode)} ${readableCode}`,
+                          to:     'the recipient',
+                          reason: statusReason ?? undefined,
+                      },
+                      {
+                          emailHtml: `Your global transfer of <strong>${DecimalUtil.roundForDisplay(transferRequest.amount, readableCode)} ${readableCode}</strong> could not be completed.
                                   <br>Reason: ${statusReason ?? eventType}
                                   <br>The funds have been returned to your balance.`,
-                      type: 'GENERAL',
-                  });
+                      },
+                  );
               }
  
               // The user's funds are released above. The treasury's cached
@@ -3872,14 +4101,17 @@ async handleDiditEvent(jobData: { body: any }) {
  
         logger.info(`User ${user.id} upgraded to kycTier ${TIER_IDENTITY} via Didit identity session ${session_id}`);
  
-        await notificationService.queue({
-            userId: user.id,
-            title: "You're verified",
-            type: 'GENERAL',
-            // Was a hardcoded "$50,000/month" sentence. Now derived, so the
-            // number a user is told is the number that is enforced.
-            content: upgradeMessage(TIER_IDENTITY),
-        });
+        await notificationService.notify(
+            user.id,
+            { kind: 'KYC_APPROVED', tier: TIER_IDENTITY },
+            {
+                // Was a hardcoded "$50,000/month" sentence. Now derived, so
+                // the number a user is told is the number that is enforced.
+                // Kept for the EMAIL only — the push says "your limits have
+                // gone up" and routes to /kyc, where the figure is live.
+                emailHtml: upgradeMessage(TIER_IDENTITY),
+            },
+        );
  
         return;
     }
@@ -4045,16 +4277,18 @@ async handleDiditEvent(jobData: { body: any }) {
  
     logger.info(`User ${user.id} upgraded to kycTier ${TIER_ADDRESS} via Didit address session ${session_id}`);
  
-    await notificationService.queue({
-        userId: user.id,
-        title: 'Address verified',
-        type: 'GENERAL',
-        // Derived. Also carries the onward step, which the old copy could
-        // not: tier 3 is now something a user has to ASK for, so the
-        // notification that lands them at tier 2 is the natural place to
-        // say so.
-        content: upgradeMessage(TIER_ADDRESS),
-    });
+    await notificationService.notify(
+        user.id,
+        { kind: 'KYC_APPROVED', tier: TIER_ADDRESS },
+        {
+            // Derived. Also carries the onward step, which the old copy
+            // could not: tier 3 is now something a user has to ASK for, so
+            // the notification that lands them at tier 2 is the natural
+            // place to say so. That sentence stays in the email — it is
+            // too much for a lock screen, and /kyc shows the button anyway.
+            emailHtml: upgradeMessage(TIER_ADDRESS),
+        },
+    );
 }
 
 
@@ -4064,7 +4298,3 @@ async handleDiditEvent(jobData: { body: any }) {
 }
 
 export default new eventService()
-
-
-
-

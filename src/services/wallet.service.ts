@@ -742,29 +742,29 @@ class WalletService
     }) {
         const { userId, receipientId, currencyId, amount } = payload;
         const startTime = Date.now();
-
+ 
         try {
-
+ 
             // ✅ Convert amount to Decimal immediately
             const amountDecimal = new Decimal(amount);
-
+ 
             // Validate amount
             if (amountDecimal.lessThanOrEqualTo(0)) {
                 throw new Error('Transfer amount must be greater than 0');
             }
-
+ 
             logger.info('Offchain transfer initiated', {
                 userId,
                 receipientId,
                 currencyId,
                 amount: amountDecimal.toString()
             });
-
+ 
             // ============================================
             // STEP 1: FETCH DATA IN PARALLEL (OPTIMIZED)
             // ============================================
             const fetchStartTime = Date.now();
-
+ 
             const [currency, user_Wallet, receipient_Wallet_Temp] = await Promise.all([
                 prisma.currency.findUnique({
                     where: { id: currencyId },
@@ -796,54 +796,54 @@ class WalletService
                         accountBalance: true
                     }
                 })
-
+ 
             ]);
-
+ 
             const fetchDuration = Date.now() - fetchStartTime;
             logger.info('⏱️ Data fetch complete', { duration: `${fetchDuration}ms` });
-
+ 
             if (!currency) {
               throw new Error('Currency not found');
             }
-
+ 
             if (!user_Wallet) {
               throw new Error('User wallet not found');
             }
-
+ 
             // ============================================
             // STEP 2: CREATE RECIPIENT WALLET IF NEEDED
             // ============================================
             let receipient_Wallet:any = receipient_Wallet_Temp;
-
+ 
             if (!receipient_Wallet) {
                 const walletCreateStart = Date.now();
                 logger.info('Creating recipient wallet', { receipientId, currencyId });
-                
+ 
                 receipient_Wallet = await this.createWallet({
                     userId: receipientId,
                     currencyId: currencyId as string
                 });
-
+ 
                 const walletCreateDuration = Date.now() - walletCreateStart;
                 logger.info('⏱️ Wallet created', { duration: `${walletCreateDuration}ms` });
             }
-
+ 
             // ============================================
             // STEP 3: VALIDATE BALANCE
             // ============================================
             const availableBalance = new Decimal(user_Wallet.availableBalance);
-
+ 
             if (availableBalance.lessThan(amountDecimal)) {
                 throw new Error(
                     `Insufficient balance. Available: ${availableBalance.toFixed(8)} ${currency.ISO}, Required: ${amountDecimal.toFixed(8)} ${currency.ISO}`
                 );
             }
-
+ 
             // ============================================
             // STEP 4: EXECUTE TRANSFER
             // ============================================
-
-
+ 
+ 
             logger.info('📡 Executing Offchain Transfer', {
                 from: user_Wallet.id,
                 to: receipient_Wallet.id,
@@ -851,7 +851,7 @@ class WalletService
                 currency: currency.ISO
             });
             const transferStartTime = Date.now();
-
+ 
             // Execute transfer
             const response = await virtualAccountService.p2pTransfer({
                 fromUserId: userId,
@@ -860,36 +860,40 @@ class WalletService
                 currency: currency?.ISO!,
                 blockchain: currency?.chain ?? undefined,
                 description: `Offchain transfer of ${currency?.ISO!}`,
-            }) 
-
+            })
+ 
             // const paymentData = response.data;
             const transferDuration = Date.now() - transferStartTime;
-
+ 
             logger.info('🟢 Offchain transfer complete', {
                 reference: response.reference,
                 duration: `${transferDuration}ms`
             });
-
+ 
             // ============================================
             // STEP 5: BACKGROUND POST-PROCESSING
             // ============================================
             // ✅ Move slow operations to background
             setImmediate(async () => {
                 const postProcessStart = Date.now();
-
+ 
                 try {
                     // Sync wallets in parallel
                     await Promise.all([
                         this.getAccount(user_Wallet.id),
                         this.getAccount(receipient_Wallet.id)
                     ]);
-
+ 
                     const [sender, recipient] = await Promise.all([
                         prisma.user.findUnique({ where: { id: userId }, select: { id: true, firstName: true } }),
                         prisma.user.findUnique({ where: { id: receipientId }, select: { id: true, firstName: true, lastName:true, email: true, photoUrl: true } })
                     ]);
-
-                    // Create transaction records
+ 
+                    // NOTE: these rows go in `Transaction`, NOT `VirtualTransaction`.
+                    // /transaction/[id] in the app loads a VirtualTransaction, so no
+                    // id created here can ever be a notification `txId`. The only
+                    // VirtualTransaction in this flow is the one p2pTransfer created,
+                    // which is why txId comes off `response.transaction`.
                     await prisma.transaction.createMany({
                         data: [
                             {
@@ -926,28 +930,54 @@ class WalletService
                             }
                         ]
                     });
-
-                    
-
+ 
+                    // The original built these inline with `+` and no space before
+                    // the ISO, so copy read "1.5USDC". Hoisted and spaced.
+                    const display = `${DecimalUtil.roundForDisplay(amountDecimal, currency.ISO)} ${currency.ISO}`;
+                    const recipientName = recipient?.firstName || 'a user';
+                    const senderName = sender?.firstName || 'a user';
+ 
+                    // One place to look if p2pTransfer's return shape ever moves.
+                    // TS flags it here rather than three lines down.
+                    const txId = response.transaction.id;
+ 
                     await Promise.all([
-                        // for sender 
-                        notificationService.queue({
-                            userId, 
-                            title: 'Transfer Sent', 
-                            content: 'Your transfer of ' + DecimalUtil.roundForDisplay(amountDecimal,currency.ISO) + currency.ISO + ' to ' + (recipient?.firstName || 'a user') + ' was successful',
-                            type: 'GENERAL'
-                        }),
-                        // for recipient
-                        notificationService.queue({
-                            userId: receipientId,
-                            title: 'Transfer Received',
-                            content: 'You have received ' + DecimalUtil.roundForDisplay(amountDecimal, currency.ISO) + currency.ISO + ' from ' + (sender?.firstName || 'a user'),
-                            type: 'GENERAL'
-                        })
-
+                        // for sender — TRANSFER_LANDED deep-links to /transaction/:txId
+                        // and uses txId as its dedupe key, so it must be the
+                        // VirtualTransaction id, never a TransferRequest id.
+                        notificationService.notify(
+                            userId,
+                            {
+                                kind:   'TRANSFER_LANDED',
+                                txId,
+                                amount: display,
+                                to:     recipientName,
+                            },
+                            {
+                                emailHtml: `Your transfer of <strong>${display}</strong> to ${recipientName} was successful.
+                                    <br>Reference: ${response.reference}`,
+                            },
+                        ),
+                        // for recipient — walletId, not txId. The recipient's side of
+                        // a p2p transfer is a different row from the sender's, and
+                        // `response.transaction` is the sender's. /wallet/:id always
+                        // resolves (virtualAccount.id === wallet.id), so it is the
+                        // safe link here.
+                        notificationService.notify(
+                            receipientId,
+                            {
+                                kind:     'DEPOSIT_CREDITED',
+                                walletId: receipient_Wallet.id,
+                                amount:   display,
+                                ref:      response.reference,
+                            },
+                            {
+                                emailHtml: `You have received <strong>${display}</strong> from ${senderName}. The funds are available in your wallet.`,
+                            },
+                        ),
                     ]);
-
-
+ 
+ 
                     try {
                         await createBeneficiary({
                             userId,
@@ -968,13 +998,13 @@ class WalletService
                             error: beneficiaryError.message
                         });
                     }
-
+ 
                     const postProcessDuration = Date.now() - postProcessStart;
                     logger.info('🔄 Background post-processing complete', {
                     reference: response.reference,
                     duration: `${postProcessDuration}ms`
                     });
-
+ 
                 } catch (postError: any) {
                     logger.error('⚠️ Background post-processing failed (non-critical)', {
                     reference: response.reference,
@@ -983,26 +1013,29 @@ class WalletService
                     // Don't throw - transfer already succeeded
                 }
             });
-        
+ 
             const totalDuration = Date.now() - startTime;
                 logger.info('✅ Offchain transfer COMPLETE', {
                 reference: response.reference,
                 totalDuration: `${totalDuration}ms`
             });
-
+ 
             // ✅ Return immediately after Tatum API succeeds
             return {
                 success: true,
                 reference: response.reference,
+                // Surfaced so callers have the real VirtualTransaction id instead of
+                // re-deriving it from the reference. Nothing consumes it yet.
+                transactionId: response.transaction.id,
                 amount: amountDecimal.toString(),
                 currency: currency.ISO,
                 senderWallet: user_Wallet.id,
                 recipientWallet: receipient_Wallet.id
             };
-
+ 
         } catch (error: any) {
             const totalDuration = Date.now() - startTime;
-
+ 
             logger.error('🔴 Offchain transfer FAILED', {
                 error: error.message,
                 userId,
@@ -1743,132 +1776,214 @@ class WalletService
 
     // called by worker
     async handle_Vyre_Transfer(transferId: string) {
-    try {
-        // ✅ Update status to PROCESSING if PENDING, else exit
-        const updated = await prisma.transferRequest.updateMany({
-            where: { 
-                id: transferId,
-                status: 'PENDING'
-            },
-            data: { 
-                status: 'PROCESSING'
-            }
-        });
-
-        if (updated.count === 0) {
-            logger.warn('Transfer already being processed or completed', { transferId });
-            return;
-        }
-
-        // ✅ Fetch transfer request (no status filter)
-        const transferRequest = await prisma.transferRequest.findUnique({
-            where: { id: transferId }
-        });
-
-        if (!transferRequest) {
-            logger.error('Transfer request not found', { transferId });
-            return;
-        }
-
-        // ✅ Validate vyre data exists
-        if (!transferRequest.vyre) {
-            throw new Error('Invalid transfer request - missing vyre transfer data');
-        }
-
-        const { amount, currencyId, recipient_id, currencyISO } = transferRequest.vyre as {
-            amount: string;
-            currencyId: string;
-            recipient_id: string;
-            idempotencyKey: string;
-            currencyISO: string;
-        };
-
-        // ✅ Execute the transfer
-        const result = await this.offchain_Transfer({
-            userId: transferRequest.userId,
-            receipientId: recipient_id,
-            currencyId,
-            amount
-        });
-
-        // ✅ Mark as completed 
-        await prisma.transferRequest.update({
-            where: { id: transferId },
-            data: { 
-                status: 'COMPLETED',
-                completedAt: new Date(),
-                reference: result?.reference
-            }
-        });
-
-        logger.info('Transfer completed successfully', {
-            transferId,
-            reference: result.reference
-        });
-
-        return result;
-
-    } catch (error: any) {
-        logger.error('Transfer handler failed', {
-            transferId,
-            error: error.message,
-            stack: error.stack
-        });
-
-        // ✅ Safe status update
         try {
+            // ✅ Update status to PROCESSING if PENDING, else exit
+            const updated = await prisma.transferRequest.updateMany({
+                where: {
+                    id: transferId,
+                    status: 'PENDING'
+                },
+                data: {
+                    status: 'PROCESSING'
+                }
+            });
+    
+            if (updated.count === 0) {
+                logger.warn('Transfer already being processed or completed', { transferId });
+                return;
+            }
+    
+            // ✅ Fetch transfer request (no status filter)
+            const transferRequest = await prisma.transferRequest.findUnique({
+                where: { id: transferId }
+            });
+    
+            if (!transferRequest) {
+                logger.error('Transfer request not found', { transferId });
+                return;
+            }
+    
+            // ✅ Validate vyre data exists
+            if (!transferRequest.vyre) {
+                throw new Error('Invalid transfer request - missing vyre transfer data');
+            }
+    
+            const { amount, currencyId, recipient_id, currencyISO } = transferRequest.vyre as {
+                amount: string;
+                currencyId: string;
+                recipient_id: string;
+                idempotencyKey: string;
+                currencyISO: string;
+            };
+    
+            // ✅ Execute the transfer
+            // Sends both success notifications itself (sender TRANSFER_LANDED,
+            // recipient DEPOSIT_CREDITED) from its own background block, which is why
+            // there is no success notify here. `currencyISO` above is consequently
+            // unused on this path — see the note at the bottom of this file.
+            const result = await this.offchain_Transfer({
+                userId: transferRequest.userId,
+                receipientId: recipient_id,
+                currencyId,
+                amount
+            });
+    
+            // ✅ Mark as completed
             await prisma.transferRequest.update({
                 where: { id: transferId },
-                data: { 
-                    status: 'FAILED',
-                    errorMessage: error?.message,
-                    failedAt: new Date()
+                data: {
+                    status: 'COMPLETED',
+                    completedAt: new Date(),
+                    reference: result?.reference
                 }
             });
-        } catch (dbError: any) {
-            logger.error('Failed to update transfer status to FAILED', {
+    
+            logger.info('Transfer completed successfully', {
                 transferId,
-                originalError: error.message,
-                dbError: dbError.message
+                reference: result.reference
             });
-        }
-
-        // ✅ Send failure notification (non-blocking)
-        setImmediate(async () => {
+    
+            return result;
+    
+        } catch (error: any) {
+            logger.error('Transfer handler failed', {
+                transferId,
+                error: error.message,
+                stack: error.stack
+            });
+    
+            // ✅ Safe status update
             try {
-                // Fetch user data if not available
-                const transfer = await prisma.transferRequest.findUnique({
+                await prisma.transferRequest.update({
                     where: { id: transferId },
-                    select: { userId: true, amount: true, vyre: true }
+                    data: {
+                        status: 'FAILED',
+                        errorMessage: error?.message,
+                        failedAt: new Date()
+                    }
                 });
-
-                const { currencyISO } = transfer?.vyre as {
-                    amount: string;
-                    currencyId: string;
-                    recipient_id: string;
-                    idempotencyKey: string;
-                    currencyISO: string;
-                };
-
-                if (transfer) {
-                    await notificationService.queue({
-                        userId: transfer.userId,
-                        title: 'Transfer Failed',
-                        type: 'GENERAL',
-                        content: `Your transfer of ${transfer.amount} ${currencyISO} failed.  Reason: ${error?.message}. Please try again or contact support`
-                    });
-                }
-            } catch (notifError: any) {
-                logger.error('Failed to send failure notification', {
+            } catch (dbError: any) {
+                logger.error('Failed to update transfer status to FAILED', {
                     transferId,
-                    error: notifError.message
+                    originalError: error.message,
+                    dbError: dbError.message
                 });
             }
-        });
+    
+            // ✅ Send failure notification (non-blocking)
+            setImmediate(async () => {
+                try {
+                    // Fetch user data if not available
+                    const transfer = await prisma.transferRequest.findUnique({
+                        where: { id: transferId },
+                        select: { userId: true, amount: true, vyre: true }
+                    });
+    
+                    // The guard has to come BEFORE the destructure. `transfer?.vyre` is
+                    // `undefined` when the row is missing, and destructuring `undefined`
+                    // throws — the `as` cast is erased at runtime. So the old
+                    // `if (transfer)` sitting below the destructure could never run; a
+                    // missing row surfaced as "Failed to send failure notification"
+                    // instead of the real reason.
+                    if (!transfer) {
+                        logger.warn('Transfer row gone before failure notification', { transferId });
+                        return;
+                    }
+    
+                    const { currencyISO, idempotencyKey } = (transfer.vyre ?? {}) as {
+                        amount: string;
+                        currencyId: string;
+                        recipient_id: string;
+                        idempotencyKey: string;
+                        currencyISO: string;
+                    };
+    
+                    const display = `${transfer.amount} ${currencyISO ?? ''}`.trim();
+    
+                    // TRANSFER_FAILED renders /transaction/${txId} and uses txId as the
+                    // dedupe key, so it must be a VirtualTransaction id. `transferId` is
+                    // a TransferRequest id — a different table. Passing it would open a
+                    // screen that finds nothing AND key the replay guard on the wrong
+                    // row.
+                    //
+                    // There is no transaction id in scope on this path: if p2pTransfer
+                    // threw, no VirtualTransaction was ever created. So this lookup
+                    // legitimately finds nothing for most failures and the fallback is
+                    // the normal path, not a bug. It only resolves when the failure came
+                    // after p2pTransfer returned — i.e. in the transferRequest.update
+                    // above — and then handleNuvionEvent's convention (VirtualTransaction
+                    // keyed by the transfer's idempotencyKey) is the one worth trying.
+                    const vtx = idempotencyKey
+                        ? await prisma.virtualTransaction.findFirst({
+                            where: { reference: idempotencyKey },
+                        })
+                        : null;
+    
+                    if (vtx) {
+                        await notificationService.notify(
+                            transfer.userId,
+                            {
+                                kind:   'TRANSFER_FAILED',
+                                txId:   vtx.id,
+                                amount: display,
+                                // This block never loads the beneficiary — only
+                                // recipient_id, which is a user id, not a name.
+                                to:     'the recipient',
+                                // `reason` is deliberately omitted. error.message is an
+                                // exception string, not copy: a Prisma P2002 or a raw
+                                // vendor code on a lock screen reads worse than no
+                                // reason at all. The email below still carries it.
+                            },
+                            {
+                                emailHtml: `Your transfer of <strong>${display}</strong> could not be completed.
+                                    <br>Reason: ${error?.message}
+                                    <br>Please try again or contact support.`,
+                            },
+                        );
+                    } else {
+                        logger.warn('No VirtualTransaction for Vyre transfer — notifying without a deep link', {
+                            transferId,
+                            idempotencyKey,
+                        });
+                        await notificationService.queue({
+                            userId: transfer.userId,
+                            title: 'Transfer Failed',
+                            type: 'GENERAL',
+                            content: `Your transfer of ${display} failed.  Reason: ${error?.message}. Please try again or contact support`
+                        });
+                    }
+                } catch (notifError: any) {
+                    logger.error('Failed to send failure notification', {
+                        transferId,
+                        error: notifError.message
+                    });
+                }
+            });
+    
+            throw error;
+        }
 
-        throw error;
     }
-    }
+ 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Left alone, on purpose
+    //
+    // 1. The re-throw at the end of handle_Vyre_Transfer is safe. It propagates to
+    //    BullMQ, which retries; the retry's updateMany looks for status PENDING and
+    //    the row is now FAILED, so it count-zeroes and returns. One notification,
+    //    not two.
+    //
+    // 2. `currencyISO` on the success path of handle_Vyre_Transfer is now unused.
+    //    Left in the destructure rather than removed, because taking it out is the
+    //    kind of tidy-up that hides the real question: whether offchain_Transfer's
+    //    two notifications are the only ones this rail should send. If they are,
+    //    delete it.
+    //
+    // 3. prisma.transaction.createMany in offchain_Transfer writes to the wrong
+    //    table for deep links but is otherwise untouched — it is presumably what
+    //    the activity feed reads, and changing which table a P2P transfer records
+    //    into is not a notification change.
+    // ─────────────────────────────────────────────────────────────────────────────
     
     // called by worker
     async handle_Blockchain_Transfer(transferId: string)
