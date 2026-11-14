@@ -56,7 +56,7 @@ import prisma from '../../config/prisma.client';
 import mailService from '../../services/mail.service';
 import ablyService from '../../services/ably.service';
 import notificationService from '../../services/notification.service';
-import { dedupeKeyFor, type VyreEvent } from '../../services/notification.catalogue';
+import { dedupeKeyFor, render, type VyreEvent } from '../../services/notification.catalogue';
 
 let failures = 0;
 let checks = 0;
@@ -131,10 +131,10 @@ function event(kind: 'TRANSFER_LANDED' | 'DEPOSIT_CREDITED' | 'SECURITY_SIGNIN',
 }
 
 /** Calls the worker body directly — this is what the queue would invoke. */
-async function dispatch(userId: string, e: VyreEvent) {
+async function dispatch(userId: string, e: VyreEvent, emailHtml?: string) {
   const key = dedupeKeyFor(userId, e);
   if (key) createdKeys.push(key);
-  return (await notificationService.UserNotify({ userId, event: e })) as
+  return (await notificationService.UserNotify({ userId, event: e, emailHtml })) as
     | Record<string, string>
     | undefined;
 }
@@ -297,6 +297,82 @@ async function test5_partialFailure(userId: string) {
   check('sentAt is set', !!row?.sentAt, 'sentAt is null on a row that did send');
 }
 
+async function test6_richEmail(userId: string) {
+  console.log('\n6 · the email gets the rich body, nothing else does\n');
+  resetRecorders();
+  await setSettings(userId, true, true);
+
+  const e = event('TRANSFER_LANDED', 'rich-email');
+  const RICH =
+    'Your transfer of <strong>$250.00</strong> to Ada Nwosu was successful.' +
+    '<br>Reference: REF-123<br>Account: 0123****6789';
+
+  const out = await dispatch(userId, e, RICH);
+  console.log(`  → ${JSON.stringify(out)}`);
+
+  const catalogueBody = render(e).body;
+  console.log(`  catalogue body : ${catalogueBody}`);
+  console.log(`  email body     : ${mailCalls[0]?.body?.slice(0, 60)}…`);
+
+  /* The separation this whole mechanism exists for. The two channels want
+     different things: a lock screen gets one line with no balance on it,
+     an email is a record someone keeps. */
+  check('the email got the rich body', mailCalls[0]?.body === RICH, `got: ${mailCalls[0]?.body}`);
+  check(
+    'the email did NOT get the catalogue body',
+    mailCalls[0]?.body !== catalogueBody,
+    'emailHtml was ignored — the rich body never reached mailService',
+  );
+
+  /* Everything else must still be the catalogue's. If the rich HTML leaked
+     into these, a lock screen would show raw <strong> tags and the in-app
+     feed would render markup as text. */
+  check(
+    'Ably got the catalogue body, not the HTML',
+    ablyCalls[0]?.body === catalogueBody,
+    `realtime body was: ${ablyCalls[0]?.body}`,
+  );
+
+  const row = await rowFor(userId, e);
+  check(
+    'the in-app row stored the catalogue body',
+    row?.content === catalogueBody,
+    `row content was: ${row?.content}`,
+  );
+  check(
+    'the in-app row contains no HTML',
+    !row?.content?.includes('<'),
+    'the email body leaked into the feed row',
+  );
+
+  /* And the title is shared — only the BODY diverges. */
+  check(
+    'the title is the same everywhere',
+    mailCalls[0]?.title === render(e).title && ablyCalls[0]?.title === render(e).title,
+    'title diverged between channels',
+  );
+}
+
+async function test7_noRichEmailFallsBack(userId: string) {
+  console.log('\n7 · with no emailHtml, the email falls back to the catalogue\n');
+  resetRecorders();
+  await setSettings(userId, true, true);
+
+  const e = event('TRANSFER_LANDED', 'fallback');
+  await dispatch(userId, e); // no third argument
+
+  const catalogueBody = render(e).body;
+  console.log(`  email body : ${mailCalls[0]?.body}`);
+
+  /* Every legacy queue() call site goes through this path, so if the
+     fallback broke they would all start sending empty emails. */
+  check(
+    'the email used the catalogue body',
+    mailCalls[0]?.body === catalogueBody,
+    `got: ${mailCalls[0]?.body}`,
+  );
+}
+
 /* ────────────────────────────────────────────────────────────────────── */
 
 async function resolveUser(): Promise<{ id: string; email: string | null } | null> {
@@ -363,6 +439,8 @@ async function main() {
     await test3_mandatoryOverride(user.id);
     await test4_noSettingsRow(user.id);
     await test5_partialFailure(user.id);
+    await test6_richEmail(user.id);
+    await test7_noRichEmailFallsBack(user.id);
   } finally {
     restoreRecorders();
     await cleanup(user.id);

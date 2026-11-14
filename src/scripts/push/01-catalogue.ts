@@ -88,6 +88,8 @@ const SAMPLES: SampleMap = {
   TRANSFER_FAILED: { kind: 'TRANSFER_FAILED', txId: TX, amount: '$250.00', to: 'Ada Nwosu' },
   DEPOSIT_PENDING: { kind: 'DEPOSIT_PENDING', walletId: 'wal_1', amount: '₦400,000.00', ref: REF },
   DEPOSIT_CREDITED: { kind: 'DEPOSIT_CREDITED', walletId: 'wal_1', amount: '₦400,000.00', ref: REF },
+  DEPOSIT_FAILED: { kind: 'DEPOSIT_FAILED', amount: '₦400,000.00', ref: REF, walletId: 'wal_1' },
+  ORDER_COMPLETED: { kind: 'ORDER_COMPLETED', orderId: 'ord_1', side: 'BUY', got: '100.00 USDC', paid: '₦150,000.00' },
   WALLET_CREATED: { kind: 'WALLET_CREATED', walletId: 'wal_2', currency: 'USDC' },
   KYC_APPROVED: { kind: 'KYC_APPROVED', tier: 2 },
   KYC_DECLINED: { kind: 'KYC_DECLINED', sessionId: SESSION },
@@ -107,6 +109,9 @@ const SAMPLES: SampleMap = {
 const EXTRA_VARIANTS: VyreEvent[] = [
   { kind: 'TRANSFER_FAILED', txId: 'tx_other', amount: '$10.00', to: 'Ada', reason: 'insufficient balance' },
   { kind: 'GENERIC', title: 'With a link', content: 'Tap through.', url: '/wallet/wal_9' },
+  // DEPOSIT_FAILED with no walletId — exercises the /(tabs)/activity fallback.
+  { kind: 'DEPOSIT_FAILED', amount: '$50.00', ref: 'ref_other' },
+  { kind: 'ORDER_COMPLETED', orderId: 'ord_2', side: 'SELL', got: '₦75,000.00', paid: '50.00 USDC' },
 ];
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -417,6 +422,7 @@ const EXPECTED_TIME_SENSITIVE: EventKind[] = [
   'TRANSFER_LANDED',
   'TRANSFER_FAILED',
   'DEPOSIT_CREDITED',
+  'DEPOSIT_FAILED',
   'SECURITY_SIGNIN',
   'SECURITY_PIN_CHANGED',
 ];

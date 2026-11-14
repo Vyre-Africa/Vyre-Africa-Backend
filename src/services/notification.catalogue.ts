@@ -20,7 +20,19 @@ export type VyreEvent =
   | { kind: 'TRANSFER_LANDED';    txId: string; amount: string; to: string }
   | { kind: 'TRANSFER_FAILED';    txId: string; amount: string; to: string; reason?: string }
   | { kind: 'DEPOSIT_PENDING';    walletId: string; amount: string; ref: string }
-  | { kind: 'DEPOSIT_CREDITED';   walletId: string; amount: string; ref: string }
+  /* `txId` OR `walletId` — see the render below. Some rails produce a
+     VirtualTransaction for the credit (p2pTransfer returns one) and some
+     only know which wallet grew. Both are optional so a call site can
+     pass whichever it actually holds, rather than inventing one. */
+  | { kind: 'DEPOSIT_CREDITED';   amount: string; ref: string; txId?: string; walletId?: string }
+  /* A deposit that did not arrive. The counterpart to DEPOSIT_CREDITED,
+     and the one people phone support about — money left their bank and
+     nothing showed up. Silence here is the worst possible answer. */
+  | { kind: 'DEPOSIT_FAILED';     amount: string; ref: string; walletId?: string }
+  /* A buy/sell order settling. `got` and `paid` arrive pre-formatted with
+     their currencies, because only the caller knows which side of the
+     pair is which. */
+  | { kind: 'ORDER_COMPLETED';    orderId: string; side: 'BUY' | 'SELL'; got: string; paid: string }
   | { kind: 'WALLET_CREATED';     walletId: string; currency: string }
   | { kind: 'KYC_APPROVED';       tier: number }
   | { kind: 'KYC_DECLINED';       sessionId: string }
@@ -122,9 +134,48 @@ export function render(e: VyreEvent): Rendered {
       return {
         title: 'Money in',
         body: `${e.amount} has landed in your wallet.`,
-        url: `/wallet/${e.walletId}`,
+        /* The receipt when we have one, the wallet otherwise.
+        
+           A deposit's receipt is the more useful destination — it is what
+           a transfer notification opens, and it answers "where did this
+           come from" rather than just showing a balance. But not every
+           rail hands us a transaction: a webhook that only says "wallet X
+           grew" can still deep-link to the wallet.
+           
+           The last fallback matters. `/wallet/undefined` is a route that
+           exists and fails, which is worse than a list — so with neither
+           id the tap goes to the activity feed, where the deposit is
+           visible anyway. */
+        url: e.txId
+          ? `/transaction/${e.txId}`
+          : e.walletId
+            ? `/wallet/${e.walletId}`
+            : '/(tabs)/activity',
         sound: true,
         timeSensitive: true,
+      };
+    case 'DEPOSIT_FAILED':
+      return {
+        title: "Deposit didn't arrive",
+        body: `${e.amount} could not be credited. Tap for what to do next.`,
+        url: e.walletId ? `/wallet/${e.walletId}` : '/(tabs)/activity',
+        sound: true,
+        /* Time-sensitive for the same reason TRANSFER_FAILED is: money the
+           user expected is missing, and the sooner they know the sooner
+           they can chase it. */
+        timeSensitive: true,
+      };
+    case 'ORDER_COMPLETED':
+      return {
+        title: 'Order completed',
+        body: e.side === 'BUY'
+          ? `You bought ${e.got} for ${e.paid}.`
+          : `You sold ${e.paid} for ${e.got}.`,
+        /* The activity list, not an order screen — the app has no
+           /order/[id] route. Point this at one if that changes. */
+        url: '/(tabs)/activity',
+        sound: false,
+        timeSensitive: false,
       };
     case 'WALLET_CREATED':
       return {
@@ -210,6 +261,10 @@ const POLICY: Record<EventKind, ChannelPolicy> = {
   DEPOSIT_PENDING:      { inApp: T, push: T, email: F, sms: F, realtime: T, mandatory: F },
   DEPOSIT_CREDITED:     { inApp: T, push: T, email: T, sms: F, realtime: T, mandatory: F },
 
+  DEPOSIT_FAILED:       { inApp: T, push: T, email: T, sms: F, realtime: T, mandatory: F },
+
+  ORDER_COMPLETED:      { inApp: T, push: T, email: T, sms: F, realtime: T, mandatory: F },
+
   WALLET_CREATED:       { inApp: T, push: T, email: F, sms: F, realtime: T, mandatory: F },
 
   KYC_APPROVED:         { inApp: T, push: T, email: T, sms: F, realtime: T, mandatory: F },
@@ -250,6 +305,8 @@ export function dedupeKeyFor(userId: string, e: VyreEvent): string | null {
     case 'TRANSFER_FAILED':      return `transfer:${e.txId}:failed`;
     case 'DEPOSIT_PENDING':      return `deposit:${e.ref}:pending`;
     case 'DEPOSIT_CREDITED':     return `deposit:${e.ref}:credited`;
+    case 'DEPOSIT_FAILED':       return `deposit:${e.ref}:failed`;
+    case 'ORDER_COMPLETED':      return `order:${e.orderId}:completed`;
     case 'WALLET_CREATED':       return `wallet:${e.walletId}:created`;
     case 'KYC_APPROVED':         return `kyc:${userId}:approved:${e.tier}`;
     case 'KYC_DECLINED':         return `kyc:${e.sessionId}:declined`;
@@ -277,7 +334,10 @@ export function legacyTypeFor(kind: EventKind): 'GENERAL' | 'ORDER' | 'TOPUP' {
       return 'ORDER';
     case 'DEPOSIT_PENDING':
     case 'DEPOSIT_CREDITED':
+    case 'DEPOSIT_FAILED':
       return 'TOPUP';
+    case 'ORDER_COMPLETED':
+      return 'ORDER';
     default:
       return 'GENERAL';
   }
