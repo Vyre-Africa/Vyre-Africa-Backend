@@ -113,6 +113,16 @@ const config = {
         FLW_PUBLIC_KEY: process.env.FLW_PUBLIC_KEY,
         FLW_SECRET_KEY: process.env.FLW_SECRET_KEY
     },
+
+    apns: {
+        keyId: process.env.APNS_KEY_ID || '',
+        teamId: process.env.APNS_TEAM_ID || '',
+        keyContent: process.env.APNS_KEY_CONTENT || '',
+        bundleId: 'africa.vyre.app',
+        production: process.env.NODE_ENV === 'production',
+    },
+
+
     Admin_Id: process.env.Admin_Id || '',
     defaultCurrency: process.env.DEFAULT_CURRENCY || 'NGN',
     termiiBaseUrl: process.env.TERMII_BASE_URL || 'https://v3.api.termii.com',

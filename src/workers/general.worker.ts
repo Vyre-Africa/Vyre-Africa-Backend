@@ -26,6 +26,7 @@ import { validateTreasuryMap } from '../config/nuvionTreasury.config';
 // have uninstalled the app. Registered in scheduleRecurringJobs below.
 import { collectPushReceipts } from '../services/push.service';
 import logger from '../config/logger';
+import liveActivityService from '../services/liveActivity.service';
 
 // const SWEEP_CHAINS = ['ETH', 'MATIC', 'BSC', 'BASE', 'ARB', 'OPTIMISM', 'TRON']
 const SWEEP_CHAINS = [
@@ -153,6 +154,9 @@ export function startGeneralWorker() {
                     case 'Push_Receipt_Sweep':
                         return await collectPushReceipts();
 
+                    case 'sweep-live-activities':
+                        return await liveActivityService.sweep();
+
                     case 'Didit_Event':
                         return await eventService.handleDiditEvent(job.data);
 
@@ -268,6 +272,17 @@ export async function scheduleRecurringJobs() {
         }
     );
     logger.info(`[Schedule] Push_Receipt_Sweep registered — every ${PUSH_RECEIPT_INTERVAL_MS / 60000} minutes`);
+
+    await generalQueue.add(
+     'sweep-live-activities',
+      {},
+      {
+        repeat: { every: 5 * 60 * 1000 },
+        jobId: 'sweep-live-activities',   // keeps re-registration idempotent
+        removeOnComplete: true,
+        removeOnFail: 50,
+      },
+    );
 
     // NEW — checks every STABLECOIN_TREASURY entry resolves to a real, active
     // row on the right chain, and that no two keys point at the same account.
