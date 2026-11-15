@@ -43,6 +43,12 @@ import recipientParseController from '../controllers/recipientParse.controller';
 import { parseRateLimiter, useRedisForRateLimit } from '../middleware/parseRateLimiter';
 import payoutCurrenciesController from '../controllers/payoutCurrencies.controller';
 import { registerDevice, unregisterDevice } from '../controllers/devices.controller';
+import {
+    putPushToStartToken,
+    registerActivity,
+    putActivityToken,
+    putActivityState,
+} from '../controllers/liveActivity.controller';
 
 
 const router = Router();
@@ -1050,6 +1056,18 @@ router.get('/offramp/internal/quote', requireAuthWithCORS(), authMiddleware, Int
 router.post('/offramp/internal/initiate',  requireAuthWithCORS(), authMiddleware, InternalOfframpController.initiate);
 router.get('/offramp/internal/:requestId', requireAuthWithCORS(), authMiddleware, InternalOfframpController.getStatus);
 router.get('/offramp/internal', requireAuthWithCORS(), authMiddleware, InternalOfframpController.listRecent);
+
+/** The device's push-to-start token. iOS 17.2+; absent below that, which is normal. */
+router.post('/devices/live-activity-token', requireAuthWithCORS(), authMiddleware, putPushToStartToken);
+
+/** An activity the app started itself, so the server can drive it from here. */
+router.post('/live-activities/register', requireAuthWithCORS(), authMiddleware, registerActivity);
+
+/** Voltra's activityTokenReceived, resolved to a subject server-side. */
+router.post('/live-activities/token', requireAuthWithCORS(), authMiddleware, putActivityToken);
+
+/** Voltra's stateChange — the device saying a card is gone. */
+router.post('/live-activities/state', requireAuthWithCORS(), authMiddleware, putActivityState);
  
 
 // router.get(

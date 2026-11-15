@@ -272,6 +272,42 @@ enum VendorStatus {
   SUSPENDED    // was approved, now blocked
 }
 
+/// Row lifecycle. Universal, and the only state the sweep needs to reason
+/// about. Deliberately NOT the domain's steps: an earlier draft had
+/// SUBMITTED/CONVERTING/SENDING, but "converting" is a crypto→fiat concept, so
+/// every new subject would have needed a migration. Steps are copy; they live
+/// in stepLabel and in the content state.
+enum LiveActivityStatus {
+  ACTIVE
+  ENDED
+  FAILED
+}
+
+/// Which of Voltra's two modes drove this activity.
+///
+/// STATIC  — the server renders the whole view tree into { uiJsonData }. The
+///           card can be redesigned with no app release; each push carries the
+///           UI (~780B for Vyre's card, 19% of ActivityKit's 4096B cap).
+/// DYNAMIC — the definition is bundled in the app via app.json
+///           `liveActivities: [{ id, entry }]` and the server sends { props }.
+///           Tiny payloads, one copy of the layout, but a redesign needs a
+///           release. @experimental in Voltra 2.4.0.
+///
+/// Stored per row because advance() and finish() MUST use the same shape the
+/// start used — a dynamic activity handed { uiJsonData } decodes nothing.
+enum LiveActivityRenderMode {
+  STATIC
+  DYNAMIC
+}
+
+enum LiveActivityStage {
+  SUBMITTED   // accepted, nothing has moved yet
+  CONVERTING  // crypto → fiat leg in progress
+  SENDING     // fiat payout dispatched to the bank
+  COMPLETED   // terminal, happy
+  FAILED      // terminal, sad
+}
+
 model OtcRequest {
   id          String      @id @default(uuid())
   fullName    String
@@ -476,6 +512,7 @@ model User {
   PinAttempt     PinAttempt[]
   VirtualAccount VirtualAccount[]
   deviceTokens   DeviceToken[]
+  liveActivities LiveActivity[]
 
   // 🚀 PERFORMANCE INDEXES - ADD THESE
   @@index([userStatus]) // Fast status lookups
@@ -1676,6 +1713,7 @@ model VirtualTransaction {
   fromAccount   VirtualAccount? @relation(fields: [fromAccountId], references: [id])
   ledgerEntries LedgerEntry[]
   blocks        Block[]
+  liveActivities LiveActivity[]
 
   @@index([fromAccountId])
   @@index([toAccountId])
@@ -1899,12 +1937,17 @@ model DeviceToken {
   deviceName String?
   osVersion  String?
   appVersion String?
- 
-  /// iOS push-to-start token for Live Activities. Per-install, exactly like
-  /// the push token — which is why it lives here and not on User. Spondle's
-  /// `User.liveActivityPushToStartToken` has the identical two-device bug.
-  /// Unused until Phase 4; here now so the migration does not run twice.
-  liveActivityStartToken String?
+
+  /// iOS 17.2+ push-to-start token. Lets the server CREATE an activity while
+  /// the app is killed. Below 17.2 this stays null and only the app can start
+  /// one.
+  liveActivityPushToStartToken String?
+
+  /// Push-to-start tokens rotate. Without a timestamp there is no way to spot
+  /// a device that silently stopped reporting a new one.
+  liveActivityTokenUpdatedAt DateTime?
+  
+  liveActivities LiveActivity[]
  
   createdAt  DateTime @default(now())
   lastSeenAt DateTime @updatedAt
@@ -1919,6 +1962,115 @@ model PushReceipt {
   createdAt DateTime @default(now())
  
   @@index([createdAt])
+}
+
+model LiveActivity {
+  id String @id @default(cuid())
+ 
+  // ── Generic subject ───────────────────────────────────────────────────────
+  // Both non-null, so @@unique below is a real constraint. Spondle used three
+  // nullable FKs (choreInstanceId?, billId?, briefKey?) with a @@unique on
+  // each; in Postgres NULLs do not collide in a unique index, so a row with
+  // all three null satisfies all three and you can insert unlimited duplicates.
+  //
+  // subjectType is a free string on purpose — "WITHDRAWAL",
+  // "CROSS_BORDER_TRANSFER", "DEPOSIT", whatever comes next. An enum here would
+  // be the same trap as the stage enum.
+  subjectType String
+  subjectId   String
+ 
+  // Real FK for the common case, so cascade delete and joins still work where
+  // the subject IS a transaction. Must agree with subjectType/subjectId when
+  // set — nothing in the DB enforces that, so set both in one place (the
+  // service does).
+  virtualTransactionId String?
+  virtualTransaction   VirtualTransaction? @relation(fields: [virtualTransactionId], references: [id], onDelete: Cascade)
+ 
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+ 
+  // ── Device ────────────────────────────────────────────────────────────────
+  // DeviceToken's primary key is `token String @id` — there is no `id` column —
+  // so the FK scalar holds a token and references [token]. Written as
+  // references: [id] this fails validation with P1012.
+  //
+  // Device identity in this schema IS the push token, so a token rotation
+  // creates a NEW DeviceToken row (the PK cannot be updated in place) and this
+  // FK can end up pointing at the superseded one. SetNull keeps that harmless:
+  // the activity survives with deviceToken null, and update/end still work
+  // because they use activityPushToken, stored here directly.
+  deviceToken String?
+  device      DeviceToken? @relation(fields: [deviceToken], references: [token], onDelete: SetNull)
+ 
+  // Voltra ships every activity under one attributes-type and its client keys
+  // stop/isActive by NAME, so the name is the concurrency slot: one live
+  // activity per name per device. Stored so a second slot needs no migration.
+  activityName String @default("VyreActivity")
+ 
+  renderMode LiveActivityRenderMode @default(STATIC)
+ 
+  /// Only set when renderMode = DYNAMIC. Must equal the `id` in app.json's
+  /// `liveActivities` entry: the plugin derives the generated Swift attributes
+  /// struct name from it (`vyre_activity` →
+  /// `VoltraVyreActivityLiveActivityAttributes`), so a mismatch leaves Apple
+  /// with no type to attach the activity to and the start is rejected.
+  definitionId String?
+ 
+  // ── Tokens ────────────────────────────────────────────────────────────────
+  // Nullable. Spondle's is non-null, so its push-to-start path stores
+  // `activityId: ACTIVITY_NAME` — the activity NAME in the id column, because
+  // push-to-start returns no id. Null until the client reports the real one.
+  activityId String?
+ 
+  /// The per-activity token. The ONLY token that can update or end this
+  /// activity; a push-to-start token cannot, whatever Spondle's fallback claims.
+  activityPushToken String?
+ 
+  // ── Progress ──────────────────────────────────────────────────────────────
+  // Generic shape, no domain vocabulary. stepLabel is the caller's words.
+  stepIndex Int     @default(0)
+  stepCount Int     @default(1)
+  stepLabel String?
+ 
+  /// Exactly what was last sent to APNs. A retry or the sweep re-sends THIS
+  /// rather than re-deriving it from data that has since moved on — the same
+  /// class of bug as internalOfframpService.complete() returning a pre-update
+  /// row. Store what you sent; resend that.
+  lastContentState Json?
+ 
+  status   LiveActivityStatus @default(ACTIVE)
+  platform String             @default("ios")
+ 
+  // ── End reliability ───────────────────────────────────────────────────────
+  // Spondle writes status: 'ENDED' outside its if/else, so a failed APNs end
+  // still records ENDED — the DB says gone while the card sits on the lock
+  // screen until its dismissalDate. For a chore that is untidy; for
+  // "Withdrawal in progress" on a withdrawal that already paid out it is a
+  // trust problem. Here the row stays ACTIVE on failure and the sweep retries,
+  // which needs a counter so it gives up instead of hammering a dead token.
+  endAttempts  Int     @default(0)
+  errorMessage String? @db.Text
+ 
+  startedAt      DateTime  @default(now())
+  endRequestedAt DateTime?
+  endedAt        DateTime?
+  lastUpdatedAt  DateTime  @default(now())
+ 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+ 
+  // One activity per subject per user. Multi-device therefore means the
+  // activity lands on ONE device — whichever most recently reported a
+  // push-to-start token — which also matches Voltra's one-slot-per-activityName
+  // constraint. To put it on every device of a user, add deviceToken to this
+  // key; nothing else in the model changes.
+  @@unique([subjectType, subjectId, userId])
+  @@index([userId, status])
+  @@index([status, activityName])
+  @@index([deviceToken])
+  @@index([virtualTransactionId])
+  // The sweep's query: ends requested but never confirmed.
+  @@index([status, endRequestedAt])
 }
 
 
