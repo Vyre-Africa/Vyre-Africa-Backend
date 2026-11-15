@@ -119,7 +119,7 @@ const config = {
         teamId: process.env.APNS_TEAM_ID || '',
         keyContent: process.env.APNS_KEY_CONTENT || '',
         bundleId: 'africa.vyre.app',
-        production: process.env.NODE_ENV === 'production',
+        production: process.env.APNS_PRODUCTION === 'true',
     },
 
 
