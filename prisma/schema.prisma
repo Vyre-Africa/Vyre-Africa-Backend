@@ -1946,7 +1946,7 @@ model DeviceToken {
   /// Push-to-start tokens rotate. Without a timestamp there is no way to spot
   /// a device that silently stopped reporting a new one.
   liveActivityTokenUpdatedAt DateTime?
-  
+
   liveActivities LiveActivity[]
  
   createdAt  DateTime @default(now())
@@ -2031,6 +2031,8 @@ model LiveActivity {
   stepIndex Int     @default(0)
   stepCount Int     @default(1)
   stepLabel String?
+
+  baseProps Json?
  
   /// Exactly what was last sent to APNs. A retry or the sweep re-sends THIS
   /// rather than re-deriving it from data that has since moved on — the same

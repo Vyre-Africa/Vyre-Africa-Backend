@@ -23,8 +23,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Prisma } from '@prisma/client';
-import prisma from '../config/prisma.client';
-import logger from '../config/logger';
+import prisma from '../config/prisma.client';          // ← adjust to Vyre's path
+import logger from '../config/logger';                  // ← adjust to Vyre's path
 import apnsService, { MAX_LAYOUT_BYTES, type ActivityIdentity } from './apns.service';
 import { renderLiveActivityToString } from '@use-voltra/ios-server';
 import {
@@ -217,6 +217,7 @@ class LiveActivityService {
                 stepIndex: params.props.stepIndex,
                 stepCount: params.props.stepCount,
                 stepLabel: params.props.stepLabel,
+                baseProps: params.props as unknown as Prisma.InputJsonValue,
                 ...(contentState ? { lastContentState: contentState as Prisma.InputJsonValue } : {}),
                 status: 'ACTIVE',
                 platform: 'ios',
@@ -232,6 +233,7 @@ class LiveActivityService {
                 stepIndex: params.props.stepIndex,
                 stepCount: params.props.stepCount,
                 stepLabel: params.props.stepLabel,
+                baseProps: params.props as unknown as Prisma.InputJsonValue,
                 ...(contentState ? { lastContentState: contentState as Prisma.InputJsonValue } : {}),
                 status: 'ACTIVE',
                 startedAt: new Date(),
@@ -390,6 +392,7 @@ class LiveActivityService {
                 stepIndex: params.props.stepIndex,
                 stepCount: params.props.stepCount,
                 stepLabel: params.props.stepLabel,
+                baseProps: params.props as unknown as Prisma.InputJsonValue,
                 lastContentState: contentState as Prisma.InputJsonValue,
                 status: 'ACTIVE',
                 platform: 'ios',
@@ -405,6 +408,7 @@ class LiveActivityService {
                 stepIndex: params.props.stepIndex,
                 stepCount: params.props.stepCount,
                 stepLabel: params.props.stepLabel,
+                baseProps: params.props as unknown as Prisma.InputJsonValue,
                 lastContentState: contentState as Prisma.InputJsonValue,
                 status: 'ACTIVE',
                 startedAt: new Date(),
@@ -432,7 +436,18 @@ class LiveActivityService {
      * it is a no-op until the client has reported one — which is why a
      * push-to-start activity on a never-opened app cannot be updated.
      */
-    async advance(params: SubjectKey & { props: VyreActivityProps }) {
+    /**
+     * `patch` is merged over the props the activity started with, so a caller
+     * only has to say what changed — usually a step and a label.
+     *
+     * This is what makes the card usable from a provider webhook. A payout
+     * callback knows a reference and a status; it does not know that the
+     * transfer began as USDC and is becoming naira. That pair was recorded on
+     * the row at start, by the one call site that did know, and is merged back
+     * in here. A full props object is still accepted — it is a valid Partial —
+     * so nothing that already passes everything breaks.
+     */
+    async advance(params: SubjectKey & { patch: Partial<VyreActivityProps> }) {
         const row = await prisma.liveActivity.findUnique({ where: this.whereKey(params) });
 
         if (!row || row.status !== 'ACTIVE') return { updated: false, reason: 'no active activity' };
@@ -441,9 +456,23 @@ class LiveActivityService {
             return { updated: false, reason: 'no per-activity token' };
         }
 
+        const props = this.mergeProps(row, params.patch);
+        if (!props) {
+            // Nothing stored and the patch is not self-sufficient. Rendering a
+            // half-populated card is worse than not updating: the pair would
+            // fall back to placeholder tickers and the customer would watch
+            // their USDC turn into someone else's currency.
+            logger.warn('[LA] advance: cannot resolve full props', {
+                id: row.id,
+                hasBase: row.baseProps !== null,
+                patchKeys: Object.keys(params.patch),
+            });
+            return { updated: false, reason: 'incomplete props and no stored baseProps' };
+        }
+
         // The row's mode, not a parameter: a dynamic activity handed
         // { uiJsonData } decodes nothing, and vice versa.
-        const contentState = await this.contentStateFor(row.renderMode as RenderMode, params.props);
+        const contentState = await this.contentStateFor(row.renderMode as RenderMode, props);
         if (!contentState) return { updated: false, reason: 'could not render the content state' };
 
         const result = await apnsService.updateLiveActivity(row.activityPushToken, contentState, {
@@ -484,9 +513,13 @@ class LiveActivityService {
         await prisma.liveActivity.update({
             where: { id: row.id },
             data: {
-                stepIndex: params.props.stepIndex,
-                stepCount: params.props.stepCount,
-                stepLabel: params.props.stepLabel,
+                stepIndex: props.stepIndex,
+                stepCount: props.stepCount,
+                stepLabel: props.stepLabel,
+                // baseProps is NOT rewritten here. It is the starting state, and
+                // overwriting it with each merged result would let a one-off
+                // patch — a failure label, say — become the baseline every
+                // later step inherits.
                 lastContentState: contentState as Prisma.InputJsonValue,
                 errorMessage: null,
                 lastUpdatedAt: new Date(),
@@ -507,13 +540,25 @@ class LiveActivityService {
      * instantly means the resolution is never read.
      */
     async finish(params: SubjectKey & {
-        props: VyreActivityProps;
+        patch: Partial<VyreActivityProps>;
         lingerMs?: number;
     }) {
         const row = await prisma.liveActivity.findUnique({ where: this.whereKey(params) });
         if (!row || row.status !== 'ACTIVE') return { ended: false, reason: 'no active activity' };
 
-        const contentState = await this.contentStateFor(row.renderMode as RenderMode, params.props);
+        // Same merge as advance: a settlement webhook says "succeeded", and the
+        // pair it succeeded between comes off the row.
+        const props = this.mergeProps(row, params.patch);
+        if (!props) {
+            logger.warn('[LA] finish: cannot resolve full props', {
+                id: row.id,
+                hasBase: row.baseProps !== null,
+                patchKeys: Object.keys(params.patch),
+            });
+            return { ended: false, reason: 'incomplete props and no stored baseProps' };
+        }
+
+        const contentState = await this.contentStateFor(row.renderMode as RenderMode, props);
         const dismissalDate = Math.floor((Date.now() + (params.lingerMs ?? 30_000)) / 1000);
 
         // Mark the intent BEFORE sending. If the process dies mid-send, the
@@ -523,9 +568,9 @@ class LiveActivityService {
             where: { id: row.id },
             data: {
                 endRequestedAt: new Date(),
-                stepIndex: params.props.stepIndex,
-                stepCount: params.props.stepCount,
-                stepLabel: params.props.stepLabel,
+                stepIndex: props.stepIndex,
+                stepCount: props.stepCount,
+                stepLabel: props.stepLabel,
                 ...(contentState ? { lastContentState: contentState as Prisma.InputJsonValue } : {}),
             },
         });
@@ -549,16 +594,35 @@ class LiveActivityService {
             return { ended: false, reason: 'no per-activity token' };
         }
 
-        return this.sendEnd(row.id, row.activityPushToken, contentState, dismissalDate, row.endAttempts);
+        return this.sendEnd(row.id, row.activityPushToken, contentState, dismissalDate);
     }
 
-    /** Shared by finish() and the sweep so the bookkeeping cannot diverge. */
+    /**
+     * Shared by finish() and the sweep so the bookkeeping cannot diverge.
+     *
+     * Two things here are deliberate, and both came from a row that ended up
+     * ACTIVE with an endedAt set and an attempt count that did not add up:
+     *
+     *   · endAttempts uses Prisma's { increment: 1 } rather than
+     *     priorAttempts + 1. The caller's copy of the row is already stale by
+     *     the time APNs answers — finish() reads it, writes endRequestedAt,
+     *     then awaits a network round trip — so computing the next value from
+     *     it loses or duplicates counts whenever anything else touches the row,
+     *     a concurrent sweep most obviously. The database is the only thing
+     *     that knows the current value.
+     *
+     *   · endedAt is ALWAYS written, explicitly null when the row stays ACTIVE.
+     *     Previously it was only written on the terminal branches, which made
+     *     "ACTIVE with an endedAt" representable: any later write that moved
+     *     status back to ACTIVE left the stale timestamp behind. A total write
+     *     makes the invariant — ACTIVE implies no endedAt — hold by
+     *     construction rather than by every branch remembering.
+     */
     private async sendEnd(
         id: string,
         token: string,
         contentState: Record<string, any> | null,
         dismissalDate: number,
-        priorAttempts: number,
     ) {
         const result = await apnsService.endLiveActivity(
             token,
@@ -567,37 +631,49 @@ class LiveActivityService {
         );
 
         if (result.success) {
-            await prisma.liveActivity.update({
+            const row = await prisma.liveActivity.update({
                 where: { id },
                 data: {
                     status: 'ENDED',
                     endedAt: new Date(),
-                    endAttempts: priorAttempts + 1,
+                    endAttempts: { increment: 1 },
                     errorMessage: null,
                 },
             });
+            logger.info('[LA] ended', { id, attempts: row.endAttempts });
             return { ended: true };
         }
 
-        const attempts = priorAttempts + 1;
         const dead = result.verdict === 'prune-token';
-        const exhausted = attempts >= MAX_END_ATTEMPTS;
+
+        // Read the authoritative count back from the same write that bumped it,
+        // rather than guessing it from a stale copy.
+        const bumped = await prisma.liveActivity.update({
+            where: { id },
+            data: { endAttempts: { increment: 1 } },
+            select: { endAttempts: true },
+        });
+        const exhausted = bumped.endAttempts >= MAX_END_ATTEMPTS;
 
         // ENDED is only ever written on success. A dead token means the card is
         // already gone from the device, so ENDED is true then too.
+        const terminal = dead || exhausted;
         await prisma.liveActivity.update({
             where: { id },
             data: {
                 status: dead ? 'ENDED' : exhausted ? 'FAILED' : 'ACTIVE',
-                endAttempts: attempts,
                 errorMessage: result.reason ?? result.error,
-                ...(dead || exhausted ? { endedAt: new Date() } : {}),
+                // Always set, never merely omitted. See the note above.
+                endedAt: terminal ? new Date() : null,
                 ...(dead ? { activityPushToken: null } : {}),
             },
         });
 
         logger.warn('[LA] end failed', {
-            id, attempts, verdict: result.verdict,
+            id,
+            attempts: bumped.endAttempts,
+            max: MAX_END_ATTEMPTS,
+            verdict: result.verdict,
             reason: result.reason ?? result.error,
             outcome: dead ? 'token dead, card already gone' : exhausted ? 'giving up' : 'will retry',
         });
@@ -635,7 +711,6 @@ class LiveActivityService {
                 row.activityPushToken!,
                 (row.lastContentState as Record<string, any> | null) ?? null,
                 Math.floor(Date.now() / 1000),
-                row.endAttempts,
             );
             if (r.ended) retried++;
         }
@@ -665,7 +740,6 @@ class LiveActivityService {
                     row.activityPushToken,
                     (row.lastContentState as Record<string, any> | null) ?? null,
                     Math.floor(Date.now() / 1000),
-                    row.endAttempts,
                 );
                 if (r.ended) forced++;
             } else {
@@ -697,6 +771,82 @@ class LiveActivityService {
                 subjectId: k.subjectId,
                 userId: k.userId,
             },
+        };
+    }
+
+    /**
+     * Merge a patch over the stored starting props, and refuse if the result is
+     * not a renderable card.
+     *
+     * Returns null rather than a partial object. The layout coerces missing
+     * fields to placeholders — `asset(raw.from, 'USDC')` in the dynamic
+     * definition will happily invent a ticker — so a half-populated props
+     * object does not fail loudly, it renders a plausible LIE. For a transfer
+     * card that is worse than skipping the update: the customer sees a pair
+     * that is not theirs and has no way to tell it is wrong.
+     *
+     * `baseProps` is untrusted on read: it is JSON from a column that an
+     * earlier deploy wrote, so a row created before this field existed has
+     * null, and a row written by an older shape may be missing keys the
+     * current layout requires.
+     */
+    private mergeProps(
+        row: {
+            baseProps: Prisma.JsonValue | null;
+            stepIndex: number;
+            stepCount: number;
+            stepLabel: string | null;
+        },
+        patch: Partial<VyreActivityProps>,
+    ): VyreActivityProps | null {
+        const base =
+            row.baseProps && typeof row.baseProps === 'object' && !Array.isArray(row.baseProps)
+                ? (row.baseProps as Record<string, unknown>)
+                : {};
+
+        // Three layers, and the order is the whole point.
+        //
+        //   base    the immutable identity of the card — the asset pair, the
+        //           deep link, how many steps there are. Written once at start.
+        //   row     where the card actually IS right now. advance() keeps these
+        //           columns current, and baseProps does NOT: it still says
+        //           stepIndex 0 forever.
+        //   patch   what is changing on this call.
+        //
+        // Skipping the middle layer is a bug I shipped and a simulation caught:
+        // a failure patch that omits stepIndex — on purpose, so the chevrons
+        // freeze where the transfer stopped — merged straight onto base and
+        // rewound the card from step 3 back to step 1, telling the customer
+        // their transfer failed at the beginning.
+        const merged = {
+            ...base,
+            stepIndex: row.stepIndex,
+            stepCount: row.stepCount,
+            ...(row.stepLabel !== null ? { stepLabel: row.stepLabel } : {}),
+            ...patch,
+        } as Partial<VyreActivityProps>;
+
+        // The fields with no safe default. A step label or an action can be
+        // absent and the card still tells the truth; an asset pair cannot.
+        const ok =
+            typeof merged.from?.code === 'string' &&
+            merged.from.code.length > 0 &&
+            typeof merged.to?.code === 'string' &&
+            merged.to.code.length > 0 &&
+            typeof merged.stepCount === 'number' &&
+            merged.stepCount >= 1 &&
+            typeof merged.stepIndex === 'number' &&
+            typeof merged.deepLink === 'string' &&
+            merged.deepLink.length > 0;
+
+        if (!ok) return null;
+
+        return {
+            ...(merged as VyreActivityProps),
+            // stepLabel and state are the two the caller most often omits, and
+            // both have an honest default: no label, and "still going".
+            stepLabel: merged.stepLabel ?? '',
+            state: merged.state ?? 'in_progress',
         };
     }
 
@@ -765,7 +915,7 @@ class LiveActivityService {
             // a failed webhook, so degrade rather than throw.
             logger.error('[LA] render failed — no activity for this state', {
                 error: err?.message,
-                title: props.title,
+                pair: `${props.from?.code} → ${props.to?.code}`,
                 stepCount: props.stepCount,
             });
             return null;
@@ -781,7 +931,7 @@ class LiveActivityService {
             logger.error('[LA] layout over budget — not sending', {
                 bytes: uiJsonData.length,
                 budget: MAX_LAYOUT_BYTES,
-                title: props.title,
+                pair: `${props.from?.code} → ${props.to?.code}`,
             });
             return null;
         }
