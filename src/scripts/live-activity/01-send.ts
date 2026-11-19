@@ -45,7 +45,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dotenv/config';
-import prisma from '../../config/prisma.client';     // ← adjust to Vyre's path
+import prisma from '../../config/prisma.client';
 import liveActivityService from '../../services/liveActivity.service';
 import apnsService from '../../services/apns.service';
 import type { VyreActivityProps } from '../../services/liveActivities/VyreActivity';
@@ -57,27 +57,65 @@ import type { VyreActivityProps } from '../../services/liveActivities/VyreActivi
 const SUBJECT_TYPE = 'SMOKE_TEST';
 const SUBJECT_ID = 'smoke-0001';
 
-/** Four invented steps with the shape of a real payout. */
-const STEPS = [
-    { label: 'Received',  detail: 'Request accepted' },
-    { label: 'Converting', detail: 'USDC → NGN' },
-    { label: 'Sending',   detail: 'GTBank ••••8832' },
-    { label: 'Paid out',  detail: 'GTBank ••••8832' },
-];
+/**
+ * Four step labels with the shape of a real stablecoin → fiat payout.
+ *
+ * Labels only. No amount, no account, no reference: the card carries the PAIR
+ * and the PROGRESS, because a lock screen is readable by anyone holding the
+ * phone.
+ */
+const STEPS = ['Received', 'Converting', 'Sending', 'Paid out'];
+
+/**
+ * `assetName` points at assets/voltra/<name>.png. Until those exist the layout
+ * falls back to an SF Symbol per ticker, so this is testable with no artwork.
+ */
+const FROM = { code: 'USDC', assetName: 'usdc' };
+const TO = { code: 'NGN', assetName: 'ngn' };
+
+/**
+ * A URL, not a router path. `vyre://(tabs)/activity` mounts the screen outside
+ * its layout — no tab bar, no history — which is how a tapped card stranded the
+ * app until a force-quit. +native-intent.ts strips groups defensively now, but
+ * producers should not emit them.
+ */
+const DEEP_LINK = 'vyre://activity';
 
 function propsFor(stepIndex: number, state: VyreActivityProps['state']): VyreActivityProps {
     const i = Math.max(0, Math.min(STEPS.length - 1, stepIndex));
     return {
-        title: 'Test withdrawal',
-        amount: '₦250,000.00',
-        detail: STEPS[i].detail,
+        from: FROM,
+        to: TO,
         stepIndex: i,
         stepCount: STEPS.length,
-        stepLabel: state === 'failed' ? 'Stopped' : STEPS[i].label,
+        stepLabel: state === 'failed' ? 'Stopped' : STEPS[i],
         state,
-        // Singular. Vyre's routes are /transaction/[id] and /wallet/[id]; the
-        // plural forms 404, which cost an evening on the push deep links.
-        deepLink: 'vyre://(tabs)/activity',
+        deepLink: DEEP_LINK,
+        ...(state === 'failed'
+            ? { action: { label: 'Get help', url: 'vyre://support', symbol: 'questionmark.circle' } }
+            : {}),
+    };
+}
+
+/**
+ * What a later step actually knows — deliberately NOT the asset pair.
+ *
+ * `start` is the only call here that passes full props. Everything after it
+ * sends a patch, which is what a provider webhook would realistically carry: a
+ * status and a position, no currencies. If the pair reappears on the card after
+ * an `--advance`, the merge against the stored baseProps worked. If the card
+ * shows placeholder tickers, it did not — and that is the single thing these
+ * two commands are now testing.
+ */
+function stepPatch(
+    stepIndex: number,
+    state: VyreActivityProps['state'],
+): Partial<VyreActivityProps> {
+    const i = Math.max(0, Math.min(STEPS.length - 1, stepIndex));
+    return {
+        stepIndex: i,
+        stepLabel: state === 'failed' ? 'Stopped' : STEPS[i],
+        state,
         ...(state === 'failed'
             ? { action: { label: 'Get help', url: 'vyre://support', symbol: 'questionmark.circle' } }
             : {}),
@@ -218,8 +256,8 @@ async function main() {
             return;
         }
         const next = Math.min(STEPS.length - 2, row.stepIndex + 1); // last step is for --end
-        console.log(`\n  advancing ${row.stepIndex + 1} → ${next + 1} ("${STEPS[next].label}")…`);
-        const out = await liveActivityService.advance({ ...key, props: propsFor(next, 'in_progress') });
+        console.log(`\n  advancing ${row.stepIndex + 1} → ${next + 1} ("${STEPS[next]}")…`);
+        const out = await liveActivityService.advance({ ...key, patch: stepPatch(next, 'in_progress') });
         console.log(out.updated ? '  updated — the card should have changed in place' : `  NOT updated: ${out.reason}`);
         await showStatus(userId);
         console.log();
@@ -248,7 +286,7 @@ async function main() {
         });
 
         console.log('  attempting the end (expected to fail)…');
-        const out = await liveActivityService.finish({ ...key, props: propsFor(3, 'succeeded') });
+        const out = await liveActivityService.finish({ ...key, patch: stepPatch(3, 'succeeded') });
         console.log(`  finish returned: ${JSON.stringify(out)}`);
 
         const after = await prisma.liveActivity.findUnique({ where: { id: row.id } });
@@ -264,10 +302,35 @@ async function main() {
         });
 
         console.log('\n  what matters:');
-        console.log(`    status after the failed end : ${after?.status}  ${after?.status === 'ACTIVE' ? '← correct' : '← WRONG, it should still be ACTIVE'}`);
         console.log(`    endRequestedAt set          : ${after?.endRequestedAt ? 'yes ← correct' : 'no ← WRONG, the sweep cannot find it'}`);
         console.log(`    endAttempts                 : ${after?.endAttempts}`);
-        console.log('\n  now run --sweep. The card should dismiss and the row go ENDED.\n');
+
+        // Three readings, and only one of them is a failure.
+        //
+        // This test deliberately creates the exact state the background sweep
+        // exists to repair, so it RACES a registered 5-minute job. If the sweep
+        // wins, the row is already ENDED by the time we look — which is the
+        // behaviour under test, not a fault. An earlier version called that
+        // "WRONG", which is a worse outcome than having no check at all.
+        if (after?.status === 'ACTIVE') {
+            console.log('    status after the failed end : ACTIVE  ← correct');
+            console.log('\n  The failed end did NOT write ENDED. That is the whole point:');
+            console.log('  Spondle writes it regardless, so its DB claims the card is gone');
+            console.log('  while it sits on the lock screen until its dismissal date.');
+            console.log('\n  Now run --sweep. The card should dismiss and the row go ENDED.\n');
+        } else if (after?.status === 'ENDED' && (after?.endAttempts ?? 0) > 1) {
+            console.log('    status after the failed end : ENDED  ← the sweep got there first');
+            console.log('\n  Not a failure. The registered sweep woke up between the corrupt-token');
+            console.log('  end and this read, found the row by endRequestedAt, retried with the');
+            console.log('  REAL token and succeeded. Check the lock screen: the card should be');
+            console.log('  gone, which is the end path working rather than the test failing.');
+            console.log('\n  To watch the sequence by hand instead, pause the worker first.\n');
+        } else {
+            console.log(`    status after the failed end : ${after?.status}  ← UNEXPECTED`);
+            console.log('\n  A failed end should leave the row ACTIVE for the sweep, or the sweep');
+            console.log('  should have ended it with endAttempts > 1. Neither happened, so the');
+            console.log('  conditional status write needs looking at.\n');
+        }
         return;
     }
 
@@ -284,7 +347,17 @@ async function main() {
         console.log('\n  finishing…');
         const out = await liveActivityService.finish({
             ...key,
-            props: propsFor(3, has('--fail') ? 'failed' : 'succeeded'),
+            // A success completes the journey, so it names the last step. A
+            // failure does NOT: omitting stepIndex lets mergeProps take it
+            // from the row, freezing the chevrons where the transfer actually
+            // stopped. Passing 3 here said "failed at step 4 of 4", which is a
+            // lie about where the money got to — and it is the same mistake
+            // transferActivity.finishTransferCard avoids. The driver has to
+            // match the adapter or it validates behaviour nobody ships.
+            patch: has('--fail')
+                ? { stepLabel: 'Stopped', state: 'failed' as const,
+                    action: { label: 'Get help', url: 'vyre://support', symbol: 'questionmark.circle' } }
+                : stepPatch(3, 'succeeded'),
             // Long enough to read the final frame. Dismissing instantly means
             // the resolution is never seen, which defeats the point.
             lingerMs: 20_000,

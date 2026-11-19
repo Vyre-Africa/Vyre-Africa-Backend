@@ -5237,3 +5237,359 @@ Error: simulated SMTP failure
 2026-11-15 17:42:08 [info] Connected to Ably! 
 2026-11-15 17:42:30 [info] Server running on port 4000 
 2026-11-15 17:42:32 [info] Connected to Ably! 
+2026-11-15 21:59:47 [info] [APNS] provider up (sandbox gateway) 
+2026-11-15 21:59:48 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-15 21:59:48 [info] [APNS] provider shut down 
+2026-11-15 21:59:48 [info] [APNS] provider up (sandbox gateway) 
+2026-11-15 21:59:49 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-15 21:59:49 [info] [APNS] provider shut down 
+2026-11-15 21:59:50 [info] [APNS] provider up (sandbox gateway) 
+2026-11-15 21:59:51 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-15 21:59:51 [warn] [LA] start failed 
+2026-11-15 21:59:51 [info] [APNS] provider shut down 
+2026-11-15 22:08:35 [info] [APNS] provider up (sandbox gateway) 
+2026-11-15 22:08:36 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-15 22:08:36 [info] [APNS] provider shut down 
+2026-11-15 22:08:37 [info] [APNS] provider up (sandbox gateway) 
+2026-11-15 22:08:37 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-15 22:08:37 [info] [APNS] provider shut down 
+2026-11-15 22:08:38 [info] [APNS] provider up (sandbox gateway) 
+2026-11-15 22:08:39 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-15 22:08:39 [warn] [LA] start failed 
+2026-11-15 22:08:41 [info] [APNS] provider shut down 
+2026-11-15 22:23:32 [info] [APNS] provider up (production gateway) 
+2026-11-15 22:23:34 [info] [LA] started 
+2026-11-15 22:23:35 [info] [APNS] provider shut down 
+2026-11-15 22:25:00 [info] [LA] advance skipped — client has not reported a token yet 
+2026-11-15 22:28:16 [info] [APNS] provider up (production gateway) 
+2026-11-15 22:28:18 [info] [APNS] provider shut down 
+2026-11-15 22:29:52 [info] [APNS] provider up (production gateway) 
+2026-11-15 22:29:54 [warn] [APNS] LA end attempt 1 failed 
+2026-11-15 22:29:54 [info] [APNS] provider shut down 
+2026-11-15 22:29:55 [info] [APNS] provider up (production gateway) 
+2026-11-15 22:29:56 [warn] [APNS] LA end attempt 2 failed 
+2026-11-15 22:29:56 [warn] [LA] end failed 
+2026-11-15 22:29:57 [info] [APNS] provider shut down 
+2026-11-15 22:30:22 [info] [APNS] provider up (production gateway) 
+2026-11-15 22:30:23 [warn] [APNS] LA end attempt 1 failed 
+2026-11-15 22:30:23 [warn] [LA] end failed 
+2026-11-15 22:30:24 [info] [APNS] provider shut down 
+2026-11-15 22:31:02 [info] [APNS] provider up (production gateway) 
+2026-11-15 22:31:04 [warn] [APNS] LA end attempt 1 failed 
+2026-11-15 22:31:04 [info] [APNS] provider shut down 
+2026-11-15 22:31:05 [info] [APNS] provider up (production gateway) 
+2026-11-15 22:31:07 [warn] [APNS] LA end attempt 2 failed 
+2026-11-15 22:31:07 [warn] [LA] end failed 
+2026-11-15 22:31:08 [info] [APNS] provider shut down 
+2026-11-16 02:14:55 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:14:57 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-16 02:14:57 [info] [APNS] provider shut down 
+2026-11-16 02:14:58 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:15:00 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-16 02:15:00 [info] [APNS] provider shut down 
+2026-11-16 02:15:01 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:15:03 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-16 02:15:03 [warn] [LA] start failed 
+2026-11-16 02:15:03 [info] [APNS] provider shut down 
+2026-11-16 02:15:42 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:15:45 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-16 02:15:45 [info] [APNS] provider shut down 
+2026-11-16 02:15:45 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:15:46 [info] [APNS] LA start (static) sent on attempt 2 
+2026-11-16 02:15:47 [info] [LA] started 
+2026-11-16 02:15:47 [info] [APNS] provider shut down 
+2026-11-16 02:17:06 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:17:08 [warn] [APNS] LA update attempt 1 failed 
+2026-11-16 02:17:08 [info] [APNS] provider shut down 
+2026-11-16 02:17:09 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:17:10 [info] [APNS] LA update sent on attempt 2 
+2026-11-16 02:17:11 [info] [APNS] provider shut down 
+2026-11-16 02:21:36 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:21:39 [warn] [APNS] LA end attempt 1 failed 
+2026-11-16 02:21:39 [info] [APNS] provider shut down 
+2026-11-16 02:21:39 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:21:41 [warn] [APNS] LA end attempt 2 failed 
+2026-11-16 02:21:41 [info] [APNS] provider shut down 
+2026-11-16 02:21:42 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:21:44 [warn] [APNS] LA end attempt 3 failed 
+2026-11-16 02:21:45 [warn] [LA] end failed 
+2026-11-16 02:21:45 [info] [APNS] provider shut down 
+2026-11-16 02:23:56 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:23:59 [warn] [APNS] LA end attempt 1 failed 
+2026-11-16 02:23:59 [info] [APNS] provider shut down 
+2026-11-16 02:23:59 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:24:01 [warn] [APNS] LA end attempt 2 failed 
+2026-11-16 02:24:01 [info] [APNS] provider shut down 
+2026-11-16 02:24:02 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:24:04 [warn] [APNS] LA end attempt 3 failed 
+2026-11-16 02:24:05 [warn] [LA] end failed 
+2026-11-16 02:24:05 [info] [APNS] provider shut down 
+2026-11-16 02:24:24 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:24:26 [warn] [APNS] LA end attempt 1 failed 
+2026-11-16 02:24:26 [info] [APNS] provider shut down 
+2026-11-16 02:24:27 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:24:29 [warn] [APNS] LA end attempt 2 failed 
+2026-11-16 02:24:29 [info] [APNS] provider shut down 
+2026-11-16 02:24:30 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:24:32 [warn] [APNS] LA end attempt 3 failed 
+2026-11-16 02:24:32 [warn] [LA] end failed 
+2026-11-16 02:24:33 [info] [LA] sweep 
+2026-11-16 02:24:33 [info] [APNS] provider shut down 
+2026-11-16 02:25:11 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:25:13 [warn] [APNS] LA end attempt 1 failed 
+2026-11-16 02:25:13 [info] [APNS] provider shut down 
+2026-11-16 02:25:13 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:25:15 [warn] [APNS] LA end attempt 2 failed 
+2026-11-16 02:25:15 [info] [APNS] provider shut down 
+2026-11-16 02:25:16 [info] [APNS] provider up (production gateway) 
+2026-11-16 02:25:18 [warn] [APNS] LA end attempt 3 failed 
+2026-11-16 02:25:19 [warn] [LA] end failed 
+2026-11-16 02:25:19 [info] [LA] sweep 
+2026-11-16 02:25:20 [info] [APNS] provider shut down 
+2026-11-16 07:38:41 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:38:44 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-16 07:38:44 [info] [APNS] provider shut down 
+2026-11-16 07:38:44 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:38:46 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-16 07:38:46 [info] [APNS] provider shut down 
+2026-11-16 07:38:47 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:38:49 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-16 07:38:49 [warn] [LA] start failed 
+2026-11-16 07:38:50 [info] [APNS] provider shut down 
+2026-11-16 07:40:10 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:40:12 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-16 07:40:12 [info] [APNS] provider shut down 
+2026-11-16 07:40:13 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:40:15 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-16 07:40:15 [info] [APNS] provider shut down 
+2026-11-16 07:40:16 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:40:18 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-16 07:40:18 [warn] [LA] start failed 
+2026-11-16 07:40:19 [info] [APNS] provider shut down 
+2026-11-16 07:42:27 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:42:30 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-16 07:42:30 [info] [APNS] provider shut down 
+2026-11-16 07:42:30 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:42:32 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-16 07:42:32 [info] [APNS] provider shut down 
+2026-11-16 07:42:33 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:42:35 [info] [APNS] LA start (static) sent on attempt 3 
+2026-11-16 07:42:36 [info] [LA] started 
+2026-11-16 07:42:36 [info] [APNS] provider shut down 
+2026-11-16 07:45:07 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:45:09 [warn] [APNS] LA update attempt 1 failed 
+2026-11-16 07:45:09 [info] [APNS] provider shut down 
+2026-11-16 07:45:10 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:45:12 [warn] [APNS] LA update attempt 2 failed 
+2026-11-16 07:45:12 [info] [APNS] provider shut down 
+2026-11-16 07:45:13 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:45:15 [warn] [APNS] LA update attempt 3 failed 
+2026-11-16 07:45:15 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-16 07:45:16 [info] [APNS] provider shut down 
+2026-11-16 07:45:38 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:45:40 [warn] [APNS] LA update attempt 1 failed 
+2026-11-16 07:45:40 [info] [APNS] provider shut down 
+2026-11-16 07:45:41 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:45:43 [warn] [APNS] LA update attempt 2 failed 
+2026-11-16 07:45:43 [info] [APNS] provider shut down 
+2026-11-16 07:45:44 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:45:46 [warn] [APNS] LA update attempt 3 failed 
+2026-11-16 07:45:46 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-16 07:45:47 [info] [APNS] provider shut down 
+2026-11-16 07:48:33 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:48:35 [warn] [APNS] LA update attempt 1 failed 
+2026-11-16 07:48:35 [info] [APNS] provider shut down 
+2026-11-16 07:48:36 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:48:38 [warn] [APNS] LA update attempt 2 failed 
+2026-11-16 07:48:38 [info] [APNS] provider shut down 
+2026-11-16 07:48:39 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:48:41 [warn] [APNS] LA update attempt 3 failed 
+2026-11-16 07:48:41 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-16 07:48:42 [info] [APNS] provider shut down 
+2026-11-16 07:53:34 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:53:37 [info] [APNS] provider shut down 
+2026-11-16 07:54:53 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:54:55 [warn] [APNS] LA end attempt 1 failed 
+2026-11-16 07:54:55 [info] [APNS] provider shut down 
+2026-11-16 07:54:56 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:54:58 [warn] [APNS] LA end attempt 2 failed 
+2026-11-16 07:54:58 [info] [APNS] provider shut down 
+2026-11-16 07:54:59 [info] [APNS] provider up (production gateway) 
+2026-11-16 07:55:01 [warn] [APNS] LA end attempt 3 failed 
+2026-11-16 07:55:01 [warn] [LA] end failed 
+2026-11-16 07:55:02 [info] [APNS] provider shut down 
+2026-11-16 08:04:47 [info] [APNS] provider up (production gateway) 
+2026-11-16 08:04:50 [warn] [APNS] LA start (dynamic) attempt 1 failed 
+2026-11-16 08:04:50 [info] [APNS] provider shut down 
+2026-11-16 08:04:50 [info] [APNS] provider up (production gateway) 
+2026-11-16 08:04:52 [warn] [APNS] LA start (dynamic) attempt 2 failed 
+2026-11-16 08:04:52 [info] [APNS] provider shut down 
+2026-11-16 08:04:53 [info] [APNS] provider up (production gateway) 
+2026-11-16 08:04:55 [info] [APNS] LA start (dynamic) sent on attempt 3 
+2026-11-16 08:04:56 [info] [LA] started 
+2026-11-16 08:04:56 [info] [APNS] provider shut down 
+2026-11-18 21:22:06 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:22:09 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 21:22:09 [info] [APNS] provider shut down 
+2026-11-18 21:22:09 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:22:11 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 21:22:11 [info] [APNS] provider shut down 
+2026-11-18 21:22:12 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:22:14 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 21:22:14 [warn] [LA] start failed 
+2026-11-18 21:22:15 [info] [APNS] provider shut down 
+2026-11-18 21:22:50 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:22:52 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 21:22:52 [info] [APNS] provider shut down 
+2026-11-18 21:22:53 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:22:55 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 21:22:55 [info] [APNS] provider shut down 
+2026-11-18 21:22:56 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:22:58 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 21:22:58 [warn] [LA] start failed 
+2026-11-18 21:22:59 [info] [APNS] provider shut down 
+2026-11-18 21:27:53 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:27:57 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 21:27:57 [info] [APNS] provider shut down 
+2026-11-18 21:27:57 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:27:59 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 21:27:59 [info] [APNS] provider shut down 
+2026-11-18 21:28:00 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:28:02 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 21:28:02 [warn] [LA] start failed 
+2026-11-18 21:28:03 [info] [APNS] provider shut down 
+2026-11-18 21:28:49 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:28:51 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 21:28:51 [info] [APNS] provider shut down 
+2026-11-18 21:28:51 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:28:53 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 21:28:53 [info] [APNS] provider shut down 
+2026-11-18 21:28:54 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:28:57 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 21:28:57 [warn] [LA] start failed 
+2026-11-18 21:28:57 [info] [APNS] provider shut down 
+2026-11-18 21:35:57 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:35:59 [info] [LA] started 
+2026-11-18 21:35:59 [info] [APNS] provider shut down 
+2026-11-18 21:58:32 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:58:34 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 21:58:34 [info] [APNS] provider shut down 
+2026-11-18 21:58:35 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:58:37 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 21:58:37 [info] [APNS] provider shut down 
+2026-11-18 21:58:38 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:58:40 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 21:58:40 [warn] [LA] start failed 
+2026-11-18 21:58:41 [info] [APNS] provider shut down 
+2026-11-18 21:58:54 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:58:56 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 21:58:56 [info] [APNS] provider shut down 
+2026-11-18 21:58:57 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:58:59 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 21:58:59 [info] [APNS] provider shut down 
+2026-11-18 21:59:00 [info] [APNS] provider up (production gateway) 
+2026-11-18 21:59:02 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 21:59:02 [warn] [LA] start failed 
+2026-11-18 21:59:02 [info] [APNS] provider shut down 
+2026-11-18 22:15:36 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:15:39 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 22:15:39 [info] [APNS] provider shut down 
+2026-11-18 22:15:39 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:15:41 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 22:15:41 [info] [APNS] provider shut down 
+2026-11-18 22:15:42 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:15:44 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 22:15:44 [warn] [LA] start failed 
+2026-11-18 22:15:45 [info] [APNS] provider shut down 
+2026-11-18 22:16:20 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:16:22 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 22:16:22 [info] [APNS] provider shut down 
+2026-11-18 22:16:23 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:16:25 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 22:16:25 [info] [APNS] provider shut down 
+2026-11-18 22:16:26 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:16:28 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 22:16:28 [warn] [LA] start failed 
+2026-11-18 22:16:29 [info] [APNS] provider shut down 
+2026-11-18 22:17:20 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:17:22 [warn] [APNS] LA start (static) attempt 1 failed 
+2026-11-18 22:17:22 [info] [APNS] provider shut down 
+2026-11-18 22:17:23 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:17:25 [warn] [APNS] LA start (static) attempt 2 failed 
+2026-11-18 22:17:25 [info] [APNS] provider shut down 
+2026-11-18 22:17:26 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:17:28 [warn] [APNS] LA start (static) attempt 3 failed 
+2026-11-18 22:17:28 [warn] [LA] start failed 
+2026-11-18 22:17:28 [info] [APNS] provider shut down 
+2026-11-18 22:20:32 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:20:34 [info] [LA] started 
+2026-11-18 22:20:34 [info] [APNS] provider shut down 
+2026-11-18 22:24:57 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:24:59 [warn] [APNS] LA update attempt 1 failed 
+2026-11-18 22:24:59 [info] [APNS] provider shut down 
+2026-11-18 22:25:00 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:25:02 [warn] [APNS] LA update attempt 2 failed 
+2026-11-18 22:25:02 [info] [APNS] provider shut down 
+2026-11-18 22:25:03 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:25:05 [warn] [APNS] LA update attempt 3 failed 
+2026-11-18 22:25:05 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-18 22:25:06 [info] [APNS] provider shut down 
+2026-11-18 22:25:19 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:25:21 [warn] [APNS] LA update attempt 1 failed 
+2026-11-18 22:25:21 [info] [APNS] provider shut down 
+2026-11-18 22:25:22 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:25:24 [warn] [APNS] LA update attempt 2 failed 
+2026-11-18 22:25:24 [info] [APNS] provider shut down 
+2026-11-18 22:25:25 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:25:27 [warn] [APNS] LA update attempt 3 failed 
+2026-11-18 22:25:27 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-18 22:25:28 [info] [APNS] provider shut down 
+2026-11-18 22:26:29 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:26:32 [warn] [APNS] LA update attempt 1 failed 
+2026-11-18 22:26:32 [info] [APNS] provider shut down 
+2026-11-18 22:26:32 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:26:34 [warn] [APNS] LA update attempt 2 failed 
+2026-11-18 22:26:34 [info] [APNS] provider shut down 
+2026-11-18 22:26:35 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:26:37 [warn] [APNS] LA update attempt 3 failed 
+2026-11-18 22:26:37 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-18 22:26:38 [info] [APNS] provider shut down 
+2026-11-18 22:26:51 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:26:53 [warn] [APNS] LA update attempt 1 failed 
+2026-11-18 22:26:53 [info] [APNS] provider shut down 
+2026-11-18 22:26:54 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:26:56 [warn] [APNS] LA update attempt 2 failed 
+2026-11-18 22:26:56 [info] [APNS] provider shut down 
+2026-11-18 22:26:57 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:26:59 [warn] [APNS] LA update attempt 3 failed 
+2026-11-18 22:26:59 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-18 22:27:00 [info] [APNS] provider shut down 
+2026-11-18 22:27:31 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:27:34 [warn] [APNS] LA update attempt 1 failed 
+2026-11-18 22:27:34 [info] [APNS] provider shut down 
+2026-11-18 22:27:34 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:27:36 [warn] [APNS] LA update attempt 2 failed 
+2026-11-18 22:27:36 [info] [APNS] provider shut down 
+2026-11-18 22:27:37 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:27:39 [warn] [APNS] LA update attempt 3 failed 
+2026-11-18 22:27:40 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-18 22:27:41 [info] [APNS] provider shut down 
+2026-11-18 22:29:06 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:29:08 [warn] [APNS] LA update attempt 1 failed 
+2026-11-18 22:29:08 [info] [APNS] provider shut down 
+2026-11-18 22:29:09 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:29:11 [warn] [APNS] LA update attempt 2 failed 
+2026-11-18 22:29:11 [info] [APNS] provider shut down 
+2026-11-18 22:29:12 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:29:14 [warn] [APNS] LA update attempt 3 failed 
+2026-11-18 22:29:14 [warn] [LA] advance failed, row left ACTIVE 
+2026-11-18 22:29:15 [info] [APNS] provider shut down 
+2026-11-18 22:30:15 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:30:18 [info] [APNS] provider shut down 
+2026-11-18 22:31:23 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:31:25 [warn] [APNS] LA end attempt 1 failed 
+2026-11-18 22:31:25 [info] [APNS] provider shut down 
+2026-11-18 22:31:26 [info] [APNS] provider up (production gateway) 
+2026-11-18 22:31:27 [info] [APNS] LA end sent on attempt 2 
+2026-11-18 22:31:27 [info] [LA] ended 
+2026-11-18 22:31:28 [info] [APNS] provider shut down 

@@ -217,7 +217,14 @@ class KycController {
       return res.status(200).json({
         success: true,
         msg: 'Identity verification session created',
+        // `sessionUrl` is the hosted flow, used by the web app and by any
+        // mobile build still on expo-web-browser. `sessionToken` is what the
+        // native React Native SDK takes. Both are returned so the two clients
+        // can migrate independently — Didit hands back both on every create,
+        // and didit.service already carries session_token through, it just
+        // was not being forwarded.
         sessionUrl: session.url,
+        sessionToken: session.session_token ?? null,
         sessionId: session.session_id,
       });
 
@@ -286,7 +293,9 @@ class KycController {
       return res.status(200).json({
         success: true,
         msg: 'Address verification session created',
+        // See the note on the identity route — both clients, one response.
         sessionUrl: session.url,
+        sessionToken: session.session_token ?? null,
         sessionId: session.session_id,
       });
 
@@ -366,10 +375,33 @@ class KycController {
       // Re-check non-terminal statuses directly rather than trusting a
       // possibly-stale cached value — the webhook is a trigger, not a
       // guaranteed-arrived source of truth.
-      const nonTerminal = ['Not Started', 'In Progress'];
+      //
+      // ── Why this is an allowlist of FINISHED statuses, not a list of
+      //    unfinished ones ──────────────────────────────────────────────
+      //
+      // This was `nonTerminal = ['Not Started', 'In Progress']`, and it only
+      // re-checked a status that appeared in that list. Any status outside it
+      // was treated as settled and never refreshed — including statuses that
+      // are not settled at all.
+      //
+      // The client's view is the mirror image: hooks/vyre/useKyc.ts treats
+      // anything it does not recognise as STILL RUNNING and keeps polling.
+      // So an unrecognised status put the two halves in a standoff. The app
+      // polls because it does not know the status is final; the server never
+      // re-checks because it assumes it already is. The poll cannot resolve,
+      // and it is a Didit call every four seconds for as long as it runs.
+      //
+      // Didit's SDK enum alone is enough to trigger it: VerificationStatus
+      // has `Pending`, which is in neither list.
+      //
+      // Inverted, an unknown status re-checks — wasteful at worst, where the
+      // other direction is a stuck screen. The two lists must stay in step
+      // with TERMINAL in useKyc.ts.
+      const TERMINAL_STATUSES = ['Approved', 'Declined', 'Expired', 'Abandoned', 'Kyc Expired'];
+      const needsRecheck = (s: string | null) => !TERMINAL_STATUSES.includes(s ?? '');
 
       let identityStatus = fresh.diditKycStatus;
-      if (fresh.diditSessionId && nonTerminal.includes(identityStatus ?? '')) {
+      if (fresh.diditSessionId && needsRecheck(identityStatus)) {
         const d = await getDiditDecision(fresh.diditSessionId);
         if (d.success && d.status && d.status !== identityStatus) {
           await prisma.user.update({
@@ -381,7 +413,7 @@ class KycController {
       }
 
       let addressStatus = fresh.diditAddressKycStatus;
-      if (fresh.diditAddressSessionId && nonTerminal.includes(addressStatus ?? '')) {
+      if (fresh.diditAddressSessionId && needsRecheck(addressStatus)) {
         const d = await getDiditDecision(fresh.diditAddressSessionId);
         if (d.success && d.status && d.status !== addressStatus) {
           await prisma.user.update({
